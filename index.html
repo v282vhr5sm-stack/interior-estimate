@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>견적 작업실</title>
+<meta name="theme-color" content="#2E5B4E">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="견적 작업실">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=Nanum+Myeongjo:wght@700;800&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="top">
+  <div class="top-in">
+    <div class="brand"><i aria-hidden="true"></i>견적 작업실</div>
+    <nav class="tabs" role="tablist" id="tabs" hidden>
+      <button class="tab" role="tab" data-act="view" data-v="est" id="tab-est"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h10l4 4v14H5z"/><path d="M8 11h8M8 15h8M8 7h4"/></svg>견적 작성</button>
+      <button class="tab" role="tab" data-act="view" data-v="mat" id="tab-mat"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="8" height="8"/><rect x="13" y="3" width="8" height="8"/><rect x="3" y="13" width="8" height="8"/><rect x="13" y="13" width="8" height="8"/></svg>자재 단가표</button>
+      <button class="tab" role="tab" data-act="view" data-v="doc" id="tab-doc"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h12v20H6z"/><path d="M9 7h6M9 17h6"/></svg>고객용</button>
+      <button class="tab" role="tab" data-act="view" data-v="set" id="tab-set"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg>설정</button>
+    </nav>
+    <button class="sync-pill" id="syncPill" data-act="syncNow" hidden></button>
+  </div>
+</header>
+<div class="update-bar" id="updateBar" hidden>새 버전이 있습니다. <button class="btn sm pri" data-act="applyUpdate">지금 적용</button></div>
+<main class="wrap" id="app"><div class="empty"><span class="spin"></span> 불러오는 중</div></main>
+<input type="file" id="filePhoto" accept="image/*" hidden>
+<input type="file" id="fileSheet" accept="image/*" multiple hidden>
+<input type="file" id="fileBackup" accept="application/json,.json" hidden>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.116.0/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>
