@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '3.4.2';
+const APP_VERSION = '3.5.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -669,8 +669,9 @@ function renderProc(e,p,pi){ // e: 견적
   const P=PMAP[p.k]||PMAP.etc;
   const vf=LINE_VENDOR[pi]||'';
   const pool=[...S.materials.values()].filter(m=>!vf||m.vendorId===vf);
-  const mats=pool.filter(m=>m.process===p.k);
-  const others=pool.filter(m=>m.process!==p.k);
+  const byName=(a,b)=>String(a.name||'').localeCompare(String(b.name||''),'ko',{numeric:true});
+  const mats=pool.filter(m=>m.process===p.k).sort(byName);
+  const others=pool.filter(m=>m.process!==p.k).sort(byName);
   return `<section class="proc" data-pi="${pi}">
     <div class="proc-h">
       <img class="sw" src="${procImg(p.k)}" alt="">
@@ -686,7 +687,7 @@ function renderProc(e,p,pi){ // e: 견적
         <button class="btn ghost sm danger" data-act="delProc" data-pi="${pi}" aria-label="${P.n} 공정 삭제">✕</button></div>
     </div>
     <div class="tbl-wrap"><table class="t resp">
-      <thead><tr><th class="w-img"></th><th class="w-name">자재 · 규격</th><th class="r">적용면적㎡</th><th class="r">로스%</th><th class="r">1단위 시공㎡</th><th class="r">필요수량</th><th>단위</th><th class="r">단가</th><th class="r">자재비</th><th class="r">㎡당</th><th></th></tr></thead>
+      <thead><tr><th class="w-img"></th><th class="w-name">자재 · 규격</th><th class="r">적용면적㎡</th><th class="r">로스%</th><th class="r">필요수량</th><th>단위</th><th class="r">단가</th><th class="r">자재비</th><th class="r">㎡당</th><th>메모</th><th></th></tr></thead>
       <tbody>${(p.lines||[]).map((l,li)=>renderLine(p,pi,l,li)).join('') || `<tr><td colspan="11" class="muted small c-empty" style="padding:12px 8px">아래에서 자재를 추가하세요.</td></tr>`}</tbody>
     </table></div>
     <div class="proc-f">
@@ -716,16 +717,16 @@ function renderLine(p,pi,l,li){
         <input class="f small" id="${id}-spec" data-bind="line:${pi}:${li}:spec" value="${esc(l.spec)}" placeholder="규격" style="margin-top:3px">
         ${m&&num(m.unitPrice)!==num(l.unitPrice)?`<div class="small" style="margin-top:3px"><span class="badge warn">단가표 ${won(m.unitPrice)}원</span></div>`:''}</td>
     ${qtyMode
-      ? `<td class="r" data-l="계산 방식"><button class="btn ghost sm" data-act="toggleMode" data-pi="${pi}" data-li="${li}" title="면적 기준으로 계산">수량 직접 입력 ↺</button></td><td></td><td></td>
+      ? `<td class="r" data-l="계산 방식"><button class="btn ghost sm" data-act="toggleMode" data-pi="${pi}" data-li="${li}" title="면적 기준으로 계산">수량 직접 입력 ↺</button></td><td></td>
          <td class="r" data-l="수량"><input class="f num w-s" type="number" inputmode="decimal" step="0.1" id="${id}-qty" data-bind="line:${pi}:${li}:qty" data-num value="${esc(l.qty)}"></td>`
       : `<td class="r" data-l="적용면적㎡"><input class="f num w-n" type="number" inputmode="decimal" step="0.1" id="${id}-area" data-bind="line:${pi}:${li}:area" data-num-empty value="${esc(l.area)}" placeholder="공정값"></td>
          <td class="r" data-l="로스%"><input class="f num w-s" type="number" inputmode="decimal" id="${id}-loss" data-bind="line:${pi}:${li}:loss" data-num value="${esc(l.loss)}"></td>
-         <td class="r" data-l="1단위 시공㎡"><input class="f num w-s" type="number" inputmode="decimal" step="0.01" id="${id}-cov" data-bind="line:${pi}:${li}:coverage" data-num value="${esc(l.coverage)}"></td>
          <td class="cell-out" data-l="필요수량"><span id="o-${id}-qty"></span></td>`}
     <td data-l="단위"><input class="f w-s" id="${id}-unit" data-bind="line:${pi}:${li}:unit" value="${esc(l.unit)}" style="width:54px"></td>
     <td class="r" data-l="단가"><input class="f num w-n" type="number" inputmode="numeric" step="100" id="${id}-price" data-bind="line:${pi}:${li}:unitPrice" data-num value="${esc(l.unitPrice)}"></td>
     <td class="cell-out" data-l="자재비"><span id="o-${id}-cost"></span></td>
     <td class="cell-out muted" data-l="㎡당"><span id="o-${id}-m2"></span></td>
+    <td data-l="메모"><input class="f" id="${id}-memo" data-bind="line:${pi}:${li}:memo" value="${esc(l.memo||'')}" placeholder="메모" style="min-width:110px"></td>
     <td class="c-act"><div class="row" style="gap:0;flex-wrap:nowrap">${!qtyMode?`<button class="btn ghost sm" data-act="toggleMode" data-pi="${pi}" data-li="${li}" title="수량을 직접 입력">수량 직접</button>`:''}<button class="btn ghost sm danger" data-act="delLine" data-pi="${pi}" data-li="${li}" aria-label="삭제">✕</button></div></td>
   </tr>`;
 }
@@ -757,7 +758,7 @@ function renderMat(){
       : VENDOR_FILTER.startsWith('txt:') ? (!m.vendorId&&(m.vendor||'').trim()===VENDOR_FILTER.slice(4))
       : m.vendorId===VENDOR_FILTER))).sort((a,b)=>PROCS.findIndex(p=>p.k===a.process)-PROCS.findIndex(p=>p.k===b.process)||String(a.name).localeCompare(b.name,'ko'));
   return `<div class="stack">
-    <div><h2>자재 단가표</h2><p class="muted" style="margin:4px 0 0">거래명세서·단가표·카톡 캡처를 올리면 자재를 뽑아 1단위 시공면적과 ㎡당 원가까지 정리합니다.</p></div>
+    <div><h2>자재 단가표</h2><p class="muted" style="margin:4px 0 0">거래명세서·단가표·카톡 캡처를 올리면 자재명·단위·단가를 뽑아 표로 정리합니다.</p></div>
     ${renderImport()}
     ${S.sheets.size?`<section class="panel">
       <div class="panel-h"><h3>가져온 단가표 사진 ${S.sheets.size}</h3><span class="muted small">원본은 그대로 보관됩니다</span></div>
@@ -781,7 +782,7 @@ function renderMat(){
         ${all.some(m=>!m.vendorId&&!(m.vendor||'').trim())?`<button class="chip" data-act="vendorFilter" data-v="__none" aria-pressed="${VENDOR_FILTER==='__none'}">업체 없음 ${all.filter(m=>!m.vendorId&&!(m.vendor||'').trim()).length}</button>`:''}
       </div>`:''}</div>
       <div class="tbl-wrap" style="margin-top:10px"><table class="t resp">
-        <thead><tr><th class="w-img">사진</th><th class="w-name">자재 · 규격</th><th>업체</th><th>공정</th><th>단위</th><th class="r">단가(원)</th><th class="r">1단위 시공㎡</th><th class="r">로스%</th><th class="r">㎡당 원가</th><th>메모</th><th></th></tr></thead>
+        <thead><tr><th class="w-img">사진</th><th class="w-name">자재 · 규격</th><th>업체</th><th>공정</th><th>단위</th><th class="r">단가(원)</th><th class="r">로스%</th><th class="r">㎡당 원가</th><th>메모</th><th></th></tr></thead>
         <tbody>${list.map(m=>`<tr>
           <td class="c-img"><button class="thumb-btn" data-act="matPhoto" data-id="${m.id}" aria-label="사진 바꾸기"><img class="thumb" src="${matImg(m)}" alt=""></button></td>
           <td class="c-name"><input class="f" id="m-${m.id}-name" data-bind="mat:${m.id}:name" value="${esc(m.name)}" placeholder="자재명" style="font-weight:500"><input class="f small" id="m-${m.id}-spec" data-bind="mat:${m.id}:spec" value="${esc(m.spec)}" placeholder="규격" style="margin-top:3px"></td>
@@ -789,11 +790,10 @@ function renderMat(){
           <td data-l="공정"><select class="f" id="m-${m.id}-proc" data-bind="mat:${m.id}:process" style="width:110px">${PROCS.map(p=>`<option value="${p.k}" ${p.k===m.process?'selected':''}>${p.n}</option>`).join('')}</select></td>
           <td data-l="단위">${unitCell(m)}</td>
           <td class="r" data-l="단가(원)"><input class="f num w-n" type="number" inputmode="numeric" step="100" id="m-${m.id}-price" data-bind="mat:${m.id}:unitPrice" data-num value="${esc(m.unitPrice)}"></td>
-          <td class="r" data-l="1단위 시공㎡"><input class="f num w-s" type="number" inputmode="decimal" step="0.01" id="m-${m.id}-cov" data-bind="mat:${m.id}:coverage" data-num value="${esc(m.coverage)}" title="0이면 수량 기준 자재">${m.coverageBasis==='추정'?'<div><span class="badge warn">추정</span></div>':''}</td>
           <td class="r" data-l="로스%"><input class="f num w-s" type="number" inputmode="decimal" id="m-${m.id}-loss" data-bind="mat:${m.id}:loss" data-num value="${esc(m.loss)}"></td>
           <td class="cell-out" data-l="㎡당 원가"><span id="o-m-${m.id}">${perM2Html(matPerM2(m))}</span></td>
           <td data-l="메모" style="max-width:220px"><input class="f small" id="m-${m.id}-note" data-bind="mat:${m.id}:note" value="${esc(m.note||'')}" placeholder="메모 (예: 2025년 12월 기준)"></td>
-          <td class="c-act"><button class="btn ghost sm danger" data-act="delMat" data-id="${m.id}" aria-label="삭제">✕ 삭제</button></td></tr>`).join('') || `<tr><td colspan="11" class="empty c-empty">자재가 없습니다. 단가표 사진을 올리거나 직접 추가하세요.</td></tr>`}</tbody>
+          <td class="c-act"><button class="btn ghost sm danger" data-act="delMat" data-id="${m.id}" aria-label="삭제">✕ 삭제</button></td></tr>`).join('') || `<tr><td colspan="10" class="empty c-empty">자재가 없습니다. 단가표 사진을 올리거나 직접 추가하세요.</td></tr>`}</tbody>
       </table></div>
     </section>
   </div>`;
@@ -815,7 +815,7 @@ function renderImport(){
         <label class="row small" style="gap:6px">공정 한 번에 지정
           <select class="f" id="rv-proc-all" data-act-change="revProc" style="width:120px"><option value="">선택</option>${PROCS.map(p=>`<option value="${p.k}">${p.n}</option>`).join('')}</select></label>
       </div>
-      <div class="tbl-wrap"><table class="t resp"><thead><tr><th></th><th class="w-name">자재 · 규격</th><th>업체</th><th>공정</th><th>단위</th><th class="r">단가(원)</th><th class="r">1단위 시공㎡</th><th class="r">로스%</th><th class="r">㎡당 원가</th><th>근거</th></tr></thead>
+      <div class="tbl-wrap"><table class="t resp"><thead><tr><th></th><th class="w-name">자재 · 규격</th><th>업체</th><th>공정</th><th>단위</th><th class="r">단가(원)</th><th class="r">로스%</th><th class="r">㎡당 원가</th><th>근거</th></tr></thead>
       <tbody>${I.items.map((it,i)=>`<tr>
         <td class="c-img"><input type="checkbox" id="rv-${i}-on" data-bind="rev:${i}:on" ${it.on?'checked':''} aria-label="선택" style="width:20px;height:20px"></td>
         <td class="c-name"><input class="f" id="rv-${i}-name" data-bind="rev:${i}:name" value="${esc(it.name)}" style="font-weight:500"><input class="f small" id="rv-${i}-spec" data-bind="rev:${i}:spec" value="${esc(it.spec)}" style="margin-top:3px"></td>
@@ -823,7 +823,6 @@ function renderImport(){
         <td data-l="공정"><select class="f" id="rv-${i}-proc" data-bind="rev:${i}:process" style="width:110px">${PROCS.map(p=>`<option value="${p.k}" ${p.k===it.process?'selected':''}>${p.n}</option>`).join('')}</select></td>
         <td data-l="단위"><input class="f" id="rv-${i}-unit" data-bind="rev:${i}:unit" value="${esc(it.unit)}" style="width:56px"></td>
         <td class="r" data-l="단가(원)"><input class="f num w-n" type="number" inputmode="numeric" id="rv-${i}-price" data-bind="rev:${i}:unitPrice" data-num value="${esc(it.unitPrice)}">${it.vatConverted?'<div><span class="badge">VAT 제외 환산</span></div>':''}</td>
-        <td class="r" data-l="1단위 시공㎡"><input class="f num w-s" type="number" inputmode="decimal" step="0.01" id="rv-${i}-cov" data-bind="rev:${i}:coverage" data-num value="${esc(it.coverage)}">${it.coverageBasis==='추정'?'<div><span class="badge warn">추정</span></div>':it.coverage>0?'<div><span class="badge">규격 계산</span></div>':''}</td>
         <td class="r" data-l="로스%"><input class="f num w-s" type="number" inputmode="decimal" id="rv-${i}-loss" data-bind="rev:${i}:loss" data-num value="${esc(it.loss)}"></td>
         <td class="cell-out" data-l="㎡당 원가"><span id="o-rv-${i}">${perM2Html(matPerM2(it))}</span></td>
         <td class="small muted" data-l="근거" style="max-width:240px">${esc(it.note||'')}</td></tr>`).join('')}</tbody></table></div>
@@ -929,9 +928,9 @@ function rowsFromText(txt){
     name=name.replace(/(d)s*[%*xX]s*(d)/g,'$1×$2');   // 600%600 → 600×600
     if(!name || name.length<2) continue;
     const spec=(line.match(/\d{2,4}\s*[x×X*%]\s*\d{2,4}(\s*[x×X*]\s*\d+)?/)||[''])[0].replace('%','×');
-    const cov=COV_HINT[unit]||0;
+    const cov=1;
     out.push({on:true,name,spec,process:'etc',unit:unit||'개',unitPrice:price,vendor:'',
-      coverage:cov,coverageBasis:cov?'추정':'없음',mode:cov?'area':'qty',loss:cov?5:0,tone:'',
+      coverage:1,coverageBasis:'',mode:'area',loss:0,tone:'',
       note:''});
   }
   return out;
@@ -951,7 +950,7 @@ async function parseSheets(){
     items=[...seen.values()];
     if(!items.length) throw {code:'empty'};
     IMPORT.items=items;
-    IMPORT.memo='사진에서 읽은 값입니다. 공정·단위·1단위 시공면적은 확인해서 고쳐주세요.';
+    IMPORT.memo='사진에서 읽은 값입니다. 공정과 단위는 확인해서 고쳐주세요.';
     uploadSheetPhotos();          // 원본 사진은 따로 보관
   }catch(e){
     IMPORT.err = e?.code==='empty'
