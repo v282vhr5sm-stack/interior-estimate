@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '2.5.0';
+const APP_VERSION = '2.5.1';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -363,7 +363,7 @@ function matImg(m){ return m.image || swatch((PMAP[m.process]||PMAP.etc).pat, m.
 function matPerM2(m){ const c=num(m.coverage); return (m.mode!=='qty'&&c>0) ? num(m.unitPrice)/c*(1+num(m.loss)/100) : null; }
 const perM2Html = v => v==null ? '<span class="muted small">수량 기준</span>' : won(v)+'원';
 /* "84", "84㎡", "26평" 무엇을 넣어도 알아서 읽습니다. 평은 올림. */
-const ceilPy = m2 => Math.ceil(m2/PY);
+const ceilPy = m2 => Math.round(m2/PY);   // 평수는 반올림
 function parseArea(s){
   const txt=String(s??''), v=parseFloat(txt.replace(/,/g,'').match(/-?[\d.]+/)?.[0]||'');
   if(!isFinite(v)||v<=0) return {m2:0,py:0,typed:''};
@@ -844,7 +844,7 @@ function docHTML(e){
 
     <h2 class="d-sec">공정별 금액</h2>
     <table><thead><tr><th style="width:36px" class="c">No</th><th>공정</th><th>주요 자재</th><th class="r" style="width:90px">시공면적</th><th class="r" style="width:110px">금액(원)</th></tr></thead>
-      <tbody>${procs.map(({p,pc,P},i)=>`<tr><td class="c">${i+1}</td><td><b>${P.n}</b></td><td>${esc((p.lines||[]).map(l=>l.name).filter(Boolean).join(', ')||'—')}</td><td class="r">${pc.area>0?r1(pc.area)+'㎡<br><span style="color:var(--d-mut);font-size:11px">'+r1(pc.area/PY)+'평</span>':'일식'}</td><td class="r">${won(pc.price)}</td></tr>`).join('')}</tbody>
+      <tbody>${procs.map(({p,pc,P},i)=>`<tr><td class="c">${i+1}</td><td><b>${P.n}</b></td><td>${esc((p.lines||[]).map(l=>l.name).filter(Boolean).join(', ')||'—')}</td><td class="r">${pc.area>0?r1(pc.area)+'㎡<br><span style="color:var(--d-mut);font-size:11px">'+Math.round(pc.area/PY)+'평</span>':'일식'}</td><td class="r">${won(pc.price)}</td></tr>`).join('')}</tbody>
       <tfoot>
         <tr><td colspan="4" class="r">소계</td><td class="r">${won(c.gross)}</td></tr>
         ${num(e.discount)>0?`<tr><td colspan="4" class="r">할인</td><td class="r">−${won(e.discount)}</td></tr>`:''}
@@ -855,7 +855,7 @@ function docHTML(e){
 
     <h2 class="d-sec">공정별 자재 및 시공 내역</h2>
     ${procs.map(({p,pc,P})=>`<div class="d-proc">
-      <div class="d-proc-h"><b>${P.n}</b><span>${pc.area>0?r1(pc.area)+'㎡ ('+r1(pc.area/PY)+'평) · ':''}${won(pc.price)}원</span></div>
+      <div class="d-proc-h"><b>${P.n}</b><span>${pc.area>0?r1(pc.area)+'㎡ ('+Math.round(pc.area/PY)+'평) · ':''}${won(pc.price)}원</span></div>
       ${e.showImages!==false && p.lines?.length ? `<div class="d-mats">${p.lines.map((l,li)=>{ const x=pc.lines[li]; return `<div class="d-mat"><img src="${lineImg(l,p.k)}" alt=""><div class="t"><b>${esc(l.name)}</b><span>${esc(l.spec)}</span>${x.qty>0?`<br><span>${r1(x.qty)} ${esc(l.unit)}</span>`:''}${e.showLinePrice?`<br><span>${won(x.cost*k)}원</span>`:''}</div></div>`; }).join('')}</div>`
       : p.lines?.length ? `<table><thead><tr><th>자재</th><th>규격</th><th class="r">수량</th>${e.showLinePrice?'<th class="r">금액</th>':''}</tr></thead><tbody>${p.lines.map((l,li)=>{const x=pc.lines[li]; return `<tr><td>${esc(l.name)}</td><td>${esc(l.spec)}</td><td class="r">${r1(x.qty)} ${esc(l.unit)}</td>${e.showLinePrice?`<td class="r">${won(x.cost*k)}</td>`:''}</tr>`;}).join('')}</tbody></table>`:''}
       ${pc.labor>0?`<div class="d-list">시공비 포함${e.showLinePrice?` · ${won(pc.labor*k)}원`:''}</div>`:''}
