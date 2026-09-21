@@ -153,6 +153,7 @@ table.t input.f{padding:4px 6px}
 .chips{display:flex;gap:6px;flex-wrap:wrap}
 .chip{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:5px 11px;font-size:12.5px;cursor:pointer}
 .chip[aria-pressed="true"]{background:var(--ink);color:var(--surface);border-color:var(--ink)}
+.chip.used{border-style:dashed;color:var(--muted)}
 .previews{display:flex;gap:8px;flex-wrap:wrap}
 .previews img{height:64px;border-radius:6px;border:1px solid var(--line)}
 .status{font-size:13px;padding:10px 12px;border-radius:8px;background:var(--surface2);border:1px solid var(--line2)}
