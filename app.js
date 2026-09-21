@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '4.2.0';
+const APP_VERSION = '4.2.1';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -758,7 +758,7 @@ function renderLine(p,pi,l,li){
           ${m?`<button class="btn ghost sm" data-act="priceDlg" data-pi="${pi}" data-li="${li}" title="단가표와 금액 맞추기">단가표 ${won(m.unitPrice)}${num(m.laborPrice)?' / '+won(m.laborPrice):''}원</button>`
              :`<button class="btn ghost sm" data-act="saveToMat" data-pi="${pi}" data-li="${li}" title="이 줄을 자재 단가표에 저장">단가표에 저장</button>`}
         </div></td>
-    <td class="r" data-l="수량"><input class="f num" type="number" inputmode="decimal" step="0.1" id="${id}-qty" data-bind="line:${pi}:${li}:qty" data-num value="${esc(l.qty)}"></td>
+    <td class="r" data-l="수량"><input class="f num" type="number" inputmode="decimal" step="1" id="${id}-qty" data-bind="line:${pi}:${li}:qty" data-num value="${esc(l.qty)}"></td>
     <td data-l="단위">
       <select class="f" id="${id}-unitsel" data-lineunit="${pi}:${li}" >
         ${UNITS.map(u=>`<option value="${u}" ${!custom&&l.unit===u?'selected':''}>${u}</option>`).join('')}
