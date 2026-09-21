@@ -75,7 +75,6 @@ h3{font-size:15px}
 input.f,select.f,textarea.f{border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:6px 8px;width:100%;min-width:0}
 input.f:focus,select.f:focus,textarea.f:focus{border-color:var(--focus);outline:none;box-shadow:0 0 0 3px var(--accent-weak)}
 input.f::placeholder,textarea.f::placeholder{color:var(--muted);opacity:.65}
-input.f:focus::placeholder,textarea.f:focus::placeholder{color:transparent}
 input.f::selection,textarea.f::selection{background:var(--accent-weak);color:var(--ink)}
 input.num{text-align:right}
 label.fl{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted);font-weight:500}
