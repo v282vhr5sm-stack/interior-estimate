@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '4.4.0';
+const APP_VERSION = '4.5.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -755,18 +755,11 @@ function renderProc(e,p,pi){ // e: 견적
         <button class="btn ghost sm" data-act="moveProc" data-pi="${pi}" data-d="1" title="아래로" ${pi===e.processes.length-1?'disabled':''}>▼</button>
         <button class="btn ghost sm danger" data-act="delProc" data-pi="${pi}" aria-label="${P.n} 공정 삭제">✕</button></div>
     </div>
-    <div class="proc-f proc-pick"><b class="small">업체 · 품명</b>
-      ${(()=>{ const vs=vendorsFor(''); return vs.length?`<select class="f" id="p${pi}-vendorsel" data-vendorpick="${pi}" style="width:auto;max-width:150px">
-          <option value="">업체 전체</option>${vs.map(v=>`<option value="${v.id}" ${LINE_VENDOR[pi]===v.id?'selected':''}>${esc(v.name||'(이름 없음)')}</option>`).join('')}</select>`:''; })()}
-      <select class="f" id="p${pi}-addsel" style="width:auto;max-width:100%" data-act-change="addLine" data-pi="${pi}">
-        <option value="">품명 선택 (단가표에서 추가)</option>
-        ${matOptions(mats, others, !vf)}
-      </select>
-      <button class="btn sm" data-act="addBlank" data-pi="${pi}">직접 입력</button>
-    </div>
+    <div class="proc-f"><button class="btn sm" data-act="addBlank" data-pi="${pi}">+ 줄 추가</button>
+      <span class="muted small">줄에서 업체와 품명을 고르세요. 엔터를 치면 같은 품명으로 한 줄 더 생깁니다.</span></div>
     <div class="tbl-wrap"><table class="t resp">
-      <thead><tr><th class="w-img"></th><th class="w-name">품명 · 규격</th><th class="r">수량</th><th>단위</th><th class="r">재료비 단가</th><th class="r">재료비 금액</th><th class="r">노무비 단가</th><th class="r">노무비 금액</th><th class="r">합계</th><th>비고</th><th></th></tr></thead>
-      <tbody>${(p.lines||[]).map((l,li)=>renderLine(p,pi,l,li)).join('') || `<tr><td colspan="11" class="muted small c-empty" style="padding:12px 8px">위에서 업체와 품명을 고르거나 “직접 입력”을 누르세요.</td></tr>`}</tbody>
+      <thead><tr><th class="w-img"></th><th>업체</th><th class="w-name">품명 · 규격</th><th class="r">수량</th><th>단위</th><th class="r">재료비 단가</th><th class="r">재료비 금액</th><th class="r">노무비 단가</th><th class="r">노무비 금액</th><th class="r">합계</th><th>비고</th><th></th></tr></thead>
+      <tbody>${(p.lines||[]).map((l,li)=>renderLine(p,pi,l,li)).join('') || `<tr><td colspan="12" class="muted small c-empty" style="padding:12px 8px">위에서 업체와 품명을 고르거나 “직접 입력”을 누르세요.</td></tr>`}</tbody>
     </table></div>
     <div class="labor">
       <span>재료비 <b id="o-p${pi}-mat"></b></span>
@@ -779,28 +772,44 @@ function renderProc(e,p,pi){ // e: 견적
 function renderLine(p,pi,l,li){
   const id=`p${pi}l${li}`;
   const m=l.mid&&S.materials.get(l.mid);
-  const custom=!UNITS.includes(l.unit||'');
+  const customUnit=!UNITS.includes(l.unit||'');
+  const vend=[...S.vendors.values()].sort((a,b)=>String(a.name).localeCompare(String(b.name),'ko'));
+  const vid=l.vendorId||m?.vendorId||'';
+  const pool=[...S.materials.values()].filter(x=>(!vid||x.vendorId===vid));
+  const here=pool.filter(x=>x.process===p.k).sort((a,b)=>String(a.name).localeCompare(String(b.name),'ko'));
+  const there=pool.filter(x=>x.process!==p.k).sort((a,b)=>String(a.name).localeCompare(String(b.name),'ko'));
+  const opt=x=>`<option value="${x.id}" ${l.mid===x.id?'selected':''}>${esc(x.name)}${x.spec?' '+esc(x.spec):''} · ${won(x.unitPrice)}${num(x.laborPrice)?'+'+won(x.laborPrice):''}원/${esc(x.unit||'')}</option>`;
   return `<tr>
     <td class="c-img"><button class="thumb-btn" data-act="linePhoto" data-pi="${pi}" data-li="${li}" aria-label="사진 바꾸기"><img class="thumb" src="${lineImg(l,p.k)}" alt=""></button></td>
-    <td class="c-name"><input class="f" id="${id}-name" data-bind="line:${pi}:${li}:name" value="${esc(l.name)}" placeholder="품명" style="font-weight:500">
-        <input class="f small" id="${id}-spec" data-bind="line:${pi}:${li}:spec" value="${esc(l.spec)}" placeholder="규격" style="margin-top:3px">
-        <div class="row small" style="margin-top:4px;gap:4px">
-          ${m?`<button class="btn ghost sm" data-act="priceDlg" data-pi="${pi}" data-li="${li}" title="단가표와 금액 맞추기">단가표 ${won(m.unitPrice)}${num(m.laborPrice)?' / '+won(m.laborPrice):''}원</button>`
-             :`<button class="btn ghost sm" data-act="saveToMat" data-pi="${pi}" data-li="${li}" title="이 줄을 자재 단가표에 저장">단가표에 저장</button>`}
-        </div></td>
-    <td class="r" data-l="수량"><input class="f num" type="number" inputmode="decimal" step="1" id="${id}-qty" data-bind="line:${pi}:${li}:qty" data-num value="${esc(l.qty)}"></td>
-    <td data-l="단위">
-      <select class="f" id="${id}-unitsel" data-lineunit="${pi}:${li}" >
-        ${UNITS.map(u=>`<option value="${u}" ${!custom&&l.unit===u?'selected':''}>${u}</option>`).join('')}
-        <option value="__custom" ${custom?'selected':''}>직접 입력</option>
+    <td data-l="업체"><select class="f" id="${id}-vendor" data-linevendor="${pi}:${li}">
+        <option value="">업체 전체</option>
+        ${vend.map(v=>`<option value="${v.id}" ${vid===v.id?'selected':''}>${esc(v.name||'(이름 없음)')}</option>`).join('')}
+      </select></td>
+    <td class="c-name">
+      <select class="f" id="${id}-matsel" data-linemat="${pi}:${li}">
+        <option value="__custom" ${!l.mid?'selected':''}>직접 입력</option>
+        ${here.length?`<optgroup label="${(PMAP[p.k]||PMAP.etc).n}">${here.map(opt).join('')}</optgroup>`:''}
+        ${there.length?`<optgroup label="다른 공정">${there.map(opt).join('')}</optgroup>`:''}
       </select>
-      ${custom?`<input class="f" id="${id}-unit" data-bind="line:${pi}:${li}:unit" value="${esc(l.unit||'')}" placeholder="단위" style="margin-top:4px">`:''}</td>
+      <input class="f" id="${id}-name" data-bind="line:${pi}:${li}:name" value="${esc(l.name)}" placeholder="품명" style="margin-top:3px;font-weight:500">
+      <input class="f small" id="${id}-spec" data-bind="line:${pi}:${li}:spec" value="${esc(l.spec)}" placeholder="규격" style="margin-top:3px">
+      <div class="row small" style="margin-top:4px;gap:4px">
+        ${m?`<button class="btn ghost sm" data-act="priceDlg" data-pi="${pi}" data-li="${li}" title="단가표와 금액 맞추기">단가표 ${won(m.unitPrice)}${num(m.laborPrice)?' / '+won(m.laborPrice):''}원</button>`
+           :`<button class="btn ghost sm" data-act="saveToMat" data-pi="${pi}" data-li="${li}" title="이 줄을 자재 단가표에 저장">단가표에 저장</button>`}
+      </div></td>
+    <td class="r" data-l="수량"><input class="f num" type="number" inputmode="decimal" step="1" id="${id}-qty" data-bind="line:${pi}:${li}:qty" data-num value="${esc(l.qty)}" title="화살표는 1씩, 소수점도 직접 입력할 수 있습니다"></td>
+    <td data-l="단위">
+      <select class="f" id="${id}-unitsel" data-lineunit="${pi}:${li}">
+        ${UNITS.map(u=>`<option value="${u}" ${!customUnit&&l.unit===u?'selected':''}>${u}</option>`).join('')}
+        <option value="__custom" ${customUnit?'selected':''}>직접 입력</option>
+      </select>
+      ${customUnit?`<input class="f" id="${id}-unit" data-bind="line:${pi}:${li}:unit" value="${esc(l.unit||'')}" placeholder="단위" style="margin-top:4px">`:''}</td>
     <td class="r" data-l="재료비 단가"><input class="f num" type="number" inputmode="numeric" step="100" id="${id}-mprice" data-bind="line:${pi}:${li}:matPrice" data-num value="${esc(l.matPrice??0)}"></td>
     <td class="cell-out" data-l="재료비 금액"><span id="o-${id}-mat"></span></td>
     <td class="r" data-l="노무비 단가"><input class="f num" type="number" inputmode="numeric" step="100" id="${id}-lprice" data-bind="line:${pi}:${li}:laborPrice" data-num value="${esc(l.laborPrice??0)}"></td>
     <td class="cell-out" data-l="노무비 금액"><span id="o-${id}-labor"></span></td>
     <td class="cell-out" data-l="합계"><b id="o-${id}-total"></b></td>
-    <td data-l="비고"><input class="f" id="${id}-memo" data-bind="line:${pi}:${li}:memo" value="${esc(l.memo||'')}" placeholder="비고" ></td>
+    <td data-l="비고"><input class="f" id="${id}-memo" data-bind="line:${pi}:${li}:memo" value="${esc(l.memo||'')}" placeholder="비고"></td>
     <td class="c-act"><button class="btn ghost sm danger" data-act="delLine" data-pi="${pi}" data-li="${li}" aria-label="삭제">✕</button></td>
   </tr>`;
 }
@@ -2114,6 +2123,25 @@ function handleSelectChange(t){
     return;
   }
   if(t.dataset.vendorpick!==undefined){ LINE_VENDOR[+t.dataset.vendorpick]=t.value; render(); return; }
+  if(t.dataset.linevendor){
+    const [pi,li]=t.dataset.linevendor.split(':').map(Number), e=cur(), l=e?.processes[pi]?.lines[li]; if(!l) return;
+    l.vendorId=t.value||''; l.vendor=vendorName(t.value);
+    if(l.mid){ const m=S.materials.get(l.mid); if(m && l.vendorId && m.vendorId!==l.vendorId) l.mid=''; }
+    saveEst(e); render(); return;
+  }
+  if(t.dataset.linemat){
+    const [pi,li]=t.dataset.linemat.split(':').map(Number), e=cur(), p=e?.processes[pi], l=p?.lines[li]; if(!l) return;
+    if(t.value==='__custom'){ l.mid=''; }
+    else{
+      const m=S.materials.get(t.value); if(!m) return;
+      l.mid=m.id; l.name=m.name; l.spec=m.spec||''; l.unit=m.unit||l.unit||'㎡';
+      l.matPrice=num(m.unitPrice); l.laborPrice=num(m.laborPrice||0);
+      if(m.vendorId){ l.vendorId=m.vendorId; l.vendor=vendorName(m.vendorId); }
+    }
+    saveEst(e); render();
+    if(t.value==='__custom') setTimeout(()=>document.getElementById(`p${pi}l${li}-name`)?.focus(),60);
+    return;
+  }
   if(t.dataset.lineunit){
     const [pi,li]=t.dataset.lineunit.split(':').map(Number), e=cur(), l=e?.processes[pi]?.lines[li]; if(!l) return;
     l.unit = t.value==='__custom' ? '' : t.value;
@@ -2136,7 +2164,7 @@ function handleSelectChange(t){
 }
 document.addEventListener('change',ev=>{
   const t=ev.target, a=t.dataset?.actChange;
-  if(t.dataset?.unitsel||t.dataset?.vendorpick!==undefined||t.dataset?.matvendor||t.dataset?.procvendor!==undefined||t.dataset?.lineunit){ handleSelectChange(t); return; }
+  if(t.dataset?.unitsel||t.dataset?.vendorpick!==undefined||t.dataset?.matvendor||t.dataset?.procvendor!==undefined||t.dataset?.lineunit||t.dataset?.linevendor||t.dataset?.linemat){ handleSelectChange(t); return; }
   if(!a) return;
   if(a==='pick'){ setCur(t.value); render(); }
   if(a==='addLine'&&t.value){ const e=cur(), p=e.processes[+t.dataset.pi], m=S.materials.get(t.value); if(m){ p.lines.push(lineFromMat(m)); saveEst(e); render(); } }
@@ -2191,7 +2219,8 @@ document.addEventListener('click',async ev=>{
     case 'seed': seedExample(); break;
     case 'addProc': ensureProc(e,t.dataset.k); saveEst(e); render(); break;
     case 'delProc': { const p=e.processes[+t.dataset.pi]; if(!p.lines.length||confirm(`${PMAP[p.k].n} 공정을 삭제할까요?`)){ e.processes.splice(+t.dataset.pi,1); saveEst(e); render(); } break; }
-    case 'addBlank': e.processes[+t.dataset.pi].lines.push({id:uid(),name:'',spec:'',unit:'㎡',qty:1,matPrice:0,laborPrice:0,memo:''}); saveEst(e); render();
+    case 'addBlank': { const p=e.processes[+t.dataset.pi];
+      p.lines.push({id:uid(),name:'',spec:'',unit:'㎡',qty:1,matPrice:0,laborPrice:0,memo:'',vendorId:LINE_VENDOR[+t.dataset.pi]||''}); saveEst(e); render(); }
       setTimeout(()=>{ const p=e.processes[+t.dataset.pi]; document.getElementById(`p${t.dataset.pi}l${p.lines.length-1}-name`)?.focus(); },60); break;
     case 'priceDlg': { const p=e.processes[+t.dataset.pi], l=p.lines[+t.dataset.li], m=l.mid&&S.materials.get(l.mid);
       if(!m) break;
