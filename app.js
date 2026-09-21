@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '3.2.4';
+const APP_VERSION = '3.3.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -200,7 +200,7 @@ const idb = {
 };
 
 /* ---------- app state ---------- */
-const S = { materials:new Map(), estimates:new Map(), projects:new Map(), sheets:new Map(), company:{}, curId:null, curPid:null };
+const S = { materials:new Map(), estimates:new Map(), projects:new Map(), sheets:new Map(), vendors:new Map(), company:{}, curId:null, curPid:null };
 const cur = () => S.estimates.get(S.curId);
 const curProj = () => S.projects.get(S.curPid);
 /* 현장 이름이 바뀌면 그 현장 견적 제목도 같이 바꿉니다 (직접 다른 제목을 적어둔 경우는 그대로) */
@@ -224,6 +224,7 @@ function applyRecord(col,id,data){
   else if(col==='estimates'){ if(data) S.estimates.set(id,{...data,id}); else S.estimates.delete(id); }
   else if(col==='projects'){ if(data) S.projects.set(id,{...data,id}); else S.projects.delete(id); }
   else if(col==='sheets'){ if(data) S.sheets.set(id,{...data,id}); else S.sheets.delete(id); }
+  else if(col==='vendors'){ if(data) S.vendors.set(id,{...data,id}); else S.vendors.delete(id); }
   else if(col==='settings' && id==='company'){ S.company=data||{}; }
 }
 async function loadLocal(){
@@ -233,6 +234,7 @@ async function loadLocal(){
   recs.forEach(r=>{ if(!r.deleted) applyRecord(r.col,r.id,r.data); });
   S.curId = ls.get('cur');
   if(!S.estimates.has(S.curId)) S.curId=[...S.estimates.values()].sort((a,b)=>(b.updated||0)-(a.updated||0))[0]?.id||null;
+  migrateVendors();
   S.curPid = ls.get('curPid');
   if(!S.projects.has(S.curPid)) S.curPid=[...S.projects.values()].sort((a,b)=>(b.updated||0)-(a.updated||0))[0]?.id||null;
 }
@@ -255,6 +257,27 @@ async function writeRecord(col,id,data,deleted=false){
 const saveMat = m => queueWrite('materials',m.id,()=>S.materials.has(m.id)?strip(S.materials.get(m.id)):null);
 const saveEst = e => { e.updated=Date.now(); queueWrite('estimates',e.id,()=>S.estimates.has(e.id)?strip(S.estimates.get(e.id)):null); };
 const saveCo = () => queueWrite('settings','company',()=>S.company);
+const saveVendor = v => { v.updated=Date.now(); queueWrite('vendors',v.id,()=>S.vendors.has(v.id)?strip(S.vendors.get(v.id)):null); };
+function deleteVendor(id){ cancelWrite('vendors',id); S.vendors.delete(id); writeRecord('vendors',id,null,true); }
+const vendorName = id => S.vendors.get(id)?.name || '';
+/* 공정에 맞는 업체 (전체 공정으로 등록된 업체 포함) */
+const vendorsFor = k => [...S.vendors.values()]
+  .filter(v=>!k||!v.process||v.process==='all'||v.process===k)
+  .sort((a,b)=>String(a.name).localeCompare(String(b.name),'ko'));
+/* 예전에 글자로 적어둔 업체명을 업체 목록으로 옮깁니다 */
+function migrateVendors(){
+  const byName=new Map([...S.vendors.values()].map(v=>[v.name.trim(),v]));
+  let made=0;
+  const touch=(name,process)=>{
+    const t=(name||'').trim(); if(!t) return null;
+    if(byName.has(t)) return byName.get(t);
+    const v={id:uid(),name:t,process:process||'all',phone:'',memo:'',updated:Date.now()};
+    S.vendors.set(v.id,v); byName.set(t,v); saveVendor(v); made++; return v;
+  };
+  S.materials.forEach(m=>{ if(m.vendor&&!m.vendorId){ const v=touch(m.vendor,m.process); if(v){ m.vendorId=v.id; saveMat(m); } } });
+  S.estimates.forEach(e=>(e.processes||[]).forEach(p=>{ if(p.vendor&&!p.vendorId){ const v=touch(p.vendor,p.k); if(v){ p.vendorId=v.id; saveEst(e); } } }));
+  return made;
+}
 const saveProj = p => { p.updated=Date.now(); queueWrite('projects',p.id,()=>S.projects.has(p.id)?strip(S.projects.get(p.id)):null); if(p.share?.on) schedulePublish(p.id); };
 function deleteMat(id){ cancelWrite('materials',id); S.materials.delete(id); writeRecord('materials',id,null,true); }
 function deleteEst(id){ cancelWrite('estimates',id); S.estimates.delete(id); writeRecord('estimates',id,null,true); }
@@ -335,6 +358,16 @@ async function updatePill(){
 }
 
 /* ---------- calculation ---------- */
+const UNITS = ['㎡','평','식','인','롤','박스','장','포','통','말','개','m','kg','대','매','세트'];
+const CUSTOM_UNIT = new Set();          // 직접 입력으로 열어둔 자재
+function unitCell(m){
+  const custom = CUSTOM_UNIT.has(m.id) || (m.unit && !UNITS.includes(m.unit));
+  return `<select class="f" id="m-${m.id}-unitsel" data-unitsel="${m.id}" style="width:86px">
+      ${UNITS.map(u=>`<option value="${u}" ${!custom&&m.unit===u?'selected':''}>${u}</option>`).join('')}
+      <option value="__custom" ${custom?'selected':''}>직접 입력</option>
+    </select>
+    ${custom?`<input class="f" id="m-${m.id}-unit" data-bind="mat:${m.id}:unit" value="${esc(m.unit||'')}" placeholder="단위" style="width:76px;margin-top:4px">`:''}`;
+}
 const FRAC_UNITS = ['m','kg','L','ℓ','㎏'];
 function calcLine(l, procArea){
   const area = (l.area===''||l.area==null) ? procArea : num(l.area);
@@ -376,16 +409,16 @@ function newEstimate(){
 /* 견적에 직접 적은 자재를 단가표에 저장하고, 단가표를 고치면 견적도 따라오게 합니다 */
 function syncLineToMaterial(e,p,l){
   if(!l || !String(l.name||'').trim()) return;
-  const vendor=(p.vendor||'').trim();
+  const vendorId=p.vendorId||''; const vendor=vendorName(vendorId)||(p.vendor||'').trim();
   if(l.mid && S.materials.has(l.mid)){
     const m=S.materials.get(l.mid);
     const next={name:l.name,spec:l.spec||'',unit:l.unit||'',unitPrice:num(l.unitPrice),coverage:num(l.coverage),loss:num(l.loss),mode:l.mode||'area'};
-    if(vendor && !m.vendor) next.vendor=vendor;
+    if(vendorId && !m.vendorId){ next.vendor=vendor; next.vendorId=vendorId; }
     const changed=Object.keys(next).some(k=>String(m[k]??'')!==String(next[k]??''));
     if(changed){ Object.assign(m,next,{updated:Date.now()}); saveMat(m); }
     return;
   }
-  const m={id:uid(),name:l.name,spec:l.spec||'',process:p.k,vendor,unit:l.unit||'',unitPrice:num(l.unitPrice),
+  const m={id:uid(),name:l.name,spec:l.spec||'',process:p.k,vendor,vendorId,unit:l.unit||'',unitPrice:num(l.unitPrice),
     coverage:num(l.coverage),loss:num(l.loss),mode:l.mode||(num(l.coverage)>0?'area':'qty'),note:'',updated:Date.now()};
   S.materials.set(m.id,m); saveMat(m); l.mid=m.id; saveEst(e);
 }
@@ -443,7 +476,7 @@ const sizeHint = areaHint;
 /* ---------- views ---------- */
 let VIEW=ls.get('view','home');
 let HOME_SEL=null, HOME_NEW=false, HUB_GALLERY=false;
-let MAT_FILTER='all';
+let MAT_FILTER='all', VENDOR_FILTER='all';
 let IMPORT={files:[],urls:[],busy:false,items:null,memo:'',err:''};
 let AUTH={mode:'login',busy:false,err:'',skipped:ls.get('skipLogin')==='1'};
 
@@ -452,12 +485,13 @@ function render(){
   const tabs=$('#tabs');
   if(needLogin()){ tabs.hidden=true; $('#app').innerHTML=renderAuth(); updatePill(); return; }
   tabs.hidden=false;
-  ['home','est','sched','doc','mat','set'].forEach(v=>$('#tab-'+v).setAttribute('aria-selected',String(v===VIEW)));
+  ['home','est','sched','doc','mat','vend','set'].forEach(v=>$('#tab-'+v).setAttribute('aria-selected',String(v===VIEW)));
   const app=$('#app');
   if(VIEW==='home') app.innerHTML=renderHome();
   else if(VIEW==='sched') app.innerHTML=renderSched();
   else if(VIEW==='mat') app.innerHTML=renderMat();
   else if(VIEW==='doc') app.innerHTML=renderDocView();
+  else if(VIEW==='vend') app.innerHTML=renderVendors();
   else if(VIEW==='set') app.innerHTML=renderSettings();
   else app.innerHTML=renderEst();
   if(VIEW==='est') recalc();
@@ -621,8 +655,10 @@ function renderEst(){
 
 function renderProc(e,p,pi){ // e: 견적
   const P=PMAP[p.k]||PMAP.etc;
-  const mats=[...S.materials.values()].filter(m=>m.process===p.k);
-  const others=[...S.materials.values()].filter(m=>m.process!==p.k);
+  const vf=LINE_VENDOR[pi]||'';
+  const pool=[...S.materials.values()].filter(m=>!vf||m.vendorId===vf);
+  const mats=pool.filter(m=>m.process===p.k);
+  const others=pool.filter(m=>m.process!==p.k);
   return `<section class="proc" data-pi="${pi}">
     <div class="proc-h">
       <img class="sw" src="${procImg(p.k)}" alt="">
@@ -631,8 +667,11 @@ function renderProc(e,p,pi){ // e: 견적
           <span class="unitf"><input class="f num" inputmode="decimal" id="p${pi}-area" data-area="${pi}" value="${esc(p.areaText ?? (p.area||''))}" placeholder="84 또는 26평">
             <i id="o-p${pi}-unit">${areaHint(p.areaText ?? p.area)}</i></span>
         </div></div>
-      <label class="fl" style="width:150px">업체 <span class="muted">(고객에게 안 보임)</span>
-        <input class="f" id="p${pi}-vendor" data-bind="proc:${pi}:vendor" value="${esc(p.vendor||'')}" placeholder="예: OO타일"></label>
+      <label class="fl" style="width:150px">업체
+        <select class="f" id="p${pi}-vendor" data-procvendor="${pi}">
+          <option value="">선택 안 함</option>
+          ${vendorsFor(p.k).map(v=>`<option value="${v.id}" ${p.vendorId===v.id?'selected':''}>${esc(v.name||'(이름 없음)')}</option>`).join('')}
+        </select></label>
       <div class="proc-sum"><div class="small muted">원가 소계 · <span id="o-p${pi}-m2"></span></div><b id="o-p${pi}-cost"></b></div>
       <div class="row" style="gap:2px;flex-wrap:nowrap">
         <button class="btn ghost sm" data-act="moveProc" data-pi="${pi}" data-d="-1" title="위로" ${pi===0?'disabled':''}>▲</button>
@@ -644,10 +683,12 @@ function renderProc(e,p,pi){ // e: 견적
       <tbody>${(p.lines||[]).map((l,li)=>renderLine(p,pi,l,li)).join('') || `<tr><td colspan="11" class="muted small c-empty" style="padding:12px 8px">아래에서 자재를 추가하세요.</td></tr>`}</tbody>
     </table></div>
     <div class="proc-f">
+      ${(()=>{ const vs=vendorsFor(''); return vs.length?`<select class="f" id="p${pi}-vendorsel" data-vendorpick="${pi}" style="width:auto;max-width:150px">
+          <option value="">업체 전체</option>${vs.map(v=>`<option value="${v.id}" ${LINE_VENDOR[pi]===v.id?'selected':''}>${esc(v.name||'(이름 없음)')}</option>`).join('')}</select>`:''; })()}
       <select class="f" id="p${pi}-addsel" style="width:auto;max-width:100%" data-act-change="addLine" data-pi="${pi}">
         <option value="">+ 자재 단가표에서 추가…</option>
-        ${mats.length?`<optgroup label="${P.n}">${mats.map(m=>`<option value="${m.id}">${esc(m.name)} ${esc(m.spec||'')} · ${won(m.unitPrice)}원/${esc(m.unit)}</option>`).join('')}</optgroup>`:''}
-        ${others.length?`<optgroup label="다른 공정">${others.map(m=>`<option value="${m.id}">${esc(m.name)} ${esc(m.spec||'')}</option>`).join('')}</optgroup>`:''}
+        ${mats.length?`<optgroup label="${P.n}">${mats.map(m=>`<option value="${m.id}">${esc(m.name)} ${esc(m.spec||'')} · ${won(m.unitPrice)}원/${esc(m.unit)}${m.vendor?' · '+esc(m.vendor):''}</option>`).join('')}</optgroup>`:''}
+        ${others.length?`<optgroup label="다른 공정">${others.map(m=>`<option value="${m.id}">${esc(m.name)} ${esc(m.spec||'')}${m.vendor?' · '+esc(m.vendor):''}</option>`).join('')}</optgroup>`:''}
       </select>
       <button class="btn sm" data-act="addBlank" data-pi="${pi}">직접 입력</button>
     </div>
@@ -703,7 +744,8 @@ function recalc(){
 function renderMat(){
   const all=[...S.materials.values()];
   const counts={}; all.forEach(m=>counts[m.process]=(counts[m.process]||0)+1);
-  const list=all.filter(m=>MAT_FILTER==='all'||m.process===MAT_FILTER).sort((a,b)=>PROCS.findIndex(p=>p.k===a.process)-PROCS.findIndex(p=>p.k===b.process)||String(a.name).localeCompare(b.name,'ko'));
+  const vendors=[...S.vendors.values()].sort((a,b)=>String(a.name).localeCompare(String(b.name),'ko'));
+  const list=all.filter(m=>(MAT_FILTER==='all'||m.process===MAT_FILTER)&&(VENDOR_FILTER==='all'||(VENDOR_FILTER==='__none'?!m.vendorId:m.vendorId===VENDOR_FILTER))).sort((a,b)=>PROCS.findIndex(p=>p.k===a.process)-PROCS.findIndex(p=>p.k===b.process)||String(a.name).localeCompare(b.name,'ko'));
   return `<div class="stack">
     <div><h2>자재 단가표</h2><p class="muted" style="margin:4px 0 0">거래명세서·단가표·카톡 캡처를 올리면 자재를 뽑아 1단위 시공면적과 ㎡당 원가까지 정리합니다.</p></div>
     ${renderImport()}
@@ -719,15 +761,24 @@ function renderMat(){
       <div class="panel-b" style="padding-bottom:0"><div class="chips">
         <button class="chip" data-act="matFilter" data-k="all" aria-pressed="${MAT_FILTER==='all'}">전체 ${all.length}</button>
         ${PROCS.filter(p=>counts[p.k]).map(p=>`<button class="chip" data-act="matFilter" data-k="${p.k}" aria-pressed="${MAT_FILTER===p.k}">${p.n} ${counts[p.k]}</button>`).join('')}
-      </div></div>
+      </div>
+      ${vendors.length?`<div class="chips" style="margin-top:8px">
+        <span class="small muted" style="align-self:center">업체</span>
+        <button class="chip" data-act="vendorFilter" data-v="all" aria-pressed="${VENDOR_FILTER==='all'}">전체</button>
+        ${vendors.map(v=>`<button class="chip" data-act="vendorFilter" data-v="${v.id}" aria-pressed="${VENDOR_FILTER===v.id}">${esc(v.name||'(이름 없음)')} ${all.filter(m=>m.vendorId===v.id).length}</button>`).join('')}
+        ${all.some(m=>!m.vendorId)?`<button class="chip" data-act="vendorFilter" data-v="__none" aria-pressed="${VENDOR_FILTER==='__none'}">업체 없음 ${all.filter(m=>!m.vendorId).length}</button>`:''}
+      </div>`:''}</div>
       <div class="tbl-wrap" style="margin-top:10px"><table class="t resp">
         <thead><tr><th class="w-img">사진</th><th class="w-name">자재 · 규격</th><th>업체</th><th>공정</th><th>단위</th><th class="r">단가(원)</th><th class="r">1단위 시공㎡</th><th class="r">로스%</th><th class="r">㎡당 원가</th><th>메모</th><th></th></tr></thead>
         <tbody>${list.map(m=>`<tr>
           <td class="c-img"><button class="thumb-btn" data-act="matPhoto" data-id="${m.id}" aria-label="사진 바꾸기"><img class="thumb" src="${matImg(m)}" alt=""></button></td>
           <td class="c-name"><input class="f" id="m-${m.id}-name" data-bind="mat:${m.id}:name" value="${esc(m.name)}" placeholder="자재명" style="font-weight:500"><input class="f small" id="m-${m.id}-spec" data-bind="mat:${m.id}:spec" value="${esc(m.spec)}" placeholder="규격" style="margin-top:3px"></td>
-          <td data-l="업체"><input class="f" id="m-${m.id}-vendor" data-bind="mat:${m.id}:vendor" value="${esc(m.vendor||'')}" placeholder="거래처" style="width:110px"></td>
+          <td data-l="업체"><select class="f" id="m-${m.id}-vendor" data-matvendor="${m.id}" style="width:130px">
+            <option value="">업체 없음</option>
+            ${[...S.vendors.values()].sort((a,b)=>String(a.name).localeCompare(String(b.name),'ko')).map(v=>`<option value="${v.id}" ${m.vendorId===v.id?'selected':''}>${esc(v.name||'(이름 없음)')}</option>`).join('')}
+          </select></td>
           <td data-l="공정"><select class="f" id="m-${m.id}-proc" data-bind="mat:${m.id}:process" style="width:110px">${PROCS.map(p=>`<option value="${p.k}" ${p.k===m.process?'selected':''}>${p.n}</option>`).join('')}</select></td>
-          <td data-l="단위"><input class="f" id="m-${m.id}-unit" data-bind="mat:${m.id}:unit" value="${esc(m.unit)}" style="width:56px"></td>
+          <td data-l="단위">${unitCell(m)}</td>
           <td class="r" data-l="단가(원)"><input class="f num w-n" type="number" inputmode="numeric" step="100" id="m-${m.id}-price" data-bind="mat:${m.id}:unitPrice" data-num value="${esc(m.unitPrice)}"></td>
           <td class="r" data-l="1단위 시공㎡"><input class="f num w-s" type="number" inputmode="decimal" step="0.01" id="m-${m.id}-cov" data-bind="mat:${m.id}:coverage" data-num value="${esc(m.coverage)}" title="0이면 수량 기준 자재">${m.coverageBasis==='추정'?'<div><span class="badge warn">추정</span></div>':''}</td>
           <td class="r" data-l="로스%"><input class="f num w-s" type="number" inputmode="decimal" id="m-${m.id}-loss" data-bind="mat:${m.id}:loss" data-num value="${esc(m.loss)}"></td>
@@ -1479,6 +1530,7 @@ function renderProject(p){
 const DAYW=34;               // 하루 한 칸의 너비(px)
 const WD=['일','월','화','수','목','금','토'];
 let SEL_DAY=null;
+const LINE_VENDOR={};        // 공정별로 고른 업체 (자재 목록 좁히기)
 const LINE_SYNC={}, MAT_SYNC={};            // 눌러서 펼쳐 본 날짜
 const onDay=(t,key)=>{ const s=dnum(t.start),e=dnum(t.end),d=dnum(key); return s&&e&&d>=s&&d<=e; };
 function ganttBars(tasks,r,sel){
@@ -1733,6 +1785,29 @@ async function view3d(i){
 }
 function loadScript(src){ return new Promise((res,rej)=>{ const s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=()=>rej(new Error('불러오지 못함: '+src)); document.head.appendChild(s); }); }
 
+/* ---------- 업체 ---------- */
+function renderVendors(){
+  const list=[...S.vendors.values()].sort((a,b)=>String(a.name).localeCompare(String(b.name),'ko'));
+  const cnt=v=>[...S.materials.values()].filter(m=>m.vendorId===v.id).length;
+  return `<div class="stack">
+    <div class="row"><h2 style="flex:1">업체</h2><button class="btn pri" data-act="addVendor">+ 업체 추가</button></div>
+    <p class="muted small" style="margin:0">여기 등록한 업체를 자재와 견적에서 골라 씁니다. 공정을 지정하면 그 공정에서 먼저 보입니다.</p>
+    <section class="panel"><div class="tbl-wrap"><table class="t resp">
+      <thead><tr><th class="w-name">업체명</th><th>공정</th><th>연락처</th><th>메모</th><th class="r">자재</th><th></th></tr></thead>
+      <tbody>${list.map(v=>`<tr>
+        <td class="c-name"><input class="f" id="v-${v.id}-name" data-bind="vendor:${v.id}:name" value="${esc(v.name)}" placeholder="업체명" style="font-weight:500"></td>
+        <td data-l="공정"><select class="f" id="v-${v.id}-proc" data-bind="vendor:${v.id}:process" style="width:120px">
+          <option value="all" ${!v.process||v.process==='all'?'selected':''}>전체 공정</option>
+          ${PROCS.map(p=>`<option value="${p.k}" ${v.process===p.k?'selected':''}>${p.n}</option>`).join('')}</select></td>
+        <td data-l="연락처"><input class="f" type="tel" id="v-${v.id}-phone" data-bind="vendor:${v.id}:phone" value="${esc(v.phone||'')}" placeholder="010-0000-0000"></td>
+        <td data-l="메모"><input class="f" id="v-${v.id}-memo" data-bind="vendor:${v.id}:memo" value="${esc(v.memo||'')}" placeholder="결제 조건, 담당자 등"></td>
+        <td class="cell-out" data-l="자재"><button class="btn ghost sm" data-act="vendorMats" data-id="${v.id}">${cnt(v)}개 보기</button></td>
+        <td class="c-act"><button class="btn ghost sm danger" data-act="delVendor" data-id="${v.id}">✕ 삭제</button></td></tr>`).join('')
+        || `<tr><td colspan="6" class="empty c-empty">아직 등록한 업체가 없습니다. “+ 업체 추가”를 눌러주세요.</td></tr>`}</tbody>
+    </table></div></section>
+  </div>`;
+}
+
 /* ---------- settings ---------- */
 function renderSettings(){
   const {url,key}=sbConf(), fromFile=!!(CFG.SUPABASE_URL&&CFG.SUPABASE_KEY);
@@ -1858,6 +1933,9 @@ document.addEventListener('input',ev=>{
     const o=document.getElementById('o-m-'+m.id); if(o) o.innerHTML=perM2Html(matPerM2(m)); }
   else if(kind==='rev'){ const it=IMPORT.items[+rest[0]]; it[rest[1]]=val; if(rest[1]==='coverage') it.mode=val>0?'area':'qty';
     const o=document.getElementById('o-rv-'+rest[0]); if(o) o.innerHTML=perM2Html(matPerM2(it)); }
+  else if(kind==='vendor'){ const v=S.vendors.get(rest[0]); if(!v) return; v[rest[1]]=val; saveVendor(v);
+    if(rest[1]==='name'){ S.materials.forEach(m=>{ if(m.vendorId===v.id&&m.vendor!==val){ m.vendor=val; saveMat(m); } });
+      S.estimates.forEach(e=>{ let hit=false; (e.processes||[]).forEach(p=>{ if(p.vendorId===v.id&&p.vendor!==val){ p.vendor=val; hit=true; } }); if(hit) saveEst(e); }); } }
   else if(kind==='co'){ S.company[rest[0]]=val; saveCo(); refreshDoc(); }
   else if(kind==='proj'){ const p=curProj(); if(!p) return; p[rest[0]]=val; saveProj(p);
     if(rest[0]==='name'){ const o=document.querySelector(`#projSel option[value="${p.id}"]`); if(o) o.textContent=val+(p.share?.on?' · 공유중':''); } }
@@ -1867,8 +1945,28 @@ document.addEventListener('input',ev=>{
     const g=document.querySelector('.gantt'); if(g) g.innerHTML=ganttHTML(p,projRange(p)); }
   else if(kind==='file'){ const p=curProj(); const f=(p?.files||[]).find(x=>x.id===rest[0]); if(!f) return; f[rest[1]]=val; saveProj(p); }
 });
+function handleSelectChange(t){
+  if(t.dataset.unitsel){
+    const m=S.materials.get(t.dataset.unitsel); if(!m) return;
+    if(t.value==='__custom'){ CUSTOM_UNIT.add(m.id); m.unit=''; }
+    else { CUSTOM_UNIT.delete(m.id); m.unit=t.value; }
+    m.updated=Date.now(); saveMat(m); syncMaterialToLines(m); render();
+    if(t.value==='__custom') setTimeout(()=>document.getElementById('m-'+m.id+'-unit')?.focus(),60);
+    return;
+  }
+  if(t.dataset.vendorpick!==undefined){ LINE_VENDOR[+t.dataset.vendorpick]=t.value; render(); return; }
+  if(t.dataset.matvendor){                       // 자재의 업체 선택
+    const m=S.materials.get(t.dataset.matvendor); if(!m) return;
+    m.vendorId=t.value||''; m.vendor=vendorName(t.value); m.updated=Date.now(); saveMat(m); render(); return;
+  }
+  if(t.dataset.procvendor!==undefined){          // 견적 공정의 업체 선택
+    const e=cur(), p=e?.processes[+t.dataset.procvendor]; if(!p) return;
+    p.vendorId=t.value||''; p.vendor=vendorName(t.value); saveEst(e); render(); return;
+  }
+}
 document.addEventListener('change',ev=>{
   const t=ev.target, a=t.dataset?.actChange;
+  if(t.dataset?.unitsel||t.dataset?.vendorpick!==undefined||t.dataset?.matvendor||t.dataset?.procvendor!==undefined){ handleSelectChange(t); return; }
   if(!a) return;
   if(a==='pick'){ setCur(t.value); render(); }
   if(a==='addLine'&&t.value){ const e=cur(), p=e.processes[+t.dataset.pi], m=S.materials.get(t.value); if(m){ p.lines.push(lineFromMat(m)); saveEst(e); render(); } }
@@ -1935,6 +2033,17 @@ document.addEventListener('click',async ev=>{
     case 'revSaveAdd': saveReviewed(true); break;
     case 'revCancel': IMPORT={files:[],urls:[],busy:false,items:null,memo:'',err:''}; render(); break;
     case 'matFilter': MAT_FILTER=t.dataset.k; render(); break;
+    case 'addVendor': { const v={id:uid(),name:'',process:'all',phone:'',memo:'',updated:Date.now()};
+      S.vendors.set(v.id,v); saveVendor(v); render(); setTimeout(()=>document.getElementById('v-'+v.id+'-name')?.focus(),60); break; }
+    case 'delVendor': { const v=S.vendors.get(t.dataset.id); if(!v) break;
+      const used=[...S.materials.values()].filter(m=>m.vendorId===v.id).length;
+      if(await askConfirm({title:`“${v.name||'이름 없는 업체'}”를 지울까요?`,
+        lines:[used?`이 업체로 등록된 자재 ${used}개는 “업체 없음”이 됩니다`:'등록된 자재가 없습니다','자재와 견적 금액은 그대로 남습니다'],
+        ok:'네, 지웁니다',cancel:'아니요'})){
+        S.materials.forEach(m=>{ if(m.vendorId===v.id){ m.vendorId=''; m.vendor=''; saveMat(m); } });
+        deleteVendor(v.id); render(); } break; }
+    case 'vendorMats': VENDOR_FILTER=t.dataset.id; MAT_FILTER='all'; VIEW='mat'; ls.set('view',VIEW); render(); window.scrollTo(0,0); break;
+    case 'vendorFilter': VENDOR_FILTER=t.dataset.v; render(); break;
     case 'delSheet': { const s=S.sheets.get(t.dataset.id); if(!s) break;
       if(await askConfirm({title:'이 단가표 사진을 지울까요?',lines:['사진에서 만든 자재는 그대로 남습니다'],ok:'네, 지웁니다',cancel:'아니요'})){
         try{ await sb?.storage.from('plans').remove([s.path]); }catch(err){ console.warn(err); }
