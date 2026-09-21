@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '3.1.1';
+const APP_VERSION = '3.2.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -1024,7 +1024,7 @@ function docHTML(e){
 
     ${e.notes?`<h2 class="d-sec">비고 및 계약 조건</h2><div class="d-notes">${esc(e.notes)}</div>`:''}
     ${(co.bankName||co.bankNo||co.bank)?`<p style="margin-top:12px;font-size:12px"><b>입금 계좌</b> ${esc([co.bankName,co.bankNo,co.bankHolder&&('예금주 '+co.bankHolder)].filter(Boolean).join(' ')||co.bank||'')}</p>`:''}
-    <div class="d-sign"><div class="s">공급자 ${esc(co.name||'')} ${esc(co.ceo||'')} ${co.stamp?`<img src="${esc(co.stamp)}" alt="(인)" class="d-stamp">`:'(인)'}</div><div class="s">고객 ${esc(e.client.name||'')} (서명)</div></div>
+    <div class="d-sign"><div class="s">공급자 ${esc(e.supplier||[co.name,co.ceo].filter(Boolean).join(' '))} ${co.stamp?`<img src="${esc(co.stamp)}" alt="(인)" class="d-stamp">`:'(인)'}</div><div class="s">고객 ${esc(e.clientSign||e.client.name||'')} (서명)</div></div>
     <div class="d-foot">본 견적서의 유효기간은 ${exp}까지입니다. 본 견적서는 ${dt} 기준이며 자재 단가 변동 및 현장 실측에 따라 조정될 수 있습니다.</div>
   </article>`;
 }
@@ -1049,6 +1049,12 @@ function renderDocView(){
         <span class="spacer"></span>
         <button class="btn" data-act="print">인쇄 / PDF</button>
         <button class="btn pri" data-act="download">${isTouch()?'보내기':'파일로 저장'}</button>
+      </div>
+      <div class="client-grid" style="margin-bottom:10px">
+        <label class="fl">공급자 표기 <span class="muted">(서명란)</span>
+          <input class="f" id="d-supplier" data-bind="est:supplier" value="${esc(e.supplier||'')}" placeholder="${esc([S.company?.name,S.company?.ceo].filter(Boolean).join(' ')||'업체명 대표자')}"></label>
+        <label class="fl">고객 표기 <span class="muted">(서명란)</span>
+          <input class="f" id="d-clientsign" data-bind="est:clientSign" value="${esc(e.clientSign||'')}" placeholder="${esc(e.client.name||'고객명')}"></label>
       </div>
       <label class="fl">비고 및 계약 조건<textarea class="f" id="d-notes" rows="3" data-bind="est:notes">${esc(e.notes)}</textarea></label>
       <p class="small muted" style="margin:8px 0 0">고객용에는 원가·마진이 나오지 않습니다. 공정 금액은 원가에 이윤 ${esc(e.margin)}%를 더해 천 원 단위로 반올림한 값입니다.</p>
