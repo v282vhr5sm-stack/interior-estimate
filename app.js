@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '3.1.0';
+const APP_VERSION = '3.1.1';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -992,7 +992,7 @@ function docHTML(e){
       <div class="d-from">
         <div class="d-co">${esc(co.name||'상호명을 입력하세요')}</div>
         <dl class="d-kv">
-          ${co.ceo?`<dt>대표</dt><dd>${esc(co.ceo)} (인)</dd>`:''}
+          ${co.ceo?`<dt>대표</dt><dd>${esc(co.ceo)} ${co.stamp?`<img src="${esc(co.stamp)}" alt="(인)" class="d-stamp">`:'(인)'}</dd>`:''}
           ${co.bizNo?`<dt>사업자번호</dt><dd>${esc(co.bizNo)}</dd>`:''}
           ${co.address?`<dt>주소</dt><dd>${esc(co.address)}</dd>`:''}
           ${co.phone?`<dt>연락처</dt><dd>${esc(co.phone)}</dd>`:''}
@@ -2033,14 +2033,14 @@ document.addEventListener('click',async ev=>{
 let STAMP_PICK=false;
 $('#filePhoto').addEventListener('change',async ev=>{
   const f=ev.target.files[0]; ev.target.value='';
-  if(STAMP_PICK){ STAMP_PICK=false; if(f){ try{ S.company.stamp=await fileToStamp(f); saveCo(); render(); toast('도장을 넣었습니다'); }catch(err){ toast('사진을 읽지 못했습니다'); } } return; }
+  if(STAMP_PICK){ STAMP_PICK=false; if(f){ try{ S.company.stamp=await fileToStamp(f); saveCo(); render(); toast('도장을 넣었습니다 · 견적서 발신란과 서명란에 바로 찍힙니다'); }catch(err){ toast('사진을 읽지 못했습니다'); } } return; }
   applyPhoto(f);
 });
 /* 도장: 배경을 지우지 않고 정사각형으로 줄여 저장합니다 */
 async function fileToStamp(file){
   const img=await loadImage(file);
   const S2=240, c=document.createElement('canvas'); c.width=S2; c.height=S2;
-  const g=c.getContext('2d'); g.fillStyle='#fff'; g.fillRect(0,0,S2,S2);
+  const g=c.getContext('2d');   // 배경은 투명하게 둡니다 (PNG 도장이면 그대로 비칩니다)
   const s=Math.min(S2/img.width,S2/img.height), w=img.width*s, h=img.height*s;
   g.drawImage(img,(S2-w)/2,(S2-h)/2,w,h);
   return c.toDataURL('image/png');
