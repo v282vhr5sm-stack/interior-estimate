@@ -333,3 +333,15 @@ table.t td.c-name{ white-space:normal }
 @media (max-width:760px){
   table.resp td input.f, table.resp td select.f{ width:100%!important; max-width:none; min-width:0 }
 }
+
+
+/* 줄 순서 바꾸는 손잡이 */
+.grip{border:0;background:transparent;color:var(--muted);cursor:grab;font-size:16px;line-height:1;padding:6px 4px;border-radius:6px;touch-action:none;letter-spacing:-2px}
+.grip:hover{background:var(--surface2);color:var(--ink)}
+.grip:active{cursor:grabbing}
+tr.dragging{background:var(--accent-weak);opacity:.95}
+body.dragging-row{user-select:none}
+@media (max-width:760px){
+  table.resp td.c-move{grid-column:1/-1;align-items:flex-end}
+  .grip{font-size:20px;padding:8px 12px;border:1px solid var(--line);border-radius:8px}
+}

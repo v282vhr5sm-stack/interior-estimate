@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '4.5.0';
+const APP_VERSION = '4.6.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -572,6 +572,51 @@ document.addEventListener('keydown',ev=>{
   const c=ev.target.closest?.('.card'); if(!c) return;
   if(ev.key==='Enter'||ev.key===' '){ ev.preventDefault(); c.click(); }
 });
+/* 줄을 끌어서 순서 바꾸기 */
+let DRAG=null;
+document.addEventListener('pointerdown',ev=>{
+  const g=ev.target.closest?.('.grip'); if(!g) return;
+  const tr=g.closest('tr'), tbody=tr?.parentElement; if(!tbody) return;
+  ev.preventDefault();
+  const [pi]=g.dataset.grip.split(':').map(Number);
+  DRAG={pi, tr, tbody, from:[...tbody.children].indexOf(tr)};
+  tr.classList.add('dragging'); document.body.classList.add('dragging-row');
+  g.setPointerCapture?.(ev.pointerId);
+},{passive:false});
+document.addEventListener('pointermove',ev=>{
+  if(!DRAG) return;
+  ev.preventDefault();
+  const rows=[...DRAG.tbody.children].filter(r=>r!==DRAG.tr);
+  const y=ev.clientY;
+  let placed=false;
+  for(const r of rows){
+    const b=r.getBoundingClientRect();
+    if(y < b.top + b.height/2){ DRAG.tbody.insertBefore(DRAG.tr, r); placed=true; break; }
+  }
+  if(!placed) DRAG.tbody.appendChild(DRAG.tr);
+},{passive:false});
+document.addEventListener('pointerup',()=>{
+  if(!DRAG) return;
+  const {pi, tbody, tr, from}=DRAG;
+  const to=[...tbody.children].indexOf(tr);
+  tr.classList.remove('dragging'); document.body.classList.remove('dragging-row');
+  DRAG=null;
+  if(to<0||to===from){ render(); return; }
+  const e=cur(), p=e?.processes[pi]; if(!p) return;
+  const [moved]=p.lines.splice(from,1); p.lines.splice(to,0,moved);
+  saveEst(e); render();
+});
+document.addEventListener('keydown',ev=>{
+  const g=ev.target.closest?.('.grip'); if(!g) return;
+  if(ev.key!=='ArrowUp'&&ev.key!=='ArrowDown') return;
+  ev.preventDefault();
+  const [pi,li]=g.dataset.grip.split(':').map(Number), d=ev.key==='ArrowUp'?-1:1;
+  const e=cur(), p=e?.processes[pi]; if(!p||li+d<0||li+d>=p.lines.length) return;
+  [p.lines[li],p.lines[li+d]]=[p.lines[li+d],p.lines[li]];
+  saveEst(e); render();
+  setTimeout(()=>document.querySelector(`.grip[data-grip="${pi}:${li+d}"]`)?.focus(),60);
+});
+
 /* 사진을 누르면 크게 보고, 좌우로 넘길 수 있습니다 */
 let LB={list:[],i:0,el:null};
 function openLightbox(list,i){
@@ -758,8 +803,8 @@ function renderProc(e,p,pi){ // e: 견적
     <div class="proc-f"><button class="btn sm" data-act="addBlank" data-pi="${pi}">+ 줄 추가</button>
       <span class="muted small">줄에서 업체와 품명을 고르세요. 엔터를 치면 같은 품명으로 한 줄 더 생깁니다.</span></div>
     <div class="tbl-wrap"><table class="t resp">
-      <thead><tr><th class="w-img"></th><th>업체</th><th class="w-name">품명 · 규격</th><th class="r">수량</th><th>단위</th><th class="r">재료비 단가</th><th class="r">재료비 금액</th><th class="r">노무비 단가</th><th class="r">노무비 금액</th><th class="r">합계</th><th>비고</th><th></th></tr></thead>
-      <tbody>${(p.lines||[]).map((l,li)=>renderLine(p,pi,l,li)).join('') || `<tr><td colspan="12" class="muted small c-empty" style="padding:12px 8px">위에서 업체와 품명을 고르거나 “직접 입력”을 누르세요.</td></tr>`}</tbody>
+      <thead><tr><th class="w-img"></th><th></th><th>업체</th><th class="w-name">품명 · 규격</th><th class="r">수량</th><th>단위</th><th class="r">재료비 단가</th><th class="r">재료비 금액</th><th class="r">노무비 단가</th><th class="r">노무비 금액</th><th class="r">합계</th><th>비고</th><th></th></tr></thead>
+      <tbody>${(p.lines||[]).map((l,li)=>renderLine(p,pi,l,li)).join('') || `<tr><td colspan="13" class="muted small c-empty" style="padding:12px 8px">위에서 업체와 품명을 고르거나 “직접 입력”을 누르세요.</td></tr>`}</tbody>
     </table></div>
     <div class="labor">
       <span>재료비 <b id="o-p${pi}-mat"></b></span>
@@ -781,6 +826,7 @@ function renderLine(p,pi,l,li){
   const opt=x=>`<option value="${x.id}" ${l.mid===x.id?'selected':''}>${esc(x.name)}${x.spec?' '+esc(x.spec):''} · ${won(x.unitPrice)}${num(x.laborPrice)?'+'+won(x.laborPrice):''}원/${esc(x.unit||'')}</option>`;
   return `<tr>
     <td class="c-img"><button class="thumb-btn" data-act="linePhoto" data-pi="${pi}" data-li="${li}" aria-label="사진 바꾸기"><img class="thumb" src="${lineImg(l,p.k)}" alt=""></button></td>
+    <td class="c-move"><button class="grip" data-grip="${pi}:${li}" title="끌어서 순서 바꾸기 (↑↓ 키로도 이동)" aria-label="줄 순서 바꾸기">⠿</button></td>
     <td data-l="업체"><select class="f" id="${id}-vendor" data-linevendor="${pi}:${li}">
         <option value="">업체 전체</option>
         ${vend.map(v=>`<option value="${v.id}" ${vid===v.id?'selected':''}>${esc(v.name||'(이름 없음)')}</option>`).join('')}
@@ -2275,6 +2321,11 @@ document.addEventListener('click',async ev=>{
       if(res&&res.checked){ const n=syncMaterialToLines(m); toast(`단가표와 견적 ${n}곳을 바꿨습니다`); }
       else toast('단가표 금액을 바꿨습니다');
       render(); break; }
+    case 'moveLine': { const p=e.processes[+t.dataset.pi], li=+t.dataset.li, d=+t.dataset.d;
+      if(li+d<0||li+d>=p.lines.length) break;
+      [p.lines[li],p.lines[li+d]]=[p.lines[li+d],p.lines[li]]; saveEst(e); render();
+      setTimeout(()=>document.querySelector(`[data-act="moveLine"][data-pi="${t.dataset.pi}"][data-li="${li+d}"][data-d="${d}"]`)?.focus(),60);
+      break; }
     case 'delLine': e.processes[+t.dataset.pi].lines.splice(+t.dataset.li,1); saveEst(e); render(); break;
     case 'refreshPrices': { let n=0; e.processes.forEach(p=>p.lines.forEach(l=>{ const m=l.mid&&S.materials.get(l.mid); if(m&&num(m.unitPrice)!==num(l.matPrice)){ l.matPrice=num(m.unitPrice); n++; } })); saveEst(e); render(); toast(n?`${n}개 자재 단가를 바꿨습니다`:'바뀐 단가가 없습니다'); break; }
     case 'goImport': VIEW='mat'; render(); $('#fileSheet').click(); break;
