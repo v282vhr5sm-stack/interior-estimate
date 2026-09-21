@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.4.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -833,6 +833,24 @@ async function publishShare(p){
   }catch(e){ console.warn('share',e); toast('공유 링크 갱신에 실패했습니다: '+(e.message||'')); }
 }
 async function unpublishShare(token){ if(!sb||!session||!token) return; try{ await sb.from('shares').delete().eq('token',token); }catch(e){ console.warn(e); } }
+/* 준공: 링크는 살아 있지만 안내만 보이게 내용을 비웁니다 */
+async function closeShare(p){
+  if(!sb||!session||!p.share?.token) return;
+  try{ await sb.from('shares').upsert({token:p.share.token,user_id:session.user.id,
+    payload:{v:1,closed:true,site:{name:p.name},endedAt:p.endedAt,company:{name:S.company?.name||'',phone:S.company?.phone||''}},
+    updated_at:new Date().toISOString()},{onConflict:'token'}); }catch(e){ console.warn(e); }
+}
+async function startWork(p){
+  if(!sb||!session){ toast('로그인한 상태에서만 공유 링크를 만들 수 있습니다.'); return; }
+  p.status='착공'; p.startedAt=today(); p.endedAt='';
+  p.share={...(p.share||{}),on:true,token:p.share?.token||(uid()+uid()),showMemo:p.share?.showMemo!==false};
+  saveProj(p); await publishShare(p); render(); toast('착공했습니다. 공유 링크가 열렸어요.');
+}
+async function endWork(p){
+  if(!confirm(`“${p.name}” 준공 처리할까요?\n고객·작업자 링크는 바로 닫히고, 자료는 그대로 남습니다.`)) return;
+  p.status='준공'; p.endedAt=today(); p.share={...(p.share||{}),on:false};
+  saveProj(p); await closeShare(p); render(); toast('준공 처리했습니다. 공유 링크가 닫혔어요.');
+}
 async function toggleShare(p,on){
   if(on){
     if(!sb||!session){ toast('로그인한 상태에서만 공유 링크를 만들 수 있습니다.'); return; }
@@ -864,6 +882,33 @@ async function uploadPlans(files,p){
       saveProj(p); render(); toast(`${f.name} 올렸습니다`);
     }catch(e){ toast(`${f.name} 올리지 못했습니다: ${e.message||e}`); }
   }
+}
+/* 현장 자료 내려받기(ZIP) · 정리 */
+async function archiveProject(p,thenDelete){
+  const files=p.files||[];
+  toast('자료를 모으는 중입니다…');
+  try{
+    if(!window.JSZip) await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js');
+    const zip=new JSZip();
+    zip.file('현장정보.json',JSON.stringify({...strip(p),id:undefined},null,2));
+    zip.file('공정일정.csv','﻿'+['작업,시작,종료,담당,상태,작업 메모',
+      ...(p.tasks||[]).map(t=>[t.name,t.start,t.end,t.worker,t.status,t.memo].map(v=>`"${String(v||'').replace(/"/g,'""')}"`).join(','))].join('\r\n'));
+    zip.file('보고서.html',reportHTML(p,true));
+    let failed=0;
+    for(const f of files){
+      try{ const res=await fetch(f.url); if(!res.ok) throw new Error(res.status);
+        zip.file((fileKind(f)==='img'?'사진/':'도면/')+f.name.replace(/[\\/]/g,'_'),await res.blob()); }
+      catch{ failed++; }
+    }
+    const blob=await zip.generateAsync({type:'blob'});
+    await shareOrDownload(`${p.name.replace(/[\\/:*?"<>|]/g,'')}_자료.zip`,blob);
+    if(failed) toast(`파일 ${failed}개는 내려받지 못했습니다.`);
+    if(thenDelete){
+      if(!confirm(`ZIP을 저장하셨나요?\n확인을 누르면 “${p.name}” 현장과 올린 파일 ${files.length}개를 서버에서 지웁니다. 되돌릴 수 없습니다.`)) return;
+      if(files.length) try{ await sb?.storage.from('plans').remove(files.map(f=>f.path)); }catch(e){ console.warn(e); }
+      deleteProj(p.id); S.curPid=[...S.projects.keys()][0]||null; ls.set('curPid',S.curPid); render(); toast('현장을 정리했습니다.');
+    }
+  }catch(e){ toast('내려받지 못했습니다: '+(e.message||e)); }
 }
 async function removePlan(p,fid){
   const f=(p.files||[]).find(x=>x.id===fid); if(!f) return;
@@ -950,6 +995,35 @@ function renderProject(p){
     </section>
 
     <section class="panel">
+      <div class="panel-h"><h3>공사 상태</h3><span class="spacer"></span><span class="badge${p.status==='준공'?'':' warn'}">${esc(p.status||'준비')}</span></div>
+      <div class="panel-b">
+        <div class="row">
+          ${p.status!=='착공'?`<button class="btn pri" data-act="startWork">착공 — 공유 링크 열기</button>`:''}
+          ${p.status==='착공'?`<button class="btn" data-act="endWork">준공 — 공유 링크 닫기</button>`:''}
+          ${p.status==='준공'?`<button class="btn" data-act="reportPdf">공사 보고서 PDF</button>`:''}
+        </div>
+        <p class="muted small" style="margin:10px 0 0">
+          ${p.status==='착공'?`${esc(p.startedAt||'')} 착공 · 고객과 작업자가 링크로 일정을 보고 있습니다.`
+            :p.status==='준공'?`${esc(p.endedAt||'')} 준공 · 링크를 열면 “공사가 끝났습니다” 안내만 보이고 일정·사진은 보이지 않습니다.`
+            :'착공을 누르면 공유 링크가 만들어지고, 준공을 누르면 링크가 자동으로 닫힙니다.'}</p>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-h"><h3>보관 · 정리</h3></div>
+      <div class="panel-b">
+        <p class="muted small" style="margin:0">현장 자료는 계속 남아 있습니다. 정리하고 싶을 때 먼저 내려받고 지우세요.</p>
+        <div class="row" style="margin-top:10px">
+          <button class="btn" data-act="reportPdf">공사 보고서 PDF</button>
+          <button class="btn" data-act="archiveProj">현장 자료 내려받기 (ZIP)</button>
+          <span class="spacer"></span>
+          <button class="btn ghost danger" data-act="purgeProj">내려받고 현장 지우기</button>
+        </div>
+        <p class="muted small" style="margin:10px 0 0">ZIP에는 일정·지시사항 정리본과 올린 파일 원본이 모두 들어갑니다. 사진 ${(p.files||[]).filter(f=>fileKind(f)==='img').length}장, 도면·기타 ${(p.files||[]).filter(f=>fileKind(f)!=='img').length}개.</p>
+      </div>
+    </section>
+
+    <section class="panel">
       <div class="panel-h"><h3>고객·작업자 공유</h3><span class="muted small">일정과 도면만 보입니다. 견적과 원가는 절대 나오지 않습니다.</span></div>
       <div class="panel-b">
         <label class="row" style="gap:8px"><input type="checkbox" id="sh-on" ${p.share?.on?'checked':''} data-act-change="shareOn"> <b>공유 링크 켜기</b></label>
@@ -1032,6 +1106,78 @@ function renderMonth(){
   </section>`;
 }
 
+/* 공사 보고서 (인쇄 → PDF로 저장) */
+const REPORT_CSS=`
+#report{--r-ink:#1a1a1a;--r-mut:#5f6360;--r-line:#cfd3d0;background:#fff;color:var(--r-ink);max-width:794px;margin:0 auto;padding:40px;
+  font-family:"IBM Plex Sans KR","Apple SD Gothic Neo","Malgun Gothic",sans-serif;font-size:12.5px;line-height:1.55;font-variant-numeric:tabular-nums}
+#report h1{font-size:26px;margin:0 0 4px}
+#report .r-sub{color:var(--r-mut);margin-bottom:20px}
+#report h2{font-size:14px;margin:26px 0 8px;padding-bottom:5px;border-bottom:1px solid var(--r-ink)}
+#report dl.r-kv{display:grid;grid-template-columns:90px 1fr 90px 1fr;gap:4px 10px;margin:0 0 6px;font-size:12px}
+#report dl.r-kv dt{color:var(--r-mut)}#report dl.r-kv dd{margin:0}
+#report table{width:100%;border-collapse:collapse;font-size:11.5px}
+#report th{background:#f1f4f2;text-align:left;padding:6px 7px;border-top:1px solid var(--r-line);border-bottom:1px solid var(--r-line)}
+#report td{padding:6px 7px;border-bottom:1px solid var(--r-line);vertical-align:top}
+#report .done{color:var(--r-mut)}
+#report ul.r-memo{margin:0;padding-left:18px}
+#report ul.r-memo li{margin-bottom:5px}
+#report .r-photos{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:8px}
+#report figure{margin:0;break-inside:avoid;page-break-inside:avoid}
+#report figure img{width:100%;aspect-ratio:4/3;object-fit:cover;border:1px solid var(--r-line)}
+#report figcaption{font-size:10.5px;color:var(--r-mut);margin-top:3px;word-break:break-all}
+#report .r-foot{margin-top:28px;text-align:center;color:var(--r-mut);font-size:11px}
+@media print{@page{size:A4;margin:12mm} #report{padding:0;max-width:none}}`;
+(()=>{ const st=document.createElement('style'); st.textContent=REPORT_CSS+
+  '\n#reportStage{display:none}\n@media print{body.printing > *{display:none!important} body.printing #reportStage{display:block!important}}';
+  document.head.appendChild(st); })();
+function reportHTML(p,forZip){
+  const co=S.company||{}, r=projRange(p), tasks=(p.tasks||[]).slice().sort((a,b)=>String(a.start||'').localeCompare(String(b.start||'')));
+  const imgs=(p.files||[]).filter(f=>fileKind(f)==='img'), others=(p.files||[]).filter(f=>fileKind(f)!=='img');
+  const src=f=>forZip?('사진/'+f.name.replace(/[\\/]/g,'_')):f.url;
+  const body=`<article id="report">
+    <h1>${esc(p.name)} 공사 보고서</h1>
+    <div class="r-sub">${esc(co.name||'')}${co.phone?' · '+esc(co.phone):''} · 출력일 ${today()}</div>
+    <dl class="r-kv">
+      <dt>고객</dt><dd>${esc(p.client||'-')}</dd><dt>연락처</dt><dd>${esc(p.phone||'-')}</dd>
+      <dt>현장</dt><dd>${esc(p.address||'-')}</dd><dt>상태</dt><dd>${esc(p.status||'준비')}</dd>
+      <dt>착공</dt><dd>${esc(p.startedAt||'-')}</dd><dt>준공</dt><dd>${esc(p.endedAt||'-')}</dd>
+      <dt>공사 기간</dt><dd>${r?`${dstr(r.from)} ~ ${dstr(r.to)} (${Math.round((r.to-r.from)/DAY)+1}일)`:'-'}</dd>
+      <dt>진행률</dt><dd>${projProgress(p)}% (${tasks.filter(t=>t.status==='완료').length}/${tasks.length})</dd>
+    </dl>
+    ${p.note?`<p>${esc(p.note)}</p>`:''}
+
+    <h2>공정 일정</h2>
+    <table><thead><tr><th style="width:26px">No</th><th>작업</th><th style="width:170px">기간</th><th style="width:80px">담당</th><th style="width:52px">상태</th></tr></thead>
+      <tbody>${tasks.map((t,i)=>`<tr class="${t.status==='완료'?'done':''}"><td>${i+1}</td><td>${esc(t.name)}</td>
+        <td>${esc(t.start||'')}${t.end&&t.end!==t.start?' ~ '+esc(t.end):''}${t.start&&t.end?` (${Math.round((dnum(t.end)-dnum(t.start))/DAY)+1}일)`:''}</td>
+        <td>${esc(t.worker||'-')}</td><td>${esc(t.status||'예정')}</td></tr>`).join('')||'<tr><td colspan="5">등록된 일정이 없습니다.</td></tr>'}</tbody></table>
+
+    ${tasks.some(t=>t.memo)?`<h2>작업 지시사항</h2><ul class="r-memo">${tasks.filter(t=>t.memo).map(t=>`<li><b>${esc(t.name)}</b> (${esc(t.start||'')}${t.worker?' · '+esc(t.worker):''}) — ${esc(t.memo)}</li>`).join('')}</ul>`:''}
+
+    ${imgs.length?`<h2>현장 사진 ${imgs.length}장</h2><div class="r-photos">${imgs.map(f=>`<figure><img src="${esc(src(f))}" alt=""><figcaption>${esc(f.name)}</figcaption></figure>`).join('')}</div>`:''}
+
+    ${others.length?`<h2>도면 · 첨부 파일</h2><table><thead><tr><th>파일</th><th style="width:80px">종류</th><th style="width:70px">크기</th></tr></thead>
+      <tbody>${others.map(f=>`<tr><td>${esc(f.name)}</td><td>${KIND_LABEL[fileKind(f)]}</td><td>${(f.size/1024/1024).toFixed(1)}MB</td></tr>`).join('')}</tbody></table>
+      ${forZip?'<p class="r-sub">원본 파일은 이 ZIP의 “도면” 폴더에 있습니다.</p>':''}`:''}
+
+    <div class="r-foot">${esc(co.name||'')}${co.phone?' · '+esc(co.phone):''}${co.address?' · '+esc(co.address):''}</div>
+  </article>`;
+  if(!forZip) return body;
+  return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${esc(p.name)} 공사 보고서</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;600;700&display=swap">
+<style>body{margin:0;background:#eef0ed;padding:20px 0}${REPORT_CSS}</style></head><body>${body}
+<p style="text-align:center;font-size:12px;color:#666">PDF로 저장하려면 이 파일을 브라우저에서 열고 Ctrl+P(맥은 ⌘P) → “PDF로 저장”을 고르세요.</p></body></html>`;
+}
+async function reportPdf(p){
+  const old=document.getElementById('reportStage'); if(old) old.remove();
+  const stage=document.createElement('div'); stage.id='reportStage'; stage.innerHTML=reportHTML(p,false);
+  document.body.appendChild(stage); document.body.classList.add('printing');
+  const imgs=[...stage.querySelectorAll('img')];
+  await Promise.all(imgs.map(im=>im.complete?Promise.resolve():new Promise(r=>{im.onload=im.onerror=r;})));
+  try{ window.print(); }catch{ toast('인쇄 창을 열지 못했습니다.'); }
+  setTimeout(()=>{ document.body.classList.remove('printing'); stage.remove(); },800);
+}
+
 /* 공유 링크로 열었을 때 보이는 화면 (로그인 없음, 수정 불가) */
 async function renderViewer(token){
   window.__viewerMode=true;
@@ -1053,6 +1199,13 @@ async function renderViewer(token){
 }
 function paintViewer(){
   const app=$('#app'), payload=window.__viewerPayload; if(!payload) return;
+  if(payload.closed){
+    app.innerHTML=`<div class="panel" style="max-width:520px;margin:6vh auto"><div class="empty">
+      <h2 style="margin-bottom:8px">공사가 끝났습니다</h2>
+      <p>${esc(payload.site?.name||'')}${payload.endedAt?` · ${esc(payload.endedAt)} 준공`:''}</p>
+      <p class="small">그동안 협조해주셔서 감사합니다. 문의는 ${esc(payload.company?.name||'담당자')}${payload.company?.phone?` (${esc(payload.company.phone)})`:''}에게 연락해주세요.</p>
+    </div></div>`; return;
+  }
   const s=payload.site||{}, tasks=payload.tasks||[], files=payload.files||[];
   const r=tasks.length?{from:Math.min(...tasks.map(t=>dnum(t.start)).filter(Boolean)),to:Math.max(...tasks.map(t=>dnum(t.end)).filter(Boolean))}:null;
   const todayT=dnum(today());
@@ -1301,7 +1454,11 @@ document.addEventListener('click',async ev=>{
     case 'projFromEst': { const n=newProject(e); e.processes.forEach((pr,i)=>{ const P=PMAP[pr.k]||PMAP.etc; const st=addDays(today(),i*2);
         n.tasks.push({id:uid(),proc:pr.k,name:P.n,start:st,end:addDays(st,1),worker:'',status:'예정',memo:''}); });
       S.projects.set(n.id,n); S.curPid=n.id; ls.set('curPid',n.id); saveProj(n); VIEW='sched'; SCHED_MODE='site'; ls.set('view',VIEW); render(); toast('견적의 공정으로 일정을 만들었습니다. 날짜를 고쳐주세요.'); break; }
-    case 'delProj': { const p=curProj(); if(p&&confirm(`“${p.name}” 현장을 삭제할까요? 공유 링크도 닫힙니다.`)){ deleteProj(p.id); S.curPid=[...S.projects.keys()][0]||null; ls.set('curPid',S.curPid); render(); } break; }
+    case 'delProj': { const p=curProj(); if(!p) break;
+      const n=(p.files||[]).length;
+      if(confirm(`“${p.name}” 현장을 삭제할까요? 공유 링크도 닫히고${n?` 올린 파일 ${n}개도 지워집니다`:'요'}.\n자료를 남기려면 먼저 “현장 자료 내려받기”를 쓰세요.`)){
+        if(n) try{ await sb?.storage.from('plans').remove(p.files.map(f=>f.path)); }catch(err){ console.warn(err); }
+        deleteProj(p.id); S.curPid=[...S.projects.keys()][0]||null; ls.set('curPid',S.curPid); render(); } break; }
     case 'addTask': { const p=curProj(); const k=t.dataset.k; const P=PMAP[k];
       const last=(p.tasks||[]).map(x=>x.end).filter(Boolean).sort().pop();
       const st=last?addDays(last,1):today();
@@ -1316,6 +1473,11 @@ document.addEventListener('click',async ev=>{
       p.tasks.push({...src,id:uid(),name:src.name.replace(/ \d+차$/,'')+` ${same+1}차`,start:st,end:addDays(st,len),status:'예정'});
       saveProj(p); render(); toast('같은 작업을 뒤쪽 날짜로 하나 더 넣었습니다. 날짜를 고쳐주세요.'); break; }
     case 'sortTasks': { const p=curProj(); p.tasks.sort((a,b)=>String(a.start||'').localeCompare(String(b.start||''))); saveProj(p); render(); break; }
+    case 'startWork': startWork(curProj()); break;
+    case 'endWork': endWork(curProj()); break;
+    case 'reportPdf': reportPdf(curProj()); break;
+    case 'archiveProj': archiveProject(curProj(),false); break;
+    case 'purgeProj': archiveProject(curProj(),true); break;
     case 'delTask': { const p=curProj(); p.tasks.splice(+t.dataset.ti,1); saveProj(p); render(); break; }
     case 'pickPlan': $('#filePlan').click(); break;
     case 'delPlan': removePlan(curProj(),t.dataset.fid); break;
