@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '3.0.0';
+const APP_VERSION = '3.0.1';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -1017,7 +1017,7 @@ function renderNewSite(){
     <div class="row"><button class="btn ghost" data-act="homeBack">‹ 현장 목록</button></div>
     <section class="panel"><div class="panel-h"><h2>새 현장</h2></div>
       <form class="panel-b" id="newSiteForm" style="display:flex;flex-direction:column;gap:12px">
-        <label class="fl">현장 이름 <span class="muted">(비워두면 현장 주소가 제목이 됩니다)</span>
+        <label class="fl">현장 이름
           <input class="f" id="ns-name" placeholder="예: 상계동 주공 302동 1501호"></label>
         <div class="client-grid">
           <label class="fl">고객명<input class="f" id="ns-client" placeholder="홍길동"></label>
