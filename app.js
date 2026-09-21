@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '2.3.0';
+const APP_VERSION = '2.4.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -355,6 +355,21 @@ function parseArea(s){
   const m2 = inPy ? Math.round(v*PY*10)/10 : v;
   return {m2, py:ceilPy(m2), typed:inPy?'평':'㎡'};
 }
+/* 면적: 숫자 + 단위(㎡/평)를 따로 저장하고, 반대 단위를 같은 크기 글씨로 보여줍니다 */
+function sizeOf(c){
+  if(c && c.sizeVal!=null && c.sizeVal!=='') return {val:c.sizeVal, unit:c.sizeUnit==='py'?'py':'m2'};
+  const a=parseArea(c?.size);                      // 예전에 글로 적어둔 값 읽기
+  if(!a.m2) return {val:'', unit:'m2'};
+  return a.typed==='평' ? {val:Math.round(a.m2/PY*10)/10, unit:'py'} : {val:a.m2, unit:'m2'};
+}
+function sizeConv(c){
+  const {val,unit}=sizeOf(c); const v=num(val); if(!v) return '';
+  return unit==='py' ? `= ${r1(v*PY)}㎡` : `= ${ceilPy(v)}평`;
+}
+function sizeText(c){
+  const {val,unit}=sizeOf(c); const v=num(val); if(!v) return '';
+  return unit==='py' ? `${r1(v)}평 (${r1(v*PY)}㎡)` : `${r1(v)}㎡ (${ceilPy(v)}평)`;
+}
 function areaHint(s){
   if(/평/.test(String(s))&&/㎡|m2/i.test(String(s))) return '';   // 이미 둘 다 적혀 있으면 그대로 둡니다
   const a=parseArea(s); if(!a.m2) return '';
@@ -439,8 +454,10 @@ function renderEst(){
         <label class="fl">고객명<input class="f" id="c-name" data-bind="est:client.name" value="${esc(e.client.name)}" placeholder="홍길동"></label>
         <label class="fl">연락처<input class="f" type="tel" id="c-phone" data-bind="est:client.phone" value="${esc(e.client.phone)}" placeholder="010-0000-0000"></label>
         <label class="fl span2">현장 주소<input class="f" id="c-addr" data-bind="est:client.address" value="${esc(e.client.address)}"></label>
-        <label class="fl">평형 / 전용면적<span class="unitf" style="width:100%"><input class="f" id="c-size" data-bind="est:client.size" value="${esc(e.client.size)}" placeholder="84 또는 32평">
-          <i id="o-size-conv">${sizeHint(e.client.size)}</i></span></label>
+        <label class="fl">면적<span class="sizef">
+          <input class="f num" id="c-sizeval" data-size="val" inputmode="decimal" value="${esc(sizeOf(e.client).val||'')}" placeholder="84">
+          <select class="f" id="c-sizeunit" data-size="unit"><option value="m2" ${sizeOf(e.client).unit!=='py'?'selected':''}>㎡</option><option value="py" ${sizeOf(e.client).unit==='py'?'selected':''}>평</option></select>
+          <b id="o-size-conv" class="conv">${sizeConv(e.client)}</b></span></label>
         <label class="fl">견적일<input class="f" type="date" id="c-date" data-bind="est:date" value="${esc(e.date)}"></label>
         <label class="fl">유효기간(일)<input class="f num" type="number" inputmode="numeric" id="c-valid" data-bind="est:validDays" data-num value="${esc(e.validDays)}"></label>
       </div></section>
@@ -788,7 +805,7 @@ function docHTML(e){
         <div class="d-name">${esc(e.client.name||'고객')} 귀하</div>
         <dl class="d-kv">
           ${e.client.address?`<dt>현장</dt><dd>${esc(e.client.address)}</dd>`:''}
-          ${e.client.size?`<dt>면적</dt><dd>${esc(e.client.size)}${sizeHint(e.client.size)?' ('+sizeHint(e.client.size).replace('= ','')+')':''}</dd>`:''}
+          ${sizeText(e.client)||e.client.size?`<dt>면적</dt><dd>${esc(sizeText(e.client)||e.client.size)}</dd>`:''}
           ${e.client.phone?`<dt>연락처</dt><dd>${esc(e.client.phone)}</dd>`:''}
           <dt>공사명</dt><dd>${esc(e.title)}</dd>
           <dt>유효기간</dt><dd>${exp}까지</dd>
@@ -874,8 +891,8 @@ function renderNewSite(){
     <div class="row"><button class="btn ghost" data-act="homeBack">‹ 현장 목록</button></div>
     <section class="panel"><div class="panel-h"><h2>새 현장</h2></div>
       <form class="panel-b" id="newSiteForm" style="display:flex;flex-direction:column;gap:12px">
-        <label class="fl">현장 이름 <span class="muted">(여기 쓴 이름이 현장 제목이 됩니다)</span>
-          <input class="f" id="ns-name" required placeholder="예: 상계동 주공 302동 1501호"></label>
+        <label class="fl">현장 이름 <span class="muted">(비워두면 현장 주소가 제목이 됩니다)</span>
+          <input class="f" id="ns-name" placeholder="예: 상계동 주공 302동 1501호"></label>
         <div class="client-grid">
           <label class="fl">고객명<input class="f" id="ns-client" placeholder="홍길동"></label>
           <label class="fl">연락처<input class="f" type="tel" id="ns-phone" placeholder="010-0000-0000"></label>
@@ -907,9 +924,9 @@ function renderHome(){
         <div class="row" style="gap:6px"><span class="badge${p.status==='준공'?'':' warn'}">${esc(p.status||'준비')}</span>
           ${p.share?.on?'<span class="badge">공유중</span>':''}<span class="spacer"></span>
           <span class="muted small">${r?`${dstr(r.from).slice(5)}~${dstr(r.to).slice(5)}`:'일정 없음'}</span>
-          <button class="card-x" data-act="renameSite" data-id="${p.id}" title="현장 이름 고치기" aria-label="${esc(p.name||'현장')} 이름 고치기">✎</button>
-          <button class="card-x" data-act="delSite" data-id="${p.id}" title="이 현장 삭제" aria-label="${esc(p.name||'현장')} 삭제">✕</button></div>
-        <b class="card-t">${p.name?esc(p.name):'<span class="muted">이름 없음 — 눌러서 지정</span>'}</b>
+          <button class="card-x" data-act="renameSite" data-id="${p.id}" title="현장 이름 고치기" aria-label="${esc(siteName(p))} 이름 고치기">✎</button>
+          <button class="card-x" data-act="delSite" data-id="${p.id}" title="이 현장 삭제" aria-label="${esc(siteName(p))} 삭제">✕</button></div>
+        <b class="card-t">${esc(siteName(p))}${p.name?'':' <span class="badge warn">주소</span>'}</b>
         <span class="muted small">${esc(p.client||'')}${p.address?' · '+esc(p.address):''}</span>
         <div class="prog"><span style="width:${prog}%"></span></div>
         <div class="row small muted" style="gap:10px">
@@ -942,7 +959,7 @@ function renderHub(p){
     <div class="row"><button class="btn ghost" data-act="homeBack">‹ 현장 목록</button><span class="spacer"></span>
       <span class="badge${p.status==='준공'?'':' warn'}">${esc(p.status||'준비')}</span></div>
     <section class="panel"><div class="panel-b">
-      <h2>${p.name?esc(p.name):'<span class="muted">이름 없음</span>'}</h2>
+      <h2>${esc(siteName(p))}</h2>
       <div class="muted small" style="margin-top:4px">${[p.client&&p.client+' 님',p.phone,p.address].filter(Boolean).map(esc).join(' · ')||'고객 정보 없음'}</div>
       <div class="prog" style="margin:12px 0 6px"><span style="width:${prog}%"></span></div>
       <div class="row small muted" style="gap:12px">
@@ -980,6 +997,7 @@ const dstr = d => { const x=new Date(d); return isNaN(x)?'':x.getFullYear()+'-'+
 const dnum = s => { const x=new Date(s+'T00:00:00'); return isNaN(x)?null:x.getTime(); };
 const addDays = (s,n) => dstr(new Date(dnum(s)+n*DAY));
 const STATUS = {예정:'#8a949013',진행:'var(--accent)',완료:'var(--muted)'};
+const siteName = p => (p && p.name || '').trim() || (p && p.address || '').trim() || ((p && p.client || '').trim() ? p.client + ' 고객님 현장' : '') || '이름 없는 현장';
 function newProject(from){
   const p={id:uid(),name:from?.title||'',client:from?.client?.name||'',phone:from?.client?.phone||'',address:from?.client?.address||'',
     note:'',estimateId:from?.id||null,tasks:[],files:[],share:{on:false,token:'',showMemo:true},updated:Date.now()};
@@ -1002,7 +1020,7 @@ const shareUrl = t => location.origin + location.pathname + '?s=' + t;
 function sharePayload(p){
   const r=projRange(p);
   return {v:1, updatedAt:new Date().toISOString(),
-    site:{name:p.name,address:p.address,note:p.note,client:p.client,
+    site:{name:siteName(p),address:p.address,note:p.note,client:p.client,
       from:r?dstr(r.from):'', to:r?dstr(r.to):'', progress:projProgress(p)},
     showMemo:p.share?.showMemo!==false,
     tasks:(p.tasks||[]).map(t=>({id:t.id,name:t.name,proc:t.proc,start:t.start,end:t.end,worker:t.worker,status:t.status||'예정',memo:p.share?.showMemo!==false?(t.memo||''):''})),
@@ -1024,7 +1042,7 @@ async function unpublishShare(token){ if(!sb||!session||!token) return; try{ awa
 async function closeShare(p){
   if(!sb||!session||!p.share?.token) return;
   try{ await sb.from('shares').upsert({token:p.share.token,user_id:session.user.id,
-    payload:{v:1,closed:true,site:{name:p.name},endedAt:p.endedAt,company:{name:S.company?.name||'',phone:S.company?.phone||''}},
+    payload:{v:1,closed:true,site:{name:siteName(p)},endedAt:p.endedAt,company:{name:S.company?.name||'',phone:S.company?.phone||''}},
     updated_at:new Date().toISOString()},{onConflict:'token'}); }catch(e){ console.warn(e); }
 }
 async function startWork(p){
@@ -1034,7 +1052,7 @@ async function startWork(p){
   saveProj(p); await publishShare(p); render(); toast('착공했습니다. 공유 링크가 열렸어요.');
 }
 async function endWork(p){
-  if(!confirm(`“${p.name}” 준공 처리할까요?\n고객·작업자 링크는 바로 닫히고, 자료는 그대로 남습니다.`)) return;
+  if(!confirm(`“${siteName(p)}” 준공 처리할까요?\n고객·작업자 링크는 바로 닫히고, 자료는 그대로 남습니다.`)) return;
   p.status='준공'; p.endedAt=today(); p.share={...(p.share||{}),on:false};
   saveProj(p); await closeShare(p); render(); toast('준공 처리했습니다. 공유 링크가 닫혔어요.');
 }
@@ -1090,10 +1108,10 @@ async function archiveProject(p,thenDelete){
       catch{ failed++; }
     }
     const blob=await zip.generateAsync({type:'blob'});
-    await shareOrDownload(`${p.name.replace(/[\\/:*?"<>|]/g,'')}_자료.zip`,blob);
+    await shareOrDownload(`${siteName(p).replace(/[\\/:*?"<>|]/g,'')}_자료.zip`,blob);
     if(failed) toast(`파일 ${failed}개는 내려받지 못했습니다.`);
     if(thenDelete){
-      if(!confirm(`ZIP을 저장하셨나요?\n확인을 누르면 “${p.name}” 현장과 올린 파일 ${files.length}개를 서버에서 지웁니다. 되돌릴 수 없습니다.`)) return;
+      if(!confirm(`ZIP을 저장하셨나요?\n확인을 누르면 “${siteName(p)}” 현장과 올린 파일 ${files.length}개를 서버에서 지웁니다. 되돌릴 수 없습니다.`)) return;
       if(files.length) try{ await sb?.storage.from('plans').remove(files.map(f=>f.path)); }catch(e){ console.warn(e); }
       deleteProj(p.id); S.curPid=[...S.projects.keys()][0]||null; ls.set('curPid',S.curPid); render(); toast('현장을 정리했습니다.');
     }
@@ -1125,7 +1143,7 @@ function renderSched(){
   const p=curProj()||list[0];
   return `<div class="stack">${head}
     <div class="row">
-      <select class="f" id="projSel" data-act-change="pickProj" style="width:auto;max-width:280px">${list.map(x=>`<option value="${x.id}" ${x.id===p.id?'selected':''}>${esc(x.name)}${x.share?.on?' · 공유중':''}</option>`).join('')}</select>
+      <select class="f" id="projSel" data-act-change="pickProj" style="width:auto;max-width:280px">${list.map(x=>`<option value="${x.id}" ${x.id===p.id?'selected':''}>${esc(siteName(x))}${x.share?.on?' · 공유중':''}</option>`).join('')}</select>
       <button class="btn" data-act="newProj">+ 새 현장</button>
       ${cur()?`<button class="btn" data-act="projFromEst">견적에서 만들기</button>`:''}
       <span class="spacer"></span><button class="btn ghost danger" data-act="delProj">현장 삭제</button>
@@ -1262,7 +1280,7 @@ function dayPanel(items,key,opts={}){
       <span class="spacer"></span><button class="btn ghost sm" data-act="selDay" data-d="">닫기</button></div>
     ${items.length?`<ul class="dayl">${items.map(({t,p})=>`<li>
       <span class="badge${t.status==='완료'?'':' warn'}">${esc(t.status||'예정')}</span>
-      <b>${p&&opts.showProject?esc(p.name)+' · ':''}${esc(t.name)}</b>
+      <b>${p&&opts.showProject?esc(siteName(p))+' · ':''}${esc(t.name)}</b>
       <span class="muted">${esc(t.worker||'담당 미정')}</span>
       <span class="muted small">${esc(t.start)}${t.end&&t.end!==t.start?' ~ '+esc(t.end):''}</span>
       ${t.memo&&opts.showMemo!==false?`<span class="small" style="flex-basis:100%">${esc(t.memo)}</span>`:''}
@@ -1291,13 +1309,13 @@ function renderMonth(){
       ${['일','월','화','수','목','금','토'].map((d,i)=>`<div class="cal-h${i===0?' sun':i===6?' sat':''}">${d}</div>`).join('')}
       ${cells.map(c=>`<div class="cal-d${c.other?' out':''}${c.key===todayKey?' today':''}${c.key===SEL_DAY?' sel':''}" data-act="selDay" data-d="${c.key}">
         <span class="cal-n">${c.d.getDate()}</span>
-        ${c.items.slice(0,4).map(({p,task,pi})=>`<span class="cal-i c${pi%6}" title="${esc(p.name)} · ${esc(task.name)}${task.worker?' · '+esc(task.worker):''}">${esc(p.name)} ${esc(task.name)}</span>`).join('')}
+        ${c.items.slice(0,4).map(({p,task,pi})=>`<span class="cal-i c${pi%6}" title="${esc(siteName(p))} · ${esc(task.name)}${task.worker?' · '+esc(task.worker):''}">${esc(siteName(p))} ${esc(task.name)}</span>`).join('')}
         ${c.items.length>4?`<span class="cal-i more">+${c.items.length-4}</span>`:''}
       </div>`).join('')}
     </div>
     ${SEL_DAY?`<div class="panel-b" style="padding-top:12px">${dayPanel(
       projs.flatMap(p=>(p.tasks||[]).filter(t=>onDay(t,SEL_DAY)).map(t=>({t,p}))),SEL_DAY,{showProject:true})}</div>`:''}
-    ${projs.length?`<div class="panel-b row small">${projs.map((p,i)=>`<span class="legend c${i%6}">${esc(p.name)}</span>`).join('')}</div>`:'<div class="empty">현장을 먼저 만들어주세요.</div>'}
+    ${projs.length?`<div class="panel-b row small">${projs.map((p,i)=>`<span class="legend c${i%6}">${esc(siteName(p))}</span>`).join('')}</div>`:'<div class="empty">현장을 먼저 만들어주세요.</div>'}
   </section>`;
 }
 
@@ -1333,7 +1351,7 @@ function reportHTML(p,forZip){
     const t=tasks.find(x=>x.id===f.taskId);
     return '사진/'+(t?safe(t.name)+'/':'')+(f.memo?safe(f.memo)+'_':'')+safe(f.name); };
   const body=`<article id="report">
-    <h1>${esc(p.name)} 공사 보고서</h1>
+    <h1>${esc(siteName(p))} 공사 보고서</h1>
     <div class="r-sub">${esc(co.name||'')}${co.phone?' · '+esc(co.phone):''} · 출력일 ${today()}</div>
     <dl class="r-kv">
       <dt>고객</dt><dd>${esc(p.client||'-')}</dd><dt>연락처</dt><dd>${esc(p.phone||'-')}</dd>
@@ -1367,7 +1385,7 @@ function reportHTML(p,forZip){
     <div class="r-foot">${esc(co.name||'')}${co.phone?' · '+esc(co.phone):''}${co.address?' · '+esc(co.address):''}</div>
   </article>`;
   if(!forZip) return body;
-  return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${esc(p.name)} 공사 보고서</title>
+  return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${esc(siteName(p))} 공사 보고서</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;600;700&display=swap">
 <style>body{margin:0;background:#eef0ed;padding:20px 0}${REPORT_CSS}</style></head><body>${body}
 <p style="text-align:center;font-size:12px;color:#666">PDF로 저장하려면 이 파일을 브라우저에서 열고 Ctrl+P(맥은 ⌘P) → “PDF로 저장”을 고르세요.</p></body></html>`;
@@ -1575,6 +1593,15 @@ async function applyPhoto(file){
 function setPath(obj,path,val){ const ks=path.split('.'); let o=obj; ks.slice(0,-1).forEach(k=>o=o[k]??=({})); o[ks.at(-1)]=val; }
 document.addEventListener('input',ev=>{
   const t=ev.target;
+  if(t.dataset?.size){                      // 면적: 숫자 칸 + 단위 선택
+    const e=cur(); if(!e) return;
+    if(t.dataset.size==='val') e.client.sizeVal=t.value.replace(/[^\d.]/g,'');
+    else e.client.sizeUnit=t.value;
+    e.client.size=sizeText(e.client);       // 견적서에 찍히는 문구
+    saveEst(e);
+    const el=document.getElementById('o-size-conv'); if(el) el.textContent=sizeConv(e.client);
+    return;
+  }
   if(t.dataset?.area!==undefined){          // 한 칸에서 ㎡·평 둘 다 입력 (평은 올림 표시)
     const pi=+t.dataset.area, e=cur(), p=e?.processes[pi]; if(!p) return;
     const a=parseArea(t.value);
@@ -1622,7 +1649,8 @@ document.addEventListener('change',ev=>{
 document.addEventListener('submit',async ev=>{
   if(ev.target.id==='newSiteForm'){
     ev.preventDefault();
-    const name=$('#ns-name').value.trim(); if(!name){ $('#ns-name').focus(); return; }
+    const name=$('#ns-name').value.trim(), addr0=$('#ns-addr').value.trim();
+    if(!name && !addr0){ toast('현장 이름이나 주소 중 하나는 적어주세요'); $('#ns-name').focus(); return; }
     const estId=$('#ns-est')?.value||'';
     const src=estId?S.estimates.get(estId):null;
     const n=newProject(src||undefined);
@@ -1634,7 +1662,7 @@ document.addEventListener('submit',async ev=>{
       n.tasks.push({id:uid(),proc:pr.k,name:P.n,start:st,end:addDays(st,1),worker:'',status:'예정',memo:''}); });
     S.projects.set(n.id,n); S.curPid=n.id; ls.set('curPid',n.id); saveProj(n);
     HOME_NEW=false; HOME_SEL=n.id; render(); window.scrollTo(0,0);
-    toast(`“${name}” 현장을 만들었습니다`);
+    toast(`“${siteName(n)}” 현장을 만들었습니다`);
     return;
   }
   if(ev.target.id!=='loginForm') return;
@@ -1704,7 +1732,7 @@ document.addEventListener('click',async ev=>{
       S.projects.set(n.id,n); S.curPid=n.id; ls.set('curPid',n.id); saveProj(n); VIEW='sched'; SCHED_MODE='site'; ls.set('view',VIEW); render(); toast('견적의 공정으로 일정을 만들었습니다. 날짜를 고쳐주세요.'); break; }
     case 'delProj': { const p=curProj(); if(!p) break;
       const n=(p.files||[]).length;
-      if(await askConfirm({title:`“${p.name||'이름 없는 현장'}” 현장을 삭제할까요?`,
+      if(await askConfirm({title:`“${siteName(p)}” 현장을 삭제할까요?`,
         lines:[`일정 ${(p.tasks||[]).length}건${n?`, 사진·도면 ${n}개`:''} 모두 지워집니다`,
                p.share?.on?'고객·작업자 공유 링크도 닫힙니다':'되돌릴 수 없습니다',
                '자료를 남기려면 취소하고 “자료 내려받기”를 먼저 하세요'],
@@ -1728,7 +1756,7 @@ document.addEventListener('click',async ev=>{
     case 'openSite': HOME_SEL=t.dataset.id; S.curPid=t.dataset.id; ls.set('curPid',S.curPid); render(); window.scrollTo(0,0); break;
     case 'delSite': { ev.stopPropagation(); const p=S.projects.get(t.dataset.id); if(!p) break;
       const n=(p.files||[]).length;
-      const ok=await askConfirm({title:`“${p.name||'이름 없는 현장'}” 현장을 삭제할까요?`,
+      const ok=await askConfirm({title:`“${siteName(p)}” 현장을 삭제할까요?`,
         lines:[`일정 ${(p.tasks||[]).length}건${n?`, 사진·도면 ${n}개`:''} 모두 지워집니다`,
                p.share?.on?'고객·작업자 공유 링크도 닫힙니다':'되돌릴 수 없습니다',
                '자료를 남기려면 취소하고 현장 화면에서 “자료 내려받기”를 먼저 하세요'],
@@ -1746,7 +1774,7 @@ document.addEventListener('click',async ev=>{
     case 'openEst': if(t.dataset.id){ setCur(t.dataset.id); } VIEW='est'; ls.set('view',VIEW); render(); window.scrollTo(0,0); break;
     case 'openDoc': if(t.dataset.id){ setCur(t.dataset.id); } VIEW='doc'; ls.set('view',VIEW); render(); window.scrollTo(0,0); break;
     case 'newEstForSite': { const p=curProj(); const n=newEstimate();
-      n.title=p.name; n.client={name:p.client||'',phone:p.phone||'',address:p.address||'',size:''};
+      n.title=siteName(p); n.client={name:p.client||'',phone:p.phone||'',address:p.address||'',size:''};
       S.estimates.set(n.id,n); setCur(n.id); saveEst(n); p.estimateId=n.id; saveProj(p);
       VIEW='est'; ls.set('view',VIEW); render(); toast('이 현장의 견적을 만들었습니다'); break; }
     case 'projFromEstId': { const src=S.estimates.get(t.dataset.id); if(!src) break;

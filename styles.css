@@ -101,6 +101,10 @@ label.fl > *{color:var(--ink);font-weight:400;font-size:14px}
 .proc-name{font-weight:700;font-size:15px}
 .proc-area{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .proc-area input{width:100%}
+.sizef{display:flex;gap:6px;align-items:center;width:100%}
+.sizef input{flex:1;min-width:60px}
+.sizef select{width:72px;flex:none}
+.conv{white-space:nowrap;font-weight:600}
 .unitf{position:relative;display:inline-flex;width:190px}
 .unitf input{padding-right:62px!important;text-align:left}
 .unitf i{position:absolute;right:9px;top:50%;transform:translateY(-50%);font-style:normal;font-size:12px;color:var(--muted);pointer-events:none;white-space:nowrap}
