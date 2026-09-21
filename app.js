@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -333,8 +333,9 @@ function renderAuth(){
     <div class="panel-h"><h2>로그인</h2></div>
     <form class="panel-b" id="loginForm">
       <p class="muted small" style="margin:0">아이폰·아이패드·노트북에서 같은 계정으로 로그인하면 견적과 단가표가 자동으로 맞춰집니다.</p>
-      <label class="fl">이메일<input class="f" type="email" id="lg-email" autocomplete="username" required value="${esc(ls.get('lastEmail')||'')}"></label>
-      <label class="fl">비밀번호<input class="f" type="password" id="lg-pw" autocomplete="current-password" required></label>
+      <label class="fl">이메일<input class="f" type="email" id="lg-email" name="username" autocomplete="username" required value="${esc(ls.get('lastEmail')||'')}"></label>
+      <label class="fl">비밀번호<input class="f" type="password" id="lg-pw" name="password" autocomplete="current-password" required></label>
+      <label class="row" style="gap:8px;font-size:13px"><input type="checkbox" id="lg-auto" ${ls.get('autoLogin')!=='0'?'checked':''}> 이 기기에서 자동 로그인</label>
       ${AUTH.err?`<div class="status err">${esc(AUTH.err)}</div>`:''}
       <button class="btn pri" type="submit" ${AUTH.busy?'disabled':''}>${AUTH.busy?'<span class="spin"></span> 로그인 중':'로그인'}</button>
       <button class="btn ghost" type="button" data-act="skipLogin">로그인 없이 이 기기에서만 쓰기</button>
@@ -910,7 +911,8 @@ function renderProject(p){
     <section class="panel">
       <div class="panel-h"><h3>공정 일정</h3><span class="muted small">${r?`${dstr(r.from)} ~ ${dstr(r.to)} · ${Math.round((r.to-r.from)/DAY)+1}일`:'일정 없음'}</span>
         <span class="spacer"></span><span class="badge">진행률 ${prog}%</span></div>
-      ${(p.tasks||[]).length?`<div class="gantt">${ganttHTML(p,r)}</div>`:''}
+      ${(p.tasks||[]).length?`<div class="gantt">${ganttHTML(p,r)}</div>
+      ${SEL_DAY?dayPanel((p.tasks||[]).filter(t=>onDay(t,SEL_DAY)).map(t=>({t,p})),SEL_DAY):''}`:''}
       <div class="tbl-wrap"><table class="t resp">
         <thead><tr><th class="w-name">작업</th><th>담당</th><th>시작</th><th>종료</th><th>상태</th><th>작업 메모</th><th></th></tr></thead>
         <tbody>${(p.tasks||[]).map((t,ti)=>`<tr>
@@ -959,24 +961,43 @@ function renderProject(p){
       </div>
     </section>`;
 }
-function ganttBars(tasks,r){
+const DAYW=34;               // 하루 한 칸의 너비(px)
+const WD=['일','월','화','수','목','금','토'];
+let SEL_DAY=null;            // 눌러서 펼쳐 본 날짜
+const onDay=(t,key)=>{ const s=dnum(t.start),e=dnum(t.end),d=dnum(key); return s&&e&&d>=s&&d<=e; };
+function ganttBars(tasks,r,sel){
   if(!r) return '';
   const span=Math.max(1,(r.to-r.from)/DAY+1), t0=dnum(today());
-  const md=ms=>{ const d=new Date(ms); return (d.getMonth()+1)+'/'+d.getDate(); };
-  const mark=(t0>=r.from&&t0<=r.to) ? `<span class="g-now" style="left:${(t0-r.from)/DAY/span*100}%"></span>` : '';
-  const step=Math.max(1,Math.round(span/6)), ticks=[];
-  for(let d=0; d<span-step*0.5; d+=step) ticks.push({p:d/span*100, l:md(r.from+d*DAY), last:false});
-  ticks.push({p:100, l:md(r.to), last:true});
-  const axis=`<div class="g-row g-head"><span class="g-name">날짜</span><span class="g-track g-axis">${
-    ticks.map(t=>`<span class="g-tick${t.last?' end':''}" style="left:${t.p}%">${t.l}</span>`).join('')}${mark}</span></div>`;
+  const days=[...Array(span)].map((_,i)=>{ const ms=r.from+i*DAY, d=new Date(ms); return {ms,key:dstr(ms),d}; });
+  const head=`<div class="g-row g-head"><span class="g-name">날짜</span><span class="g-track" style="width:${span*DAYW}px">${
+    days.map(x=>`<button class="g-day${x.key===today()?' today':''}${x.key===sel?' sel':''}${x.d.getDay()===0?' sun':x.d.getDay()===6?' sat':''}" style="left:${(x.ms-r.from)/DAY*DAYW}px;width:${DAYW}px" data-act="selDay" data-d="${x.key}" title="${x.key}">
+      <b>${x.d.getDate()}</b><i>${WD[x.d.getDay()]}</i></button>`).join('')}</span></div>`;
   const rows=tasks.filter(t=>dnum(t.start)&&dnum(t.end)).map(t=>{
     const s=(dnum(t.start)-r.from)/DAY, w=Math.max(1,(dnum(t.end)-dnum(t.start))/DAY+1), st=t.status||'예정';
+    const now=(t0>=r.from&&t0<=r.to)?`<span class="g-now" style="left:${(t0-r.from)/DAY*DAYW}px;width:${DAYW}px"></span>`:'';
+    const selm=sel&&dnum(sel)>=r.from&&dnum(sel)<=r.to?`<span class="g-sel" style="left:${(dnum(sel)-r.from)/DAY*DAYW}px;width:${DAYW}px"></span>`:'';
     return `<div class="g-row"><span class="g-name" title="${esc(t.name)}">${esc(t.name)}</span>
-      <span class="g-track">${mark}<span class="g-bar ${st==='완료'?'done':st==='진행'?'now':''}" style="left:${s/span*100}%;width:${w/span*100}%" title="${esc(t.start)} ~ ${esc(t.end)}"></span></span></div>`;
+      <span class="g-track" style="width:${span*DAYW}px">${now}${selm}<span class="g-bar ${st==='완료'?'done':st==='진행'?'now':''}" style="left:${s*DAYW}px;width:${w*DAYW}px" title="${esc(t.start)} ~ ${esc(t.end)} · ${esc(t.worker||'담당 미정')}"><b>${esc(t.name)}</b></span></span></div>`;
   }).join('');
-  return axis+rows;
+  return `<div class="gantt-scroll">${head}${rows}</div>`;
 }
-function ganttHTML(p,r){ return ganttBars(p.tasks||[],r); }
+function ganttHTML(p,r){ return ganttBars(p.tasks||[],r,SEL_DAY); }
+function dayPanel(items,key,opts={}){
+  if(!key) return '';
+  const d=new Date(dnum(key));
+  return `<div class="dayp">
+    <div class="row"><b>${d.getMonth()+1}월 ${d.getDate()}일 (${WD[d.getDay()]}) 작업</b>
+      <span class="muted small">${items.length?items.length+'건':'작업 없음'}</span>
+      <span class="spacer"></span><button class="btn ghost sm" data-act="selDay" data-d="">닫기</button></div>
+    ${items.length?`<ul class="dayl">${items.map(({t,p})=>`<li>
+      <span class="badge${t.status==='완료'?'':' warn'}">${esc(t.status||'예정')}</span>
+      <b>${p&&opts.showProject?esc(p.name)+' · ':''}${esc(t.name)}</b>
+      <span class="muted">${esc(t.worker||'담당 미정')}</span>
+      <span class="muted small">${esc(t.start)}${t.end&&t.end!==t.start?' ~ '+esc(t.end):''}</span>
+      ${t.memo&&opts.showMemo!==false?`<span class="small" style="flex-basis:100%">${esc(t.memo)}</span>`:''}
+    </li>`).join('')}</ul>`:'<p class="muted small" style="margin:8px 0 0">이 날은 잡힌 작업이 없습니다.</p>'}
+  </div>`;
+}
 function renderMonth(){
   const [y,m]=MONTH.split('-').map(Number);
   const first=new Date(y,m-1,1), start=new Date(first); start.setDate(1-first.getDay());
@@ -997,12 +1018,14 @@ function renderMonth(){
       <span class="spacer"></span><button class="btn sm" data-act="month" data-d="0">이번 달</button></div>
     <div class="cal">
       ${['일','월','화','수','목','금','토'].map((d,i)=>`<div class="cal-h${i===0?' sun':i===6?' sat':''}">${d}</div>`).join('')}
-      ${cells.map(c=>`<div class="cal-d${c.other?' out':''}${c.key===todayKey?' today':''}">
+      ${cells.map(c=>`<div class="cal-d${c.other?' out':''}${c.key===todayKey?' today':''}${c.key===SEL_DAY?' sel':''}" data-act="selDay" data-d="${c.key}">
         <span class="cal-n">${c.d.getDate()}</span>
         ${c.items.slice(0,4).map(({p,task,pi})=>`<span class="cal-i c${pi%6}" title="${esc(p.name)} · ${esc(task.name)}${task.worker?' · '+esc(task.worker):''}">${esc(p.name)} ${esc(task.name)}</span>`).join('')}
         ${c.items.length>4?`<span class="cal-i more">+${c.items.length-4}</span>`:''}
       </div>`).join('')}
     </div>
+    ${SEL_DAY?`<div class="panel-b" style="padding-top:12px">${dayPanel(
+      projs.flatMap(p=>(p.tasks||[]).filter(t=>onDay(t,SEL_DAY)).map(t=>({t,p}))),SEL_DAY,{showProject:true})}</div>`:''}
     ${projs.length?`<div class="panel-b row small">${projs.map((p,i)=>`<span class="legend c${i%6}">${esc(p.name)}</span>`).join('')}</div>`:'<div class="empty">현장을 먼저 만들어주세요.</div>'}
   </section>`;
 }
@@ -1023,9 +1046,13 @@ async function renderViewer(token){
     <h2 style="margin-bottom:8px">링크를 열 수 없습니다</h2>
     <p>주소가 바뀌었거나 공유가 꺼졌을 수 있어요. 보내주신 분께 새 링크를 요청해주세요.</p>
     ${err?`<p class="small muted">(${esc(err)})</p>`:''}</div></div>`; return; }
+  window.__viewerPayload=payload;
+  paintViewer();
+}
+function paintViewer(){
+  const app=$('#app'), payload=window.__viewerPayload; if(!payload) return;
   const s=payload.site||{}, tasks=payload.tasks||[], files=payload.files||[];
   const r=tasks.length?{from:Math.min(...tasks.map(t=>dnum(t.start)).filter(Boolean)),to:Math.max(...tasks.map(t=>dnum(t.end)).filter(Boolean))}:null;
-  const span=r?Math.max(1,(r.to-r.from)/DAY+1):1;
   const todayT=dnum(today());
   app.innerHTML=`<div class="stack viewer">
     <section class="panel"><div class="panel-b">
@@ -1041,7 +1068,8 @@ async function renderViewer(token){
     </div></section>
 
     <section class="panel"><div class="panel-h"><h3>공정 일정</h3><span class="muted small">보기 전용입니다</span></div>
-      ${r?`<div class="gantt">${ganttBars(tasks,r)}</div>`:''}
+      ${r?`<div class="gantt">${ganttBars(tasks,r,SEL_DAY)}</div>
+      ${SEL_DAY?dayPanel(tasks.filter(t=>onDay(t,SEL_DAY)).map(t=>({t})),SEL_DAY,{showMemo:payload.showMemo}):''}`:''}
       <div class="tbl-wrap"><table class="t resp"><thead><tr><th>작업</th><th>기간</th><th>담당</th><th>상태</th>${payload.showMemo?'<th>안내</th>':''}</tr></thead>
         <tbody>${tasks.map(t=>{const s2=dnum(t.start),e2=dnum(t.end);
           const on=s2&&e2&&todayT>=s2&&todayT<=e2;
@@ -1100,6 +1128,7 @@ function renderSettings(){
     <section class="panel"><div class="panel-h"><h3>계정 · 동기화</h3></div><div class="panel-b">
       ${!sb?`<p class="muted small" style="margin:0">서버가 연결되지 않아 이 기기에만 저장되고 있습니다. 아래 “서버 연결”을 먼저 채워주세요.</p>`
         : session?`<dl class="kv"><dt>로그인</dt><dd>${esc(session.user.email)}</dd><dt>마지막 동기화</dt><dd>${lastSyncAt?lastSyncAt.toLocaleString('ko-KR'):'—'}</dd>${syncErr?`<dt>오류</dt><dd style="color:var(--bad)">${esc(syncErr)}</dd>`:''}</dl>
+          <label class="row" style="gap:8px;font-size:13px"><input type="checkbox" id="set-auto" ${ls.get('autoLogin')!=='0'&&ls.get('autoPw')?'checked':''} data-act-change="autoLogin"> 이 기기에서 자동 로그인 ${ls.get('autoPw')?'':'<span class="muted small">(다음 로그인 때 켜집니다)</span>'}</label>
           <div class="row"><button class="btn" data-act="syncNow">지금 동기화</button><button class="btn ghost danger" data-act="logout">로그아웃</button></div>
           <p class="muted small" style="margin:0">로그아웃하면 이 기기의 데이터는 지워지고, 다시 로그인하면 클라우드에서 받아옵니다.</p>`
         : `<p class="muted small" style="margin:0">로그인하지 않아 이 기기에만 저장되고 있습니다. 로그인하면 지금 데이터가 계정으로 올라갑니다.</p><div><button class="btn pri" data-act="showLogin">로그인</button></div>`}
@@ -1208,18 +1237,21 @@ document.addEventListener('change',ev=>{
   if(a==='addLine'&&t.value){ const e=cur(), p=e.processes[+t.dataset.pi], m=S.materials.get(t.value); if(m){ p.lines.push(lineFromMat(m)); saveEst(e); render(); } }
   if(a==='revAll'){ IMPORT.items.forEach(x=>x.on=t.checked); render(); }
   if(a==='pickProj'){ S.curPid=t.value; ls.set('curPid',t.value); render(); }
+  if(a==='autoLogin'){ ls.set('autoLogin',t.checked?'1':'0'); if(!t.checked) ls.set('autoPw',null); toast(t.checked?'다음 로그인 때부터 자동으로 들어갑니다':'자동 로그인을 껐습니다'); render(); }
   if(a==='shareOn'){ toggleShare(curProj(),t.checked); }
   if(a==='shareMemo'){ const p=curProj(); p.share={...(p.share||{}),showMemo:t.checked}; saveProj(p); publishShare(p); }
 });
 document.addEventListener('submit',async ev=>{
   if(ev.target.id!=='loginForm') return;
   ev.preventDefault();
-  const email=$('#lg-email').value.trim(), password=$('#lg-pw').value;
-  AUTH.busy=true; AUTH.err=''; render(); $('#lg-pw') && ($('#lg-pw').value=password);
+  const email=$('#lg-email').value.trim(), password=$('#lg-pw').value, auto=$('#lg-auto')?.checked!==false;
+  AUTH.busy=true; AUTH.err=''; render();
   const {data,error}=await sb.auth.signInWithPassword({email,password});
   AUTH.busy=false;
   if(error){ AUTH.err = /invalid/i.test(error.message)?'이메일 또는 비밀번호가 맞지 않습니다.':(!navigator.onLine?'인터넷에 연결된 상태에서 처음 로그인해주세요.':error.message); render(); return; }
   ls.set('lastEmail',email); session=data.session; AUTH.skipped=false; ls.set('skipLogin',null);
+  ls.set('autoLogin',auto?'1':'0');
+  ls.set('autoPw',auto?btoa(unescape(encodeURIComponent(password))):null);
   render(); sync();
 });
 document.addEventListener('click',async ev=>{
@@ -1280,6 +1312,10 @@ document.addEventListener('click',async ev=>{
     case 'month': { if(t.dataset.d==='0'){ const d=new Date(); MONTH=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }
       else { const [y,m]=MONTH.split('-').map(Number); const d=new Date(y,m-1+ +t.dataset.d,1); MONTH=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }
       render(); break; }
+    case 'selDay': { const d=t.dataset.d||''; SEL_DAY = (!d||d===SEL_DAY) ? null : d;
+      if(window.__viewerMode) paintViewer(); else render();
+      if(SEL_DAY) setTimeout(()=>document.querySelector('.dayp')?.scrollIntoView({block:'nearest',behavior:'smooth'}),60);
+      break; }
     case 'view3d': view3d(+t.dataset.i); break;
     case 'close3d': document.querySelector('.modal')?.remove(); break;
   }
@@ -1303,6 +1339,7 @@ setInterval(()=>{ if(document.visibilityState==='visible') sync(); },60000);
 async function logout(){
   flushWrites();
   try{ await push(); }catch(e){ if(!confirm('변경사항을 올리지 못했습니다. 그래도 로그아웃하면 이 기기에만 있던 변경사항이 사라집니다. 계속할까요?')) return; }
+  ls.set('autoPw',null); ls.set('autoLogin','0');
   await sb.auth.signOut();
   await idb.clear(); S.materials.clear(); S.estimates.clear(); S.company={}; setCur(null);
   session=null; lastSyncAt=null; render();
@@ -1360,11 +1397,26 @@ async function checkUpdate(manual){
 function applyUpdate(){ flushWrites(); swReg?.waiting?.postMessage('skipWaiting'); }
 
 /* ---------- boot ---------- */
+async function autoLogin(){
+  // 세션이 만료됐을 때, 이 기기에 저장해둔 정보로 조용히 다시 로그인
+  if(session||!sb||!navigator.onLine) return;
+  const email=ls.get('lastEmail'), pw=ls.get('autoPw');
+  if(!email||!pw||ls.get('autoLogin')==='0') return;
+  try{
+    const {data,error}=await sb.auth.signInWithPassword({email,password:decodeURIComponent(escape(atob(pw)))});
+    if(error) throw error;
+    session=data.session;
+  }catch(e){ if(/invalid/i.test(e?.message||'')) ls.set('autoPw',null); }
+}
 async function connectSupabase(){
   sb=initSupabase(); session=null;
   if(!sb) return;
   try{ const {data}=await sb.auth.getSession(); session=data.session; }catch{}
-  sb.auth.onAuthStateChange((_ev,s)=>{ session=s; updatePill(); });
+  await autoLogin();
+  sb.auth.onAuthStateChange(async (_ev,s)=>{
+    session=s; updatePill();
+    if(!s && !window.__viewerMode){ await autoLogin(); if(session){ updatePill(); sync(); } else safeRender(); }
+  });
 }
 (async()=>{
   const shareToken=new URLSearchParams(location.search).get('s');
