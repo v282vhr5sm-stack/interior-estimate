@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '1.6.0';
+const APP_VERSION = '1.7.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -316,7 +316,7 @@ const sizeHint = areaHint;
 
 /* ---------- views ---------- */
 let VIEW=ls.get('view','home');
-let HOME_SEL=null;
+let HOME_SEL=null, HOME_NEW=false;
 let MAT_FILTER='all';
 let IMPORT={files:[],urls:[],busy:false,items:null,memo:'',err:''};
 let AUTH={mode:'login',busy:false,err:'',skipped:ls.get('skipLogin')==='1'};
@@ -809,8 +809,31 @@ async function downloadDoc(){
 }
 
 /* ---------- 첫 화면: 현장 목록 · 현장 홈 ---------- */
+function renderNewSite(){
+  const ests=[...S.estimates.values()].sort((a,b)=>(b.updated||0)-(a.updated||0));
+  return `<div class="stack" style="max-width:520px;margin:0 auto">
+    <div class="row"><button class="btn ghost" data-act="homeBack">‹ 현장 목록</button></div>
+    <section class="panel"><div class="panel-h"><h2>새 현장</h2></div>
+      <form class="panel-b" id="newSiteForm" style="display:flex;flex-direction:column;gap:12px">
+        <label class="fl">현장 이름 <span class="muted">(여기 쓴 이름이 현장 제목이 됩니다)</span>
+          <input class="f" id="ns-name" required placeholder="예: 상계동 주공 302동 1501호"></label>
+        <div class="client-grid">
+          <label class="fl">고객명<input class="f" id="ns-client" placeholder="홍길동"></label>
+          <label class="fl">연락처<input class="f" type="tel" id="ns-phone" placeholder="010-0000-0000"></label>
+        </div>
+        <label class="fl">현장 주소<input class="f" id="ns-addr"></label>
+        ${ests.length?`<label class="fl">견적 연결 <span class="muted">(선택)</span>
+          <select class="f" id="ns-est"><option value="">연결 안 함</option>
+          ${ests.map(e=>`<option value="${e.id}">${esc(e.title)} · ${esc(e.client?.name||'')}</option>`).join('')}</select></label>
+          <span class="small muted" style="margin-top:-6px">견적을 연결하면 그 견적의 공정이 일정으로 들어옵니다.</span>`:''}
+        <div class="row"><button class="btn pri" type="submit">현장 만들기</button>
+          <button class="btn ghost" type="button" data-act="homeBack">취소</button></div>
+      </form></section>
+  </div>`;
+}
 function renderHome(){
   const projs=[...S.projects.values()].sort((a,b)=>(b.updated||0)-(a.updated||0));
+  if(HOME_NEW) return renderNewSite();
   if(HOME_SEL && S.projects.has(HOME_SEL)) return renderHub(S.projects.get(HOME_SEL));
   const loose=[...S.estimates.values()].filter(e=>!projs.some(p=>p.estimateId===e.id));
   return `<div class="stack">
@@ -1515,7 +1538,8 @@ document.addEventListener('input',ev=>{
   else if(kind==='rev'){ const it=IMPORT.items[+rest[0]]; it[rest[1]]=val; if(rest[1]==='coverage') it.mode=val>0?'area':'qty';
     const o=document.getElementById('o-rv-'+rest[0]); if(o) o.innerHTML=perM2Html(matPerM2(it)); }
   else if(kind==='co'){ S.company[rest[0]]=val; saveCo(); refreshDoc(); }
-  else if(kind==='proj'){ const p=curProj(); if(!p) return; p[rest[0]]=val; saveProj(p); }
+  else if(kind==='proj'){ const p=curProj(); if(!p) return; p[rest[0]]=val; saveProj(p);
+    if(rest[0]==='name'){ const o=document.querySelector(`#projSel option[value="${p.id}"]`); if(o) o.textContent=val+(p.share?.on?' · 공유중':''); } }
   else if(kind==='task'){ const p=curProj(); const t=p?.tasks?.[+rest[0]]; if(!t) return; t[rest[1]]=val;
     if(rest[1]==='start'&&(!t.end||dnum(t.end)<dnum(val))) t.end=val;
     saveProj(p);
@@ -1535,6 +1559,23 @@ document.addEventListener('change',ev=>{
   if(a==='shareMemo'){ const p=curProj(); p.share={...(p.share||{}),showMemo:t.checked}; saveProj(p); publishShare(p); }
 });
 document.addEventListener('submit',async ev=>{
+  if(ev.target.id==='newSiteForm'){
+    ev.preventDefault();
+    const name=$('#ns-name').value.trim(); if(!name){ $('#ns-name').focus(); return; }
+    const estId=$('#ns-est')?.value||'';
+    const src=estId?S.estimates.get(estId):null;
+    const n=newProject(src||undefined);
+    n.name=name;                                   // 사용자가 쓴 이름을 현장 제목으로
+    n.client=$('#ns-client').value.trim()||n.client;
+    n.phone=$('#ns-phone').value.trim()||n.phone;
+    n.address=$('#ns-addr').value.trim()||n.address;
+    if(src) src.processes.forEach((pr,i)=>{ const P=PMAP[pr.k]||PMAP.etc; const st=addDays(today(),i*2);
+      n.tasks.push({id:uid(),proc:pr.k,name:P.n,start:st,end:addDays(st,1),worker:'',status:'예정',memo:''}); });
+    S.projects.set(n.id,n); S.curPid=n.id; ls.set('curPid',n.id); saveProj(n);
+    HOME_NEW=false; HOME_SEL=n.id; render(); window.scrollTo(0,0);
+    toast(`“${name}” 현장을 만들었습니다`);
+    return;
+  }
   if(ev.target.id!=='loginForm') return;
   ev.preventDefault();
   const email=$('#lg-email').value.trim(), password=$('#lg-pw').value, auto=$('#lg-auto')?.checked!==false;
@@ -1588,8 +1629,9 @@ document.addEventListener('click',async ev=>{
     case 'checkUpdate': checkUpdate(true); break;
     case 'applyUpdate': applyUpdate(); break;
     case 'schedMode': SCHED_MODE=t.dataset.m; ls.set('schedMode',SCHED_MODE); render(); break;
-    case 'newProj': { const n=newProject(); S.projects.set(n.id,n); S.curPid=n.id; ls.set('curPid',n.id); saveProj(n); SCHED_MODE='site';
-      if(VIEW==='home'){ HOME_SEL=null; VIEW='sched'; ls.set('view',VIEW); }
+    case 'newProj': {
+      if(VIEW==='home'){ HOME_NEW=true; HOME_SEL=null; render(); setTimeout(()=>document.getElementById('ns-name')?.focus(),60); break; }
+      const n=newProject(); S.projects.set(n.id,n); S.curPid=n.id; ls.set('curPid',n.id); saveProj(n); SCHED_MODE='site';
       render(); setTimeout(()=>document.getElementById('pj-name')?.select(),80); break; }
     case 'projFromEst': { const n=newProject(e); e.processes.forEach((pr,i)=>{ const P=PMAP[pr.k]||PMAP.etc; const st=addDays(today(),i*2);
         n.tasks.push({id:uid(),proc:pr.k,name:P.n,start:st,end:addDays(st,1),worker:'',status:'예정',memo:''}); });
@@ -1614,7 +1656,7 @@ document.addEventListener('click',async ev=>{
       saveProj(p); render(); toast('같은 작업을 뒤쪽 날짜로 하나 더 넣었습니다. 날짜를 고쳐주세요.'); break; }
     case 'sortTasks': { const p=curProj(); p.tasks.sort((a,b)=>String(a.start||'').localeCompare(String(b.start||''))); saveProj(p); render(); break; }
     case 'openSite': HOME_SEL=t.dataset.id; S.curPid=t.dataset.id; ls.set('curPid',S.curPid); render(); window.scrollTo(0,0); break;
-    case 'homeBack': HOME_SEL=null; render(); break;
+    case 'homeBack': HOME_SEL=null; HOME_NEW=false; render(); break;
     case 'openSched': VIEW='sched'; SCHED_MODE='site'; ls.set('view',VIEW); render(); window.scrollTo(0,0); break;
     case 'openFiles': VIEW='sched'; SCHED_MODE='site'; ls.set('view',VIEW); render();
       setTimeout(()=>document.querySelector('.files')?.scrollIntoView({block:'center',behavior:'smooth'})||document.getElementById('pdz')?.scrollIntoView({block:'center'}),80); break;
