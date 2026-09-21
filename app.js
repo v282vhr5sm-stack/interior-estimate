@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '4.1.0';
+const APP_VERSION = '4.2.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -436,7 +436,7 @@ function syncLineToMaterial(e,p,l){
   const vendorId=p.vendorId||LINE_VENDOR[pi]||'';    // 자재 추가할 때 고른 업체를 물려줍니다
   const vendor=vendorName(vendorId)||(p.vendor||'').trim();
   if(l.mid && S.materials.has(l.mid)) return;   // 이미 단가표에 있는 자재는 견적에서 고쳐도 그대로 둡니다
-  const m={id:uid(),name:l.name,spec:l.spec||'',process:p.k,vendor,vendorId,unit:l.unit||'',unitPrice:num(l.matPrice),
+  const m={id:uid(),name:l.name,spec:l.spec||'',process:p.k,vendor,vendorId,unit:l.unit||'',unitPrice:num(l.matPrice),laborPrice:num(l.laborPrice||0),
     coverage:1,loss:0,mode:'area',note:'',updated:Date.now()};
   S.materials.set(m.id,m); saveMat(m); l.mid=m.id; saveEst(e);
 }
@@ -452,7 +452,7 @@ function syncMaterialToLines(m){
     (e.processes||[]).forEach(p=>(p.lines||[]).forEach(l=>{
       if(l.mid!==m.id) return;
       l.name=m.name; l.spec=m.spec||''; l.unit=m.unit||'';
-      l.matPrice=num(m.unitPrice);
+      l.matPrice=num(m.unitPrice); l.laborPrice=num(m.laborPrice||0);
       hit=true; touched++;
     }));
     if(hit) saveEst(e);
@@ -733,7 +733,7 @@ function renderProc(e,p,pi){ // e: 견적
           <option value="">업체 전체</option>${vs.map(v=>`<option value="${v.id}" ${LINE_VENDOR[pi]===v.id?'selected':''}>${esc(v.name||'(이름 없음)')}</option>`).join('')}</select>`:''; })()}
       <select class="f" id="p${pi}-addsel" style="width:auto;max-width:100%" data-act-change="addLine" data-pi="${pi}">
         <option value="">+ 자재 단가표에서 추가…</option>
-        ${mats.length?`<optgroup label="${P.n}">${mats.map(m=>`<option value="${m.id}">${esc(m.name)} ${esc(m.spec||'')} · ${won(m.unitPrice)}원/${esc(m.unit)}${m.vendor?' · '+esc(m.vendor):''}</option>`).join('')}</optgroup>`:''}
+        ${mats.length?`<optgroup label="${P.n}">${mats.map(m=>`<option value="${m.id}">${esc(m.name)} ${esc(m.spec||'')} · 재료 ${won(m.unitPrice)}${num(m.laborPrice)?' · 노무 '+won(m.laborPrice):''}원/${esc(m.unit)}${m.vendor?' · '+esc(m.vendor):''}</option>`).join('')}</optgroup>`:''}
         ${others.length?`<optgroup label="다른 공정">${others.map(m=>`<option value="${m.id}">${esc(m.name)} ${esc(m.spec||'')}${m.vendor?' · '+esc(m.vendor):''}</option>`).join('')}</optgroup>`:''}
       </select>
       <button class="btn sm" data-act="addBlank" data-pi="${pi}">직접 입력</button>
@@ -754,9 +754,10 @@ function renderLine(p,pi,l,li){
     <td class="c-img"><button class="thumb-btn" data-act="linePhoto" data-pi="${pi}" data-li="${li}" aria-label="사진 바꾸기"><img class="thumb" src="${lineImg(l,p.k)}" alt=""></button></td>
     <td class="c-name"><input class="f" id="${id}-name" data-bind="line:${pi}:${li}:name" value="${esc(l.name)}" placeholder="품명" style="font-weight:500">
         <input class="f small" id="${id}-spec" data-bind="line:${pi}:${li}:spec" value="${esc(l.spec)}" placeholder="규격" style="margin-top:3px">
-        ${m?`<div class="row small" style="margin-top:4px;gap:4px">
-          <button class="btn ghost sm" data-act="priceDlg" data-pi="${pi}" data-li="${li}" title="단가표와 금액 맞추기">단가표 ${won(m.unitPrice)}원</button>
-        </div>`:''}</td>
+        <div class="row small" style="margin-top:4px;gap:4px">
+          ${m?`<button class="btn ghost sm" data-act="priceDlg" data-pi="${pi}" data-li="${li}" title="단가표와 금액 맞추기">단가표 ${won(m.unitPrice)}${num(m.laborPrice)?' / '+won(m.laborPrice):''}원</button>`
+             :`<button class="btn ghost sm" data-act="saveToMat" data-pi="${pi}" data-li="${li}" title="이 줄을 자재 단가표에 저장">단가표에 저장</button>`}
+        </div></td>
     <td class="r" data-l="수량"><input class="f num" type="number" inputmode="decimal" step="0.1" id="${id}-qty" data-bind="line:${pi}:${li}:qty" data-num value="${esc(l.qty)}"></td>
     <td data-l="단위">
       <select class="f" id="${id}-unitsel" data-lineunit="${pi}:${li}" >
@@ -826,18 +827,17 @@ function renderMat(){
         ${all.some(m=>!m.vendorId&&!(m.vendor||'').trim())?`<button class="chip" data-act="vendorFilter" data-v="__none" aria-pressed="${VENDOR_FILTER==='__none'}">업체 없음 ${all.filter(m=>!m.vendorId&&!(m.vendor||'').trim()).length}</button>`:''}
       </div>`:''}</div>
       <div class="tbl-wrap" style="margin-top:10px"><table class="t resp">
-        <thead><tr><th class="w-img">사진</th><th class="w-name">자재 · 규격</th><th>업체</th><th>공정</th><th>단위</th><th class="r">단가(원)</th><th class="r">로스%</th><th class="r">㎡당 원가</th><th>메모</th><th></th></tr></thead>
+        <thead><tr><th class="w-img">사진</th><th class="w-name">자재 · 규격</th><th>업체</th><th>공정</th><th>단위</th><th class="r">재료비 단가</th><th class="r">노무비 단가</th><th>메모</th><th></th></tr></thead>
         <tbody>${list.map(m=>`<tr>
           <td class="c-img"><button class="thumb-btn" data-act="matPhoto" data-id="${m.id}" aria-label="사진 바꾸기"><img class="thumb" src="${matImg(m)}" alt=""></button></td>
           <td class="c-name"><input class="f" id="m-${m.id}-name" data-bind="mat:${m.id}:name" value="${esc(m.name)}" placeholder="자재명" style="font-weight:500"><input class="f small" id="m-${m.id}-spec" data-bind="mat:${m.id}:spec" value="${esc(m.spec)}" placeholder="규격" style="margin-top:3px"></td>
           <td data-l="업체">${vendorCell(m)}</td>
           <td data-l="공정"><select class="f" id="m-${m.id}-proc" data-bind="mat:${m.id}:process" >${PROCS.map(p=>`<option value="${p.k}" ${p.k===m.process?'selected':''}>${p.n}</option>`).join('')}</select></td>
           <td data-l="단위">${unitCell(m)}</td>
-          <td class="r" data-l="단가(원)"><input class="f num" type="number" inputmode="numeric" step="100" id="m-${m.id}-price" data-bind="mat:${m.id}:unitPrice" data-num value="${esc(m.unitPrice)}"></td>
-          <td class="r" data-l="로스%"><input class="f num" type="number" inputmode="decimal" id="m-${m.id}-loss" data-bind="mat:${m.id}:loss" data-num value="${esc(m.loss)}"></td>
-          <td class="cell-out" data-l="㎡당 원가"><span id="o-m-${m.id}">${perM2Html(matPerM2(m))}</span></td>
+          <td class="r" data-l="재료비 단가"><input class="f num" type="number" inputmode="numeric" step="100" id="m-${m.id}-price" data-bind="mat:${m.id}:unitPrice" data-num value="${esc(m.unitPrice)}"></td>
+          <td class="r" data-l="노무비 단가"><input class="f num" type="number" inputmode="numeric" step="100" id="m-${m.id}-lprice" data-bind="mat:${m.id}:laborPrice" data-num value="${esc(m.laborPrice||0)}"></td>
           <td data-l="메모" style="max-width:220px"><input class="f small" id="m-${m.id}-note" data-bind="mat:${m.id}:note" value="${esc(m.note||'')}" placeholder="메모 (예: 2025년 12월 기준)"></td>
-          <td class="c-act"><button class="btn ghost sm danger" data-act="delMat" data-id="${m.id}" aria-label="삭제">✕ 삭제</button></td></tr>`).join('') || `<tr><td colspan="10" class="empty c-empty">자재가 없습니다. 단가표 사진을 올리거나 직접 추가하세요.</td></tr>`}</tbody>
+          <td class="c-act"><button class="btn ghost sm danger" data-act="delMat" data-id="${m.id}" aria-label="삭제">✕ 삭제</button></td></tr>`).join('') || `<tr><td colspan="9" class="empty c-empty">자재가 없습니다. 단가표 사진을 올리거나 직접 추가하세요.</td></tr>`}</tbody>
       </table></div>
     </section>
   </div>`;
@@ -859,7 +859,7 @@ function renderImport(){
         <label class="row small" style="gap:6px">공정 한 번에 지정
           <select class="f" id="rv-proc-all" data-act-change="revProc" style="width:120px"><option value="">선택</option>${PROCS.map(p=>`<option value="${p.k}">${p.n}</option>`).join('')}</select></label>
       </div>
-      <div class="tbl-wrap"><table class="t resp"><thead><tr><th></th><th class="w-name">자재 · 규격</th><th>업체</th><th>공정</th><th>단위</th><th class="r">단가(원)</th><th class="r">로스%</th><th class="r">㎡당 원가</th><th>근거</th></tr></thead>
+      <div class="tbl-wrap"><table class="t resp"><thead><tr><th></th><th class="w-name">자재 · 규격</th><th>업체</th><th>공정</th><th>단위</th><th class="r">재료비 단가</th><th class="r">노무비 단가</th><th>근거</th></tr></thead>
       <tbody>${I.items.map((it,i)=>`<tr>
         <td class="c-img"><input type="checkbox" id="rv-${i}-on" data-bind="rev:${i}:on" ${it.on?'checked':''} aria-label="선택" style="width:20px;height:20px"></td>
         <td class="c-name"><input class="f" id="rv-${i}-name" data-bind="rev:${i}:name" value="${esc(it.name)}" style="font-weight:500"><input class="f small" id="rv-${i}-spec" data-bind="rev:${i}:spec" value="${esc(it.spec)}" style="margin-top:3px"></td>
@@ -868,7 +868,6 @@ function renderImport(){
         <td data-l="단위"><input class="f" id="rv-${i}-unit" data-bind="rev:${i}:unit" value="${esc(it.unit)}" ></td>
         <td class="r" data-l="단가(원)"><input class="f num" type="number" inputmode="numeric" id="rv-${i}-price" data-bind="rev:${i}:unitPrice" data-num value="${esc(it.unitPrice)}">${it.vatConverted?'<div><span class="badge">VAT 제외 환산</span></div>':''}</td>
         <td class="r" data-l="로스%"><input class="f num" type="number" inputmode="decimal" id="rv-${i}-loss" data-bind="rev:${i}:loss" data-num value="${esc(it.loss)}"></td>
-        <td class="cell-out" data-l="㎡당 원가"><span id="o-rv-${i}">${perM2Html(matPerM2(it))}</span></td>
         <td class="small muted" data-l="근거" style="max-width:240px">${esc(it.note||'')}</td></tr>`).join('')}</tbody></table></div>
       <div class="panel-b row">
         <button class="btn pri" data-act="revSave">선택 항목 자재함에 저장</button>
@@ -2049,7 +2048,7 @@ document.addEventListener('input',ev=>{
   else if(kind==='mat'){ const m=S.materials.get(rest[0]); if(!m) return; m[rest[1]]=val;
     if(rest[1]==='coverage'){ m.mode=val>0?'area':'qty'; m.coverageBasis=''; }
     m.updated=Date.now(); saveMat(m);
-    if(['name','spec','unit','unitPrice'].includes(rest[1])){
+    if(['name','spec','unit','unitPrice','laborPrice'].includes(rest[1])){
       clearTimeout(MAT_SYNC[m.id]);
       MAT_SYNC[m.id]=setTimeout(async ()=>{
         const used=linesUsing(m.id);
@@ -2167,16 +2166,17 @@ document.addEventListener('click',async ev=>{
     case 'priceDlg': { const p=e.processes[+t.dataset.pi], l=p.lines[+t.dataset.li], m=l.mid&&S.materials.get(l.mid);
       if(!m) break;
       const others=linesUsing(m.id).filter(x=>x.l!==l).length;
-      const same=num(m.unitPrice)===num(l.matPrice);
+      const same=num(m.unitPrice)===num(l.matPrice)&&num(m.laborPrice)===num(l.laborPrice);
       const pick=await priceBox({
         title:`“${m.name||'자재'}” 단가`,
-        lines:[`단가표 ${won(m.unitPrice)}원 / ${esc(m.unit||'')}`, `이 견적 줄 ${won(l.matPrice)}원`,
+        lines:[`단가표 — 재료비 ${won(m.unitPrice)}원 · 노무비 ${won(m.laborPrice||0)}원 / ${esc(m.unit||'')}`,
+               `이 견적 줄 — 재료비 ${won(l.matPrice)}원 · 노무비 ${won(l.laborPrice||0)}원`,
                same?'두 금액이 같습니다':(others?`이 자재를 쓰는 다른 견적 줄 ${others}곳이 있습니다`:'다른 견적에는 쓰이지 않았습니다')],
         buttons:[
           {k:'pull', label:'단가표 금액 가져오기', disabled:same},
           {k:'push', label:'단가표를 이 금액으로 수정', disabled:same, danger:false},
         ]});
-      if(pick==='pull'){ l.matPrice=num(m.unitPrice); l.name=m.name; l.spec=m.spec||''; l.unit=m.unit||l.unit; saveEst(e); render(); toast('단가표 금액을 가져왔습니다'); }
+      if(pick==='pull'){ l.matPrice=num(m.unitPrice); l.laborPrice=num(m.laborPrice||0); l.name=m.name; l.spec=m.spec||''; l.unit=m.unit||l.unit; saveEst(e); render(); toast('단가표 금액을 가져왔습니다'); }
       else if(pick==='push'){
         let alsoLines=false;
         if(others){
@@ -2185,12 +2185,23 @@ document.addEventListener('click',async ev=>{
             ok:'네, 함께 바꿉니다', cancel:'아니요, 단가표만', danger:false});
           alsoLines=!!r;
         }
-        m.unitPrice=num(l.matPrice); m.updated=Date.now(); saveMat(m);
+        m.unitPrice=num(l.matPrice); m.laborPrice=num(l.laborPrice||0); m.updated=Date.now(); saveMat(m);
         if(alsoLines){ const n=syncMaterialToLines(m); toast(`단가표와 견적 ${n}곳을 바꿨습니다`); }
         else toast('단가표 금액을 바꿨습니다');
         render();
       }
       break; }
+    case 'saveToMat': { const p=e.processes[+t.dataset.pi], l=p.lines[+t.dataset.li];
+      if(!String(l.name||'').trim()){ toast('품명을 먼저 적어주세요'); break; }
+      const ok=await askConfirm({title:`“${l.name}”을(를) 자재 단가표에 저장할까요?`,
+        lines:[`재료비 ${won(l.matPrice||0)}원 · 노무비 ${won(l.laborPrice||0)}원 / ${esc(l.unit||'')}`,
+               '앞으로 다른 견적에서도 골라 쓸 수 있습니다'],
+        ok:'네, 저장합니다', cancel:'아니요', danger:false});
+      if(!ok) break;
+      syncLineToMaterial(e,p,l);
+      const m2=l.mid&&S.materials.get(l.mid);
+      if(m2){ m2.laborPrice=num(l.laborPrice||0); saveMat(m2); }
+      render(); toast('자재 단가표에 저장했습니다'); break; }
     case 'pullPrice': { const l=e.processes[+t.dataset.pi].lines[+t.dataset.li], m=S.materials.get(l.mid);
       if(m){ l.matPrice=num(m.unitPrice); l.name=m.name; l.spec=m.spec||''; l.unit=m.unit||l.unit; saveEst(e); render(); toast('단가표 금액을 가져왔습니다'); } break; }
     case 'pushPrice': { const l=e.processes[+t.dataset.pi].lines[+t.dataset.li], m=S.materials.get(l.mid);
@@ -2235,7 +2246,7 @@ document.addEventListener('click',async ev=>{
       if(await askConfirm({title:'이 단가표 사진을 지울까요?',lines:['사진에서 만든 자재는 그대로 남습니다'],ok:'네, 지웁니다',cancel:'아니요'})){
         try{ await sb?.storage.from('plans').remove([s.path]); }catch(err){ console.warn(err); }
         S.sheets.delete(s.id); writeRecord('sheets',s.id,null,true); render(); } break; }
-    case 'addMat': { const m={id:uid(),name:'',spec:'',process:MAT_FILTER==='all'?'etc':MAT_FILTER,unit:'박스',unitPrice:0,coverage:1,loss:5,mode:'area',note:'',updated:Date.now()}; S.materials.set(m.id,m); saveMat(m); render(); document.getElementById('m-'+m.id+'-name')?.select(); break; }
+    case 'addMat': { const m={id:uid(),name:'',spec:'',process:MAT_FILTER==='all'?'etc':MAT_FILTER,unit:'㎡',unitPrice:0,laborPrice:0,coverage:1,loss:0,mode:'area',note:'',updated:Date.now()}; S.materials.set(m.id,m); saveMat(m); render(); document.getElementById('m-'+m.id+'-name')?.select(); break; }
     case 'delMat': { const m=S.materials.get(t.dataset.id);
       if(await askConfirm({title:`“${m.name||'이름 없는 자재'}”을(를) 단가표에서 지울까요?`,lines:['이미 만든 견적의 금액은 그대로 유지됩니다'],ok:'네, 지웁니다',cancel:'아니요'})){ deleteMat(m.id); render(); } break; }
     case 'matPhoto': photoTarget={kind:'mat',id:t.dataset.id}; $('#filePhoto').click(); break;
