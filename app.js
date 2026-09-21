@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '3.4.1';
+const APP_VERSION = '3.4.2';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -419,7 +419,9 @@ function newEstimate(){
 /* 견적에 직접 적은 자재를 단가표에 저장하고, 단가표를 고치면 견적도 따라오게 합니다 */
 function syncLineToMaterial(e,p,l){
   if(!l || !String(l.name||'').trim()) return;
-  const vendorId=p.vendorId||''; const vendor=vendorName(vendorId)||(p.vendor||'').trim();
+  const pi=(e.processes||[]).indexOf(p);
+  const vendorId=p.vendorId||LINE_VENDOR[pi]||'';    // 자재 추가할 때 고른 업체를 물려줍니다
+  const vendor=vendorName(vendorId)||(p.vendor||'').trim();
   if(l.mid && S.materials.has(l.mid)){
     const m=S.materials.get(l.mid);
     const next={name:l.name,spec:l.spec||'',unit:l.unit||'',unitPrice:num(l.unitPrice),coverage:num(l.coverage),loss:num(l.loss),mode:l.mode||'area'};
@@ -677,11 +679,6 @@ function renderProc(e,p,pi){ // e: 견적
           <span class="unitf"><input class="f num" inputmode="decimal" id="p${pi}-area" data-area="${pi}" value="${esc(p.areaText ?? (p.area||''))}" placeholder="84 또는 26평">
             <i id="o-p${pi}-unit">${areaHint(p.areaText ?? p.area)}</i></span>
         </div></div>
-      <label class="fl" style="width:150px">업체
-        <select class="f" id="p${pi}-vendor" data-procvendor="${pi}">
-          <option value="">선택 안 함</option>
-          ${vendorsFor(p.k).map(v=>`<option value="${v.id}" ${p.vendorId===v.id?'selected':''}>${esc(v.name||'(이름 없음)')}</option>`).join('')}
-        </select></label>
       <div class="proc-sum"><div class="small muted">원가 소계 · <span id="o-p${pi}-m2"></span></div><b id="o-p${pi}-cost"></b></div>
       <div class="row" style="gap:2px;flex-wrap:nowrap">
         <button class="btn ghost sm" data-act="moveProc" data-pi="${pi}" data-d="-1" title="위로" ${pi===0?'disabled':''}>▲</button>
