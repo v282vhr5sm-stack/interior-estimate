@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '3.2.3';
+const APP_VERSION = '3.2.4';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -386,7 +386,7 @@ function syncLineToMaterial(e,p,l){
     return;
   }
   const m={id:uid(),name:l.name,spec:l.spec||'',process:p.k,vendor,unit:l.unit||'',unitPrice:num(l.unitPrice),
-    coverage:num(l.coverage),loss:num(l.loss),mode:l.mode||(num(l.coverage)>0?'area':'qty'),note:'견적에서 추가',updated:Date.now()};
+    coverage:num(l.coverage),loss:num(l.loss),mode:l.mode||(num(l.coverage)>0?'area':'qty'),note:'',updated:Date.now()};
   S.materials.set(m.id,m); saveMat(m); l.mid=m.id; saveEst(e);
 }
 function syncMaterialToLines(m){
@@ -872,7 +872,7 @@ function rowsFromText(txt){
     const cov=COV_HINT[unit]||0;
     out.push({on:true,name,spec,process:'etc',unit:unit||'개',unitPrice:price,vendor:'',
       coverage:cov,coverageBasis:cov?'추정':'없음',mode:cov?'area':'qty',loss:cov?5:0,tone:'',
-      note:'사진에서 읽음 · 확인 필요'});
+      note:''});
   }
   return out;
 }
@@ -1804,7 +1804,7 @@ async function applyPhoto(file){
   if(t.kind==='mat'){ const m=S.materials.get(t.id); if(m){ m.image=data; saveMat(m); } }
   else { const e=cur(); const p=e.processes[t.pi]; const l=p.lines[t.li];
     let m=l.mid&&S.materials.get(l.mid);
-    if(!m){ m={id:uid(),name:l.name||'자재',spec:l.spec,process:p.k,unit:l.unit,unitPrice:num(l.unitPrice),coverage:num(l.coverage),loss:num(l.loss),mode:l.mode||'area',note:'견적에서 추가',updated:Date.now()}; S.materials.set(m.id,m); l.mid=m.id; saveEst(e); }
+    if(!m){ m={id:uid(),name:l.name||'자재',spec:l.spec,process:p.k,unit:l.unit,unitPrice:num(l.unitPrice),coverage:num(l.coverage),loss:num(l.loss),mode:l.mode||'area',note:'',updated:Date.now()}; S.materials.set(m.id,m); l.mid=m.id; saveEst(e); }
     m.image=data; saveMat(m); }
   render(); toast('사진을 넣었습니다');
 }
