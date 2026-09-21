@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '3.5.0';
+const APP_VERSION = '4.0.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -235,6 +235,7 @@ async function loadLocal(){
   S.curId = ls.get('cur');
   if(!S.estimates.has(S.curId)) S.curId=[...S.estimates.values()].sort((a,b)=>(b.updated||0)-(a.updated||0))[0]?.id||null;
   migrateVendors();
+  migrateLinesV2();
   S.curPid = ls.get('curPid');
   if(!S.projects.has(S.curPid)) S.curPid=[...S.projects.values()].sort((a,b)=>(b.updated||0)-(a.updated||0))[0]?.id||null;
 }
@@ -379,21 +380,16 @@ function unitCell(m){
     ${custom?`<input class="f" id="m-${m.id}-unit" data-bind="mat:${m.id}:unit" value="${esc(m.unit||'')}" placeholder="단위" style="width:76px;margin-top:4px">`:''}`;
 }
 const FRAC_UNITS = ['m','kg','L','ℓ','㎏'];
-function calcLine(l, procArea){
-  const area = (l.area===''||l.area==null) ? procArea : num(l.area);
-  const cov=num(l.coverage), loss=num(l.loss), price=num(l.unitPrice);
-  let qty;
-  if(l.mode==='qty' || cov<=0) qty = num(l.qty);
-  else { const raw = area*(1+loss/100)/cov; qty = FRAC_UNITS.includes(l.unit) ? Math.ceil(raw*10)/10 : Math.ceil(raw-1e-9); }
-  const cost = qty*price;
-  const perM2 = (l.mode!=='qty' && cov>0) ? price/cov*(1+loss/100) : (area>0 ? cost/area : 0);
-  return {area, qty, cost, perM2};
+function calcLine(l){
+  const qty=num(l.qty), mp=num(l.matPrice??l.unitPrice), lp=num(l.laborPrice);
+  const mat=qty*mp, labor=qty*lp;
+  return {qty, matPrice:mp, laborPrice:lp, mat, labor, total:mat+labor};
 }
 function calcProc(p, margin){
   const area=num(p.area);
-  const lines=(p.lines||[]).map(l=>calcLine(l,area));
-  const mat=lines.reduce((s,x)=>s+x.cost,0);
-  const labor=area*num(p.laborPerM2)+num(p.laborLump);
+  const lines=(p.lines||[]).map(calcLine);
+  const mat=lines.reduce((s,x)=>s+x.mat,0);
+  const labor=lines.reduce((s,x)=>s+x.labor,0) + area*num(p.laborPerM2) + num(p.laborLump);
   const cost=mat+labor;
   const price=Math.round(cost*(1+margin/100)/1000)*1000;
   return {area,lines,mat,labor,cost,price,perM2: area>0?cost/area:0};
@@ -424,14 +420,14 @@ function syncLineToMaterial(e,p,l){
   const vendor=vendorName(vendorId)||(p.vendor||'').trim();
   if(l.mid && S.materials.has(l.mid)){
     const m=S.materials.get(l.mid);
-    const next={name:l.name,spec:l.spec||'',unit:l.unit||'',unitPrice:num(l.unitPrice),coverage:num(l.coverage),loss:num(l.loss),mode:l.mode||'area'};
+    const next={name:l.name,spec:l.spec||'',unit:l.unit||'',unitPrice:num(l.matPrice)};
     if(vendorId && !m.vendorId){ next.vendor=vendor; next.vendorId=vendorId; }
     const changed=Object.keys(next).some(k=>String(m[k]??'')!==String(next[k]??''));
     if(changed){ Object.assign(m,next,{updated:Date.now()}); saveMat(m); }
     return;
   }
-  const m={id:uid(),name:l.name,spec:l.spec||'',process:p.k,vendor,vendorId,unit:l.unit||'',unitPrice:num(l.unitPrice),
-    coverage:num(l.coverage),loss:num(l.loss),mode:l.mode||(num(l.coverage)>0?'area':'qty'),note:'',updated:Date.now()};
+  const m={id:uid(),name:l.name,spec:l.spec||'',process:p.k,vendor,vendorId,unit:l.unit||'',unitPrice:num(l.matPrice),
+    coverage:1,loss:0,mode:'area',note:'',updated:Date.now()};
   S.materials.set(m.id,m); saveMat(m); l.mid=m.id; saveEst(e);
 }
 function syncMaterialToLines(m){
@@ -441,14 +437,40 @@ function syncMaterialToLines(m){
     (e.processes||[]).forEach(p=>(p.lines||[]).forEach(l=>{
       if(l.mid!==m.id) return;
       l.name=m.name; l.spec=m.spec||''; l.unit=m.unit||'';
-      l.unitPrice=num(m.unitPrice); l.coverage=num(m.coverage); l.loss=num(m.loss); l.mode=m.mode||l.mode;
+      l.matPrice=num(m.unitPrice);
       hit=true; touched++;
     }));
     if(hit) saveEst(e);
   });
   return touched;
 }
-function lineFromMat(m){ return {mid:m.id,name:m.name,spec:m.spec||'',unit:m.unit||'',unitPrice:num(m.unitPrice),coverage:num(m.coverage),loss:num(m.loss),mode:m.mode||(num(m.coverage)>0?'area':'qty'),qty:m.mode==='qty'?1:0,area:''}; }
+/* 예전 방식(면적·로스·1단위 시공㎡)으로 적어둔 줄을 수량 방식으로 옮깁니다. 금액은 그대로 유지됩니다. */
+function migrateLinesV2(){
+  S.estimates.forEach(e=>{
+    if(e.v2) return;
+    (e.processes||[]).forEach(p=>{
+      const area=num(p.area);
+      (p.lines||[]).forEach(l=>{
+        if(l.matPrice==null){
+          const cov=num(l.coverage), loss=num(l.loss), price=num(l.unitPrice);
+          const la=(l.area===''||l.area==null)?area:num(l.area);
+          let qty;
+          if(l.mode==='qty'||cov<=0) qty=num(l.qty);
+          else { const raw=la*(1+loss/100)/cov; qty=FRAC_UNITS.includes(l.unit)?Math.ceil(raw*10)/10:Math.ceil(raw-1e-9); }
+          l.qty=qty; l.matPrice=price; l.laborPrice=0;
+        }
+      });
+      const legacyLabor=area*num(p.laborPerM2)+num(p.laborLump);
+      if(legacyLabor>0){
+        p.lines=p.lines||[];
+        p.lines.push({id:uid(),name:'시공비',spec:'',unit:'식',qty:1,matPrice:0,laborPrice:legacyLabor,memo:''});
+        p.laborPerM2=0; p.laborLump=0;
+      }
+    });
+    e.v2=true; saveEst(e);
+  });
+}
+function lineFromMat(m){ return {mid:m.id,name:m.name,spec:m.spec||'',unit:m.unit||'㎡',qty:1,matPrice:num(m.unitPrice),laborPrice:num(m.laborPrice||0),memo:''}; }
 function ensureProc(e,k){ let p=e.processes.find(x=>x.k===k); if(!p){ p={id:uid(),k,area:0,laborPerM2:0,laborLump:0,lines:[]}; e.processes.push(p); } return p; }
 function lineImg(l,k){ const m=l.mid&&S.materials.get(l.mid); return m?.image || swatch((PMAP[k]||PMAP.etc).pat, m?.tone); }
 function matImg(m){ return m.image || swatch((PMAP[m.process]||PMAP.etc).pat, m.tone); }
@@ -687,7 +709,7 @@ function renderProc(e,p,pi){ // e: 견적
         <button class="btn ghost sm danger" data-act="delProc" data-pi="${pi}" aria-label="${P.n} 공정 삭제">✕</button></div>
     </div>
     <div class="tbl-wrap"><table class="t resp">
-      <thead><tr><th class="w-img"></th><th class="w-name">자재 · 규격</th><th class="r">적용면적㎡</th><th class="r">로스%</th><th class="r">필요수량</th><th>단위</th><th class="r">단가</th><th class="r">자재비</th><th class="r">㎡당</th><th>메모</th><th></th></tr></thead>
+      <thead><tr><th class="w-img"></th><th class="w-name">품명 · 규격</th><th class="r">수량</th><th>단위</th><th class="r">재료비 단가</th><th class="r">재료비 금액</th><th class="r">노무비 단가</th><th class="r">노무비 금액</th><th class="r">합계</th><th>비고</th><th></th></tr></thead>
       <tbody>${(p.lines||[]).map((l,li)=>renderLine(p,pi,l,li)).join('') || `<tr><td colspan="11" class="muted small c-empty" style="padding:12px 8px">아래에서 자재를 추가하세요.</td></tr>`}</tbody>
     </table></div>
     <div class="proc-f">
@@ -701,33 +723,36 @@ function renderProc(e,p,pi){ // e: 견적
       <button class="btn sm" data-act="addBlank" data-pi="${pi}">직접 입력</button>
     </div>
     <div class="labor">
-      <b>인건비</b>
-      <label class="row" style="gap:6px">㎡당 <input class="f num" type="number" inputmode="numeric" step="500" id="p${pi}-lab" data-bind="proc:${pi}:laborPerM2" data-num value="${esc(p.laborPerM2)}"> 원</label>
-      <label class="row" style="gap:6px">일식·추가 <input class="f num" type="number" inputmode="numeric" step="10000" id="p${pi}-lump" data-bind="proc:${pi}:laborLump" data-num value="${esc(p.laborLump)}"> 원</label>
-      <span class="spacer"></span><span>= <b id="o-p${pi}-labor"></b></span>
+      <span>재료비 <b id="o-p${pi}-mat"></b></span>
+      <span>노무비 <b id="o-p${pi}-labor"></b></span>
+      <span class="spacer"></span>
+      <span>공정 합계 <b id="o-p${pi}-sum"></b></span>
     </div>
   </section>`;
 }
 function renderLine(p,pi,l,li){
-  const id=`p${pi}l${li}`, qtyMode=l.mode==='qty';
+  const id=`p${pi}l${li}`;
   const m=l.mid&&S.materials.get(l.mid);
+  const custom=!UNITS.includes(l.unit||'');
   return `<tr>
     <td class="c-img"><button class="thumb-btn" data-act="linePhoto" data-pi="${pi}" data-li="${li}" aria-label="사진 바꾸기"><img class="thumb" src="${lineImg(l,p.k)}" alt=""></button></td>
-    <td class="c-name"><input class="f" id="${id}-name" data-bind="line:${pi}:${li}:name" value="${esc(l.name)}" placeholder="자재명" style="font-weight:500">
+    <td class="c-name"><input class="f" id="${id}-name" data-bind="line:${pi}:${li}:name" value="${esc(l.name)}" placeholder="품명" style="font-weight:500">
         <input class="f small" id="${id}-spec" data-bind="line:${pi}:${li}:spec" value="${esc(l.spec)}" placeholder="규격" style="margin-top:3px">
-        ${m&&num(m.unitPrice)!==num(l.unitPrice)?`<div class="small" style="margin-top:3px"><span class="badge warn">단가표 ${won(m.unitPrice)}원</span></div>`:''}</td>
-    ${qtyMode
-      ? `<td class="r" data-l="계산 방식"><button class="btn ghost sm" data-act="toggleMode" data-pi="${pi}" data-li="${li}" title="면적 기준으로 계산">수량 직접 입력 ↺</button></td><td></td>
-         <td class="r" data-l="수량"><input class="f num w-s" type="number" inputmode="decimal" step="0.1" id="${id}-qty" data-bind="line:${pi}:${li}:qty" data-num value="${esc(l.qty)}"></td>`
-      : `<td class="r" data-l="적용면적㎡"><input class="f num w-n" type="number" inputmode="decimal" step="0.1" id="${id}-area" data-bind="line:${pi}:${li}:area" data-num-empty value="${esc(l.area)}" placeholder="공정값"></td>
-         <td class="r" data-l="로스%"><input class="f num w-s" type="number" inputmode="decimal" id="${id}-loss" data-bind="line:${pi}:${li}:loss" data-num value="${esc(l.loss)}"></td>
-         <td class="cell-out" data-l="필요수량"><span id="o-${id}-qty"></span></td>`}
-    <td data-l="단위"><input class="f w-s" id="${id}-unit" data-bind="line:${pi}:${li}:unit" value="${esc(l.unit)}" style="width:54px"></td>
-    <td class="r" data-l="단가"><input class="f num w-n" type="number" inputmode="numeric" step="100" id="${id}-price" data-bind="line:${pi}:${li}:unitPrice" data-num value="${esc(l.unitPrice)}"></td>
-    <td class="cell-out" data-l="자재비"><span id="o-${id}-cost"></span></td>
-    <td class="cell-out muted" data-l="㎡당"><span id="o-${id}-m2"></span></td>
-    <td data-l="메모"><input class="f" id="${id}-memo" data-bind="line:${pi}:${li}:memo" value="${esc(l.memo||'')}" placeholder="메모" style="min-width:110px"></td>
-    <td class="c-act"><div class="row" style="gap:0;flex-wrap:nowrap">${!qtyMode?`<button class="btn ghost sm" data-act="toggleMode" data-pi="${pi}" data-li="${li}" title="수량을 직접 입력">수량 직접</button>`:''}<button class="btn ghost sm danger" data-act="delLine" data-pi="${pi}" data-li="${li}" aria-label="삭제">✕</button></div></td>
+        ${m&&num(m.unitPrice)!==num(l.matPrice)?`<div class="small" style="margin-top:3px"><span class="badge warn">단가표 ${won(m.unitPrice)}원</span></div>`:''}</td>
+    <td class="r" data-l="수량"><input class="f num w-s" type="number" inputmode="decimal" step="0.1" id="${id}-qty" data-bind="line:${pi}:${li}:qty" data-num value="${esc(l.qty)}"></td>
+    <td data-l="단위">
+      <select class="f" id="${id}-unitsel" data-lineunit="${pi}:${li}" style="width:82px">
+        ${UNITS.map(u=>`<option value="${u}" ${!custom&&l.unit===u?'selected':''}>${u}</option>`).join('')}
+        <option value="__custom" ${custom?'selected':''}>직접 입력</option>
+      </select>
+      ${custom?`<input class="f" id="${id}-unit" data-bind="line:${pi}:${li}:unit" value="${esc(l.unit||'')}" placeholder="단위" style="width:72px;margin-top:4px">`:''}</td>
+    <td class="r" data-l="재료비 단가"><input class="f num w-n" type="number" inputmode="numeric" step="100" id="${id}-mprice" data-bind="line:${pi}:${li}:matPrice" data-num value="${esc(l.matPrice??0)}"></td>
+    <td class="cell-out" data-l="재료비 금액"><span id="o-${id}-mat"></span></td>
+    <td class="r" data-l="노무비 단가"><input class="f num w-n" type="number" inputmode="numeric" step="100" id="${id}-lprice" data-bind="line:${pi}:${li}:laborPrice" data-num value="${esc(l.laborPrice??0)}"></td>
+    <td class="cell-out" data-l="노무비 금액"><span id="o-${id}-labor"></span></td>
+    <td class="cell-out" data-l="합계"><b id="o-${id}-total"></b></td>
+    <td data-l="비고"><input class="f" id="${id}-memo" data-bind="line:${pi}:${li}:memo" value="${esc(l.memo||'')}" placeholder="비고" style="min-width:110px"></td>
+    <td class="c-act"><button class="btn ghost sm danger" data-act="delLine" data-pi="${pi}" data-li="${li}" aria-label="삭제">✕</button></td>
   </tr>`;
 }
 function setText(id,t){ const el=document.getElementById(id); if(el) el.textContent=t; }
@@ -740,8 +765,9 @@ function recalc(){
   e.processes.forEach((p,pi)=>{ const pc=c.procs[pi];
     setText(`o-p${pi}-cost`,won(pc.cost)+'원');
     setText(`o-p${pi}-m2`, pc.area>0?`㎡당 ${won(pc.perM2)}원`:'면적 미입력'); setText(`o-p${pi}-labor`,won(pc.labor)+'원');
+    setText(`o-p${pi}-mat`, won(pc.mat)+'원'); setText(`o-p${pi}-sum`, won(pc.cost)+'원');
     (p.lines||[]).forEach((l,li)=>{ const x=pc.lines[li], id=`p${pi}l${li}`;
-      setText(`o-${id}-qty`, r1(x.qty)); setText(`o-${id}-cost`, won(x.cost)); setText(`o-${id}-m2`, x.perM2?won(x.perM2):'—'); });
+      setText(`o-${id}-mat`, won(x.mat)); setText(`o-${id}-labor`, won(x.labor)); setText(`o-${id}-total`, won(x.total)); });
   });
   const max=Math.max(1,...c.procs.map(x=>x.cost));
   const bars=document.getElementById('o-bars');
@@ -1077,8 +1103,8 @@ function docHTML(e){
     <h2 class="d-sec">공정별 자재 및 시공 내역</h2>
     ${procs.map(({p,pc,P})=>`<div class="d-proc">
       <div class="d-proc-h"><b>${P.n}</b><span>${pc.area>0?r1(pc.area)+'㎡ ('+Math.round(pc.area/PY)+'평) · ':''}${won(pc.price)}원</span></div>
-      ${e.showImages!==false && p.lines?.length ? `<div class="d-mats">${p.lines.map((l,li)=>{ const x=pc.lines[li]; return `<div class="d-mat"><img src="${lineImg(l,p.k)}" alt=""><div class="t"><b>${esc(l.name)}</b><span>${esc(l.spec)}</span>${x.qty>0?`<br><span>${r1(x.qty)} ${esc(l.unit)}</span>`:''}${e.showLinePrice?`<br><span>${won(x.cost*k)}원</span>`:''}</div></div>`; }).join('')}</div>`
-      : p.lines?.length ? `<table><thead><tr><th>자재</th><th>규격</th><th class="r">수량</th>${e.showLinePrice?'<th class="r">금액</th>':''}</tr></thead><tbody>${p.lines.map((l,li)=>{const x=pc.lines[li]; return `<tr><td>${esc(l.name)}</td><td>${esc(l.spec)}</td><td class="r">${r1(x.qty)} ${esc(l.unit)}</td>${e.showLinePrice?`<td class="r">${won(x.cost*k)}</td>`:''}</tr>`;}).join('')}</tbody></table>`:''}
+      ${e.showImages!==false && p.lines?.length ? `<div class="d-mats">${p.lines.map((l,li)=>{ const x=pc.lines[li]; return `<div class="d-mat"><img src="${lineImg(l,p.k)}" alt=""><div class="t"><b>${esc(l.name)}</b><span>${esc(l.spec)}</span>${x.qty>0?`<br><span>${r1(x.qty)} ${esc(l.unit)}</span>`:''}${e.showLinePrice?`<br><span>${won(x.total*k)}원</span>`:''}</div></div>`; }).join('')}</div>`
+      : p.lines?.length ? `<table><thead><tr><th>자재</th><th>규격</th><th class="r">수량</th>${e.showLinePrice?'<th class="r">금액</th>':''}</tr></thead><tbody>${p.lines.map((l,li)=>{const x=pc.lines[li]; return `<tr><td>${esc(l.name)}</td><td>${esc(l.spec)}</td><td class="r">${r1(x.qty)} ${esc(l.unit)}</td>${e.showLinePrice?`<td class="r">${won(x.total*k)}</td>`:''}</tr>`;}).join('')}</tbody></table>`:''}
       ${pc.labor>0?`<div class="d-list">시공비 포함${e.showLinePrice?` · ${won(pc.labor*k)}원`:''}</div>`:''}
     </div>`).join('')}
 
@@ -1939,7 +1965,7 @@ async function applyPhoto(file){
   if(t.kind==='mat'){ const m=S.materials.get(t.id); if(m){ m.image=data; saveMat(m); } }
   else { const e=cur(); const p=e.processes[t.pi]; const l=p.lines[t.li];
     let m=l.mid&&S.materials.get(l.mid);
-    if(!m){ m={id:uid(),name:l.name||'자재',spec:l.spec,process:p.k,unit:l.unit,unitPrice:num(l.unitPrice),coverage:num(l.coverage),loss:num(l.loss),mode:l.mode||'area',note:'',updated:Date.now()}; S.materials.set(m.id,m); l.mid=m.id; saveEst(e); }
+    if(!m){ m={id:uid(),name:l.name||'자재',spec:l.spec,process:p.k,unit:l.unit,unitPrice:num(l.matPrice),coverage:1,loss:0,mode:'area',note:'',updated:Date.now()}; S.materials.set(m.id,m); l.mid=m.id; saveEst(e); }
     m.image=data; saveMat(m); }
   render(); toast('사진을 넣었습니다');
 }
@@ -2015,6 +2041,13 @@ function handleSelectChange(t){
     return;
   }
   if(t.dataset.vendorpick!==undefined){ LINE_VENDOR[+t.dataset.vendorpick]=t.value; render(); return; }
+  if(t.dataset.lineunit){
+    const [pi,li]=t.dataset.lineunit.split(':').map(Number), e=cur(), l=e?.processes[pi]?.lines[li]; if(!l) return;
+    l.unit = t.value==='__custom' ? '' : t.value;
+    saveEst(e); render();
+    if(t.value==='__custom') setTimeout(()=>document.getElementById(`p${pi}l${li}-unit`)?.focus(),60);
+    return;
+  }
   if(t.dataset.matvendor){                       // 자재의 업체 선택
     const m=S.materials.get(t.dataset.matvendor); if(!m) return;
     if(t.value==='__custom'){ m.vendorId=''; }
@@ -2030,7 +2063,7 @@ function handleSelectChange(t){
 }
 document.addEventListener('change',ev=>{
   const t=ev.target, a=t.dataset?.actChange;
-  if(t.dataset?.unitsel||t.dataset?.vendorpick!==undefined||t.dataset?.matvendor||t.dataset?.procvendor!==undefined){ handleSelectChange(t); return; }
+  if(t.dataset?.unitsel||t.dataset?.vendorpick!==undefined||t.dataset?.matvendor||t.dataset?.procvendor!==undefined||t.dataset?.lineunit){ handleSelectChange(t); return; }
   if(!a) return;
   if(a==='pick'){ setCur(t.value); render(); }
   if(a==='addLine'&&t.value){ const e=cur(), p=e.processes[+t.dataset.pi], m=S.materials.get(t.value); if(m){ p.lines.push(lineFromMat(m)); saveEst(e); render(); } }
@@ -2085,10 +2118,10 @@ document.addEventListener('click',async ev=>{
     case 'seed': seedExample(); break;
     case 'addProc': ensureProc(e,t.dataset.k); saveEst(e); render(); break;
     case 'delProc': { const p=e.processes[+t.dataset.pi]; if(!p.lines.length||confirm(`${PMAP[p.k].n} 공정을 삭제할까요?`)){ e.processes.splice(+t.dataset.pi,1); saveEst(e); render(); } break; }
-    case 'addBlank': e.processes[+t.dataset.pi].lines.push({name:'',spec:'',unit:'개',unitPrice:0,coverage:0,loss:0,mode:'qty',qty:1,area:''}); saveEst(e); render(); break;
+    case 'addBlank': e.processes[+t.dataset.pi].lines.push({id:uid(),name:'',spec:'',unit:'㎡',qty:1,matPrice:0,laborPrice:0,memo:''}); saveEst(e); render();
+      setTimeout(()=>{ const p=e.processes[+t.dataset.pi]; document.getElementById(`p${t.dataset.pi}l${p.lines.length-1}-name`)?.focus(); },60); break;
     case 'delLine': e.processes[+t.dataset.pi].lines.splice(+t.dataset.li,1); saveEst(e); render(); break;
-    case 'toggleMode': { const p=e.processes[+t.dataset.pi], l=p.lines[+t.dataset.li]; if(l.mode==='qty'){ l.mode='area'; if(!num(l.coverage)) l.coverage=1; } else { l.qty=calcLine({...l,mode:'area'},num(p.area)).qty; l.mode='qty'; } saveEst(e); render(); break; }
-    case 'refreshPrices': { let n=0; e.processes.forEach(p=>p.lines.forEach(l=>{ const m=l.mid&&S.materials.get(l.mid); if(m&&num(m.unitPrice)!==num(l.unitPrice)){ l.unitPrice=num(m.unitPrice); n++; } })); saveEst(e); render(); toast(n?`${n}개 자재 단가를 바꿨습니다`:'바뀐 단가가 없습니다'); break; }
+    case 'refreshPrices': { let n=0; e.processes.forEach(p=>p.lines.forEach(l=>{ const m=l.mid&&S.materials.get(l.mid); if(m&&num(m.unitPrice)!==num(l.matPrice)){ l.matPrice=num(m.unitPrice); n++; } })); saveEst(e); render(); toast(n?`${n}개 자재 단가를 바꿨습니다`:'바뀐 단가가 없습니다'); break; }
     case 'goImport': VIEW='mat'; render(); $('#fileSheet').click(); break;
     case 'pickSheet': $('#fileSheet').removeAttribute('capture'); $('#fileSheet').click(); break;
     case 'shootSheet': $('#fileSheet').setAttribute('capture','environment'); $('#fileSheet').click(); break;
