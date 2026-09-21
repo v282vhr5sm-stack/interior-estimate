@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '3.2.2';
+const APP_VERSION = '3.2.3';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -732,7 +732,7 @@ function renderMat(){
           <td class="r" data-l="1단위 시공㎡"><input class="f num w-s" type="number" inputmode="decimal" step="0.01" id="m-${m.id}-cov" data-bind="mat:${m.id}:coverage" data-num value="${esc(m.coverage)}" title="0이면 수량 기준 자재">${m.coverageBasis==='추정'?'<div><span class="badge warn">추정</span></div>':''}</td>
           <td class="r" data-l="로스%"><input class="f num w-s" type="number" inputmode="decimal" id="m-${m.id}-loss" data-bind="mat:${m.id}:loss" data-num value="${esc(m.loss)}"></td>
           <td class="cell-out" data-l="㎡당 원가"><span id="o-m-${m.id}">${perM2Html(matPerM2(m))}</span></td>
-          <td class="small muted" data-l="메모" style="max-width:220px">${esc(m.note||'')}</td>
+          <td data-l="메모" style="max-width:220px"><input class="f small" id="m-${m.id}-note" data-bind="mat:${m.id}:note" value="${esc(m.note||'')}" placeholder="메모 (예: 2025년 12월 기준)"></td>
           <td class="c-act"><button class="btn ghost sm danger" data-act="delMat" data-id="${m.id}" aria-label="삭제">✕ 삭제</button></td></tr>`).join('') || `<tr><td colspan="11" class="empty c-empty">자재가 없습니다. 단가표 사진을 올리거나 직접 추가하세요.</td></tr>`}</tbody>
       </table></div>
     </section>
