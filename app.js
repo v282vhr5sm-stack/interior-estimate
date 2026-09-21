@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '1.9.0';
+const APP_VERSION = '2.0.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -26,6 +26,25 @@ const clone = o => JSON.parse(JSON.stringify(o));
 const today = () => { const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); };
 const ls = { get(k,d=null){ try{ const v=localStorage.getItem('ie:'+k); return v==null?d:v; }catch{ return d; } }, set(k,v){ try{ v==null?localStorage.removeItem('ie:'+k):localStorage.setItem('ie:'+k,v); }catch{} } };
 function toast(msg){ const t=document.createElement('div'); t.className='toast'; t.textContent=msg; document.body.appendChild(t); setTimeout(()=>t.remove(),2600); }
+/* 실수로 눌러도 바로 지워지지 않도록, 직접 “삭제”를 한 번 더 고르게 합니다 */
+function askConfirm({title,lines=[],ok='삭제',cancel='취소',danger=true}){
+  return new Promise(res=>{
+    const box=document.createElement('div'); box.className='modal';
+    box.innerHTML=`<div class="modal-b ask">
+      <h3>${esc(title)}</h3>
+      ${lines.length?`<ul class="ask-l">${lines.map(l=>`<li>${esc(l)}</li>`).join('')}</ul>`:''}
+      <div class="row" style="justify-content:flex-end;margin-top:6px">
+        <button class="btn" data-x="no">${esc(cancel)}</button>
+        <button class="btn ${danger?'del':'pri'}" data-x="yes">${esc(ok)}</button>
+      </div></div>`;
+    const close=v=>{ box.remove(); document.removeEventListener('keydown',key); res(v); };
+    const key=e=>{ if(e.key==='Escape') close(false); };
+    box.addEventListener('click',e=>{ const b=e.target.closest('[data-x]'); if(b) close(b.dataset.x==='yes'); else if(e.target===box) close(false); });
+    document.addEventListener('keydown',key);
+    document.body.appendChild(box);
+    box.querySelector('[data-x="no"]').focus();
+  });
+}
 function krWords(n){
   n=Math.round(n); if(n<=0) return '영';
   const d=['','일','이','삼','사','오','육','칠','팔','구'],u=['','십','백','천'],big=['','만','억','조'];
@@ -1608,10 +1627,13 @@ document.addEventListener('click',async ev=>{
   if(t.tagName==='A') ev.preventDefault();
   const a=t.dataset.act, e=cur();
   switch(a){
-    case 'view': VIEW=t.dataset.v; ls.set('view',VIEW); render(); window.scrollTo(0,0); break;
+    case 'view': VIEW=t.dataset.v; ls.set('view',VIEW);
+      if(VIEW==='home'){ HOME_NEW=false; HOME_SEL=(S.curPid&&S.projects.has(S.curPid))?S.curPid:null; }   // 아래 “현장” 탭 = 지금 현장 메뉴
+      render(); window.scrollTo(0,0); break;
+    case 'homeList': VIEW='home'; ls.set('view',VIEW); HOME_SEL=null; HOME_NEW=false; render(); window.scrollTo(0,0); break;  // 위 배너 = 전체 현장 목록
     case 'newEst': { const n=newEstimate(); S.estimates.set(n.id,n); setCur(n.id); saveEst(n); VIEW='est'; render(); break; }
     case 'dupEst': { const n=clone(e); n.id=uid(); n.title=e.title+' (복사)'; n.no=newEstimate().no; S.estimates.set(n.id,n); setCur(n.id); saveEst(n); render(); toast('복제했습니다'); break; }
-    case 'delEst': if(confirm(`“${e.title}” 견적을 삭제할까요?`)){ deleteEst(e.id); setCur([...S.estimates.keys()][0]||null); render(); } break;
+    case 'delEst': if(await askConfirm({title:`“${e.title||'제목 없는 견적'}” 견적을 삭제할까요?`,lines:['되돌릴 수 없습니다'],ok:'네, 삭제합니다',cancel:'아니요'})){ deleteEst(e.id); setCur([...S.estimates.keys()][0]||null); render(); } break;
     case 'seed': seedExample(); break;
     case 'addProc': ensureProc(e,t.dataset.k); saveEst(e); render(); break;
     case 'delProc': { const p=e.processes[+t.dataset.pi]; if(!p.lines.length||confirm(`${PMAP[p.k].n} 공정을 삭제할까요?`)){ e.processes.splice(+t.dataset.pi,1); saveEst(e); render(); } break; }
@@ -1627,7 +1649,8 @@ document.addEventListener('click',async ev=>{
     case 'revCancel': IMPORT={files:[],urls:[],busy:false,items:null,memo:'',err:''}; render(); break;
     case 'matFilter': MAT_FILTER=t.dataset.k; render(); break;
     case 'addMat': { const m={id:uid(),name:'',spec:'',process:MAT_FILTER==='all'?'etc':MAT_FILTER,unit:'박스',unitPrice:0,coverage:1,loss:5,mode:'area',note:'',updated:Date.now()}; S.materials.set(m.id,m); saveMat(m); render(); document.getElementById('m-'+m.id+'-name')?.select(); break; }
-    case 'delMat': { const m=S.materials.get(t.dataset.id); if(confirm(`“${m.name}”을(를) 단가표에서 삭제할까요? 이미 만든 견적의 금액은 그대로 유지됩니다.`)){ deleteMat(m.id); render(); } break; }
+    case 'delMat': { const m=S.materials.get(t.dataset.id);
+      if(await askConfirm({title:`“${m.name||'이름 없는 자재'}”을(를) 단가표에서 지울까요?`,lines:['이미 만든 견적의 금액은 그대로 유지됩니다'],ok:'네, 지웁니다',cancel:'아니요'})){ deleteMat(m.id); render(); } break; }
     case 'matPhoto': photoTarget={kind:'mat',id:t.dataset.id}; $('#filePhoto').click(); break;
     case 'linePhoto': photoTarget={kind:'line',pi:+t.dataset.pi,li:+t.dataset.li}; $('#filePhoto').click(); break;
     case 'print': flushWrites(); window.print(); break;
@@ -1653,9 +1676,13 @@ document.addEventListener('click',async ev=>{
       S.projects.set(n.id,n); S.curPid=n.id; ls.set('curPid',n.id); saveProj(n); VIEW='sched'; SCHED_MODE='site'; ls.set('view',VIEW); render(); toast('견적의 공정으로 일정을 만들었습니다. 날짜를 고쳐주세요.'); break; }
     case 'delProj': { const p=curProj(); if(!p) break;
       const n=(p.files||[]).length;
-      if(confirm(`“${p.name}” 현장을 삭제할까요? 공유 링크도 닫히고${n?` 올린 파일 ${n}개도 지워집니다`:'요'}.\n자료를 남기려면 먼저 “현장 자료 내려받기”를 쓰세요.`)){
+      if(await askConfirm({title:`“${p.name||'이름 없는 현장'}” 현장을 삭제할까요?`,
+        lines:[`일정 ${(p.tasks||[]).length}건${n?`, 사진·도면 ${n}개`:''} 모두 지워집니다`,
+               p.share?.on?'고객·작업자 공유 링크도 닫힙니다':'되돌릴 수 없습니다',
+               '자료를 남기려면 취소하고 “자료 내려받기”를 먼저 하세요'],
+        ok:'네, 삭제합니다', cancel:'아니요, 그대로 둡니다'})){
         if(n) try{ await sb?.storage.from('plans').remove(p.files.map(f=>f.path)); }catch(err){ console.warn(err); }
-        deleteProj(p.id); S.curPid=[...S.projects.keys()][0]||null; ls.set('curPid',S.curPid); render(); } break; }
+        deleteProj(p.id); S.curPid=[...S.projects.keys()][0]||null; ls.set('curPid',S.curPid); HOME_SEL=null; render(); } break; }
     case 'addTask': { const p=curProj(); const k=t.dataset.k; const P=PMAP[k];
       const last=(p.tasks||[]).map(x=>x.end).filter(Boolean).sort().pop();
       const st=last?addDays(last,1):today();
@@ -1673,8 +1700,12 @@ document.addEventListener('click',async ev=>{
     case 'openSite': HOME_SEL=t.dataset.id; S.curPid=t.dataset.id; ls.set('curPid',S.curPid); render(); window.scrollTo(0,0); break;
     case 'delSite': { ev.stopPropagation(); const p=S.projects.get(t.dataset.id); if(!p) break;
       const n=(p.files||[]).length;
-      const msg=`“${p.name||'이름 없는 현장'}” 현장을 삭제할까요?\n\n· 일정 ${(p.tasks||[]).length}건${n?`, 사진·도면 ${n}개`:''}가 함께 지워집니다\n· 공유 링크도 닫힙니다\n· 되돌릴 수 없습니다\n\n자료를 남기려면 취소하고 현장 화면에서 “자료 내려받기”를 먼저 하세요.`;
-      if(!confirm(msg)) break;
+      const ok=await askConfirm({title:`“${p.name||'이름 없는 현장'}” 현장을 삭제할까요?`,
+        lines:[`일정 ${(p.tasks||[]).length}건${n?`, 사진·도면 ${n}개`:''} 모두 지워집니다`,
+               p.share?.on?'고객·작업자 공유 링크도 닫힙니다':'되돌릴 수 없습니다',
+               '자료를 남기려면 취소하고 현장 화면에서 “자료 내려받기”를 먼저 하세요'],
+        ok:'네, 삭제합니다', cancel:'아니요, 그대로 둡니다'});
+      if(!ok) break;
       if(n) try{ await sb?.storage.from('plans').remove(p.files.map(f=>f.path)); }catch(err){ console.warn(err); }
       deleteProj(p.id);
       if(S.curPid===p.id){ S.curPid=[...S.projects.keys()][0]||null; ls.set('curPid',S.curPid); }
