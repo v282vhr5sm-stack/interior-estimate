@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '4.0.1';
+const APP_VERSION = '4.1.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -52,6 +52,23 @@ function editSiteBox(p){
   });
 }
 /* 실수로 눌러도 바로 지워지지 않도록, 직접 “삭제”를 한 번 더 고르게 합니다 */
+function priceBox({title,lines=[],buttons=[]}){
+  return new Promise(res=>{
+    const box=document.createElement('div'); box.className='modal';
+    box.innerHTML=`<div class="modal-b ask">
+      <h3>${esc(title)}</h3>
+      <ul class="ask-l">${lines.map(l=>`<li>${esc(l)}</li>`).join('')}</ul>
+      <div class="row" style="justify-content:flex-end;margin-top:6px;gap:6px">
+        ${buttons.map(b=>`<button class="btn ${b.danger?'del':'pri'}" data-k="${b.k}" ${b.disabled?'disabled':''}>${esc(b.label)}</button>`).join('')}
+        <button class="btn" data-k="">닫기</button>
+      </div></div>`;
+    const close=v=>{ box.remove(); document.removeEventListener('keydown',key); res(v); };
+    const key=ev=>{ if(ev.key==='Escape') close(''); };
+    box.addEventListener('click',ev=>{ const b=ev.target.closest('[data-k]'); if(b) close(b.dataset.k); else if(ev.target===box) close(''); });
+    document.addEventListener('keydown',key);
+    document.body.appendChild(box);
+  });
+}
 function askConfirm({title,lines=[],ok='삭제',cancel='취소',danger=true,checkbox=null}){
   return new Promise(res=>{
     const box=document.createElement('div'); box.className='modal';
@@ -418,18 +435,16 @@ function syncLineToMaterial(e,p,l){
   const pi=(e.processes||[]).indexOf(p);
   const vendorId=p.vendorId||LINE_VENDOR[pi]||'';    // 자재 추가할 때 고른 업체를 물려줍니다
   const vendor=vendorName(vendorId)||(p.vendor||'').trim();
-  if(l.mid && S.materials.has(l.mid)){
-    const m=S.materials.get(l.mid);
-    const next={name:l.name,spec:l.spec||'',unit:l.unit||'',unitPrice:num(l.matPrice)};
-    if(vendorId && !m.vendorId){ next.vendor=vendor; next.vendorId=vendorId; }
-    const changed=Object.keys(next).some(k=>String(m[k]??'')!==String(next[k]??''));
-    if(changed){ Object.assign(m,next,{updated:Date.now()}); saveMat(m); }
-    return;
-  }
+  if(l.mid && S.materials.has(l.mid)) return;   // 이미 단가표에 있는 자재는 견적에서 고쳐도 그대로 둡니다
   const m={id:uid(),name:l.name,spec:l.spec||'',process:p.k,vendor,vendorId,unit:l.unit||'',unitPrice:num(l.matPrice),
     coverage:1,loss:0,mode:'area',note:'',updated:Date.now()};
   S.materials.set(m.id,m); saveMat(m); l.mid=m.id; saveEst(e);
 }
+const linesUsing = mid => {
+  const out=[];
+  S.estimates.forEach(e=>(e.processes||[]).forEach(p=>(p.lines||[]).forEach(l=>{ if(l.mid===mid) out.push({e,p,l}); })));
+  return out;
+};
 function syncMaterialToLines(m){
   let touched=0;
   S.estimates.forEach(e=>{
@@ -739,7 +754,9 @@ function renderLine(p,pi,l,li){
     <td class="c-img"><button class="thumb-btn" data-act="linePhoto" data-pi="${pi}" data-li="${li}" aria-label="사진 바꾸기"><img class="thumb" src="${lineImg(l,p.k)}" alt=""></button></td>
     <td class="c-name"><input class="f" id="${id}-name" data-bind="line:${pi}:${li}:name" value="${esc(l.name)}" placeholder="품명" style="font-weight:500">
         <input class="f small" id="${id}-spec" data-bind="line:${pi}:${li}:spec" value="${esc(l.spec)}" placeholder="규격" style="margin-top:3px">
-        ${m&&num(m.unitPrice)!==num(l.matPrice)?`<div class="small" style="margin-top:3px"><span class="badge warn">단가표 ${won(m.unitPrice)}원</span></div>`:''}</td>
+        ${m?`<div class="row small" style="margin-top:4px;gap:4px">
+          <button class="btn ghost sm" data-act="priceDlg" data-pi="${pi}" data-li="${li}" title="단가표와 금액 맞추기">단가표 ${won(m.unitPrice)}원</button>
+        </div>`:''}</td>
     <td class="r" data-l="수량"><input class="f num" type="number" inputmode="decimal" step="0.1" id="${id}-qty" data-bind="line:${pi}:${li}:qty" data-num value="${esc(l.qty)}"></td>
     <td data-l="단위">
       <select class="f" id="${id}-unitsel" data-lineunit="${pi}:${li}" >
@@ -2032,8 +2049,16 @@ document.addEventListener('input',ev=>{
   else if(kind==='mat'){ const m=S.materials.get(rest[0]); if(!m) return; m[rest[1]]=val;
     if(rest[1]==='coverage'){ m.mode=val>0?'area':'qty'; m.coverageBasis=''; }
     m.updated=Date.now(); saveMat(m);
-    if(['name','spec','unit','unitPrice','coverage','loss'].includes(rest[1])){
-      clearTimeout(MAT_SYNC[m.id]); MAT_SYNC[m.id]=setTimeout(()=>{ const n=syncMaterialToLines(m); if(n) toast(`견적 ${n}곳의 단가를 함께 고쳤습니다`); },1200);
+    if(['name','spec','unit','unitPrice'].includes(rest[1])){
+      clearTimeout(MAT_SYNC[m.id]);
+      MAT_SYNC[m.id]=setTimeout(async ()=>{
+        const used=linesUsing(m.id);
+        if(!used.length) return;
+        const ok=await askConfirm({title:`“${m.name||'이 자재'}”를 쓰는 견적 ${used.length}곳도 바꿀까요?`,
+          lines:[`단가표: ${won(m.unitPrice)}원 / ${esc(m.unit||'')}`,'바꾸지 않으면 기존 견적 금액은 그대로 남습니다'],
+          ok:'네, 견적도 바꿉니다', cancel:'아니요, 단가표만', danger:false});
+        if(ok){ const n=syncMaterialToLines(m); toast(`견적 ${n}곳을 함께 고쳤습니다`); render(); }
+      },1500);
     }
     const o=document.getElementById('o-m-'+m.id); if(o) o.innerHTML=perM2Html(matPerM2(m)); }
   else if(kind==='rev'){ const it=IMPORT.items[+rest[0]]; it[rest[1]]=val; if(rest[1]==='coverage') it.mode=val>0?'area':'qty';
@@ -2139,6 +2164,47 @@ document.addEventListener('click',async ev=>{
     case 'delProc': { const p=e.processes[+t.dataset.pi]; if(!p.lines.length||confirm(`${PMAP[p.k].n} 공정을 삭제할까요?`)){ e.processes.splice(+t.dataset.pi,1); saveEst(e); render(); } break; }
     case 'addBlank': e.processes[+t.dataset.pi].lines.push({id:uid(),name:'',spec:'',unit:'㎡',qty:1,matPrice:0,laborPrice:0,memo:''}); saveEst(e); render();
       setTimeout(()=>{ const p=e.processes[+t.dataset.pi]; document.getElementById(`p${t.dataset.pi}l${p.lines.length-1}-name`)?.focus(); },60); break;
+    case 'priceDlg': { const p=e.processes[+t.dataset.pi], l=p.lines[+t.dataset.li], m=l.mid&&S.materials.get(l.mid);
+      if(!m) break;
+      const others=linesUsing(m.id).filter(x=>x.l!==l).length;
+      const same=num(m.unitPrice)===num(l.matPrice);
+      const pick=await priceBox({
+        title:`“${m.name||'자재'}” 단가`,
+        lines:[`단가표 ${won(m.unitPrice)}원 / ${esc(m.unit||'')}`, `이 견적 줄 ${won(l.matPrice)}원`,
+               same?'두 금액이 같습니다':(others?`이 자재를 쓰는 다른 견적 줄 ${others}곳이 있습니다`:'다른 견적에는 쓰이지 않았습니다')],
+        buttons:[
+          {k:'pull', label:'단가표 금액 가져오기', disabled:same},
+          {k:'push', label:'단가표를 이 금액으로 수정', disabled:same, danger:false},
+        ]});
+      if(pick==='pull'){ l.matPrice=num(m.unitPrice); l.name=m.name; l.spec=m.spec||''; l.unit=m.unit||l.unit; saveEst(e); render(); toast('단가표 금액을 가져왔습니다'); }
+      else if(pick==='push'){
+        let alsoLines=false;
+        if(others){
+          const r=await askConfirm({title:`다른 견적 ${others}곳도 바꿀까요?`,
+            lines:[`${won(m.unitPrice)}원 → ${won(l.matPrice)}원`,'아니요를 고르면 단가표만 바뀝니다'],
+            ok:'네, 함께 바꿉니다', cancel:'아니요, 단가표만', danger:false});
+          alsoLines=!!r;
+        }
+        m.unitPrice=num(l.matPrice); m.updated=Date.now(); saveMat(m);
+        if(alsoLines){ const n=syncMaterialToLines(m); toast(`단가표와 견적 ${n}곳을 바꿨습니다`); }
+        else toast('단가표 금액을 바꿨습니다');
+        render();
+      }
+      break; }
+    case 'pullPrice': { const l=e.processes[+t.dataset.pi].lines[+t.dataset.li], m=S.materials.get(l.mid);
+      if(m){ l.matPrice=num(m.unitPrice); l.name=m.name; l.spec=m.spec||''; l.unit=m.unit||l.unit; saveEst(e); render(); toast('단가표 금액을 가져왔습니다'); } break; }
+    case 'pushPrice': { const l=e.processes[+t.dataset.pi].lines[+t.dataset.li], m=S.materials.get(l.mid);
+      if(!m) break;
+      const others=linesUsing(m.id).filter(x=>x.l!==l).length;
+      const res=await askConfirm({title:`단가표의 “${m.name||'자재'}” 금액을 바꿀까요?`,
+        lines:[`${won(m.unitPrice)}원 → ${won(l.matPrice)}원`, others?`이 자재를 쓰는 다른 견적 줄 ${others}곳이 있습니다`:'다른 견적에는 쓰이지 않았습니다'],
+        ok:'네, 단가표를 바꿉니다', cancel:'아니요', danger:false,
+        checkbox: others?{label:`다른 견적 ${others}곳의 금액도 함께 바꾸기`,checked:false}:null});
+      if(!res) break;
+      m.unitPrice=num(l.matPrice); m.updated=Date.now(); saveMat(m);
+      if(res&&res.checked){ const n=syncMaterialToLines(m); toast(`단가표와 견적 ${n}곳을 바꿨습니다`); }
+      else toast('단가표 금액을 바꿨습니다');
+      render(); break; }
     case 'delLine': e.processes[+t.dataset.pi].lines.splice(+t.dataset.li,1); saveEst(e); render(); break;
     case 'refreshPrices': { let n=0; e.processes.forEach(p=>p.lines.forEach(l=>{ const m=l.mid&&S.materials.get(l.mid); if(m&&num(m.unitPrice)!==num(l.matPrice)){ l.matPrice=num(m.unitPrice); n++; } })); saveEst(e); render(); toast(n?`${n}개 자재 단가를 바꿨습니다`:'바뀐 단가가 없습니다'); break; }
     case 'goImport': VIEW='mat'; render(); $('#fileSheet').click(); break;
