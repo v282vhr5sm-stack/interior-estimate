@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '2.2.0';
+const APP_VERSION = '2.3.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -26,6 +26,32 @@ const clone = o => JSON.parse(JSON.stringify(o));
 const today = () => { const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); };
 const ls = { get(k,d=null){ try{ const v=localStorage.getItem('ie:'+k); return v==null?d:v; }catch{ return d; } }, set(k,v){ try{ v==null?localStorage.removeItem('ie:'+k):localStorage.setItem('ie:'+k,v); }catch{} } };
 function toast(msg){ const t=document.createElement('div'); t.className='toast'; t.textContent=msg; document.body.appendChild(t); setTimeout(()=>t.remove(),2600); }
+/* 현장 이름·고객 정보는 목록에서 이 작은 창으로만 고칩니다 (현장 화면에서는 보기만) */
+function editSiteBox(p){
+  return new Promise(res=>{
+    const box=document.createElement('div'); box.className='modal';
+    box.innerHTML=`<div class="modal-b ask" style="width:min(460px,100%)">
+      <h3>현장 정보 수정</h3>
+      <label class="fl">현장 이름<input class="f" id="es-name" value="${esc(p.name||'')}" placeholder="예: 상계동 주공 302동 1501호"></label>
+      <div class="client-grid">
+        <label class="fl">고객명<input class="f" id="es-client" value="${esc(p.client||'')}" placeholder="홍길동"></label>
+        <label class="fl">연락처<input class="f" type="tel" id="es-phone" value="${esc(p.phone||'')}" placeholder="010-0000-0000"></label>
+      </div>
+      <label class="fl">현장 주소<input class="f" id="es-addr" value="${esc(p.address||'')}"></label>
+      <div class="row" style="justify-content:flex-end;margin-top:6px">
+        <button class="btn" data-x="no">취소</button><button class="btn pri" data-x="yes">저장</button></div></div>`;
+    const close=save=>{
+      if(save){ p.name=box.querySelector('#es-name').value.trim(); p.client=box.querySelector('#es-client').value.trim();
+        p.phone=box.querySelector('#es-phone').value.trim(); p.address=box.querySelector('#es-addr').value.trim(); saveProj(p); }
+      box.remove(); document.removeEventListener('keydown',key); res(save);
+    };
+    const key=e=>{ if(e.key==='Escape') close(false); if(e.key==='Enter'&&e.target.tagName==='INPUT') close(true); };
+    box.addEventListener('click',e=>{ const b=e.target.closest('[data-x]'); if(b) close(b.dataset.x==='yes'); else if(e.target===box) close(false); });
+    document.addEventListener('keydown',key);
+    document.body.appendChild(box);
+    const el=box.querySelector('#es-name'); el.focus(); el.select();
+  });
+}
 /* 실수로 눌러도 바로 지워지지 않도록, 직접 “삭제”를 한 번 더 고르게 합니다 */
 function askConfirm({title,lines=[],ok='삭제',cancel='취소',danger=true}){
   return new Promise(res=>{
@@ -338,7 +364,7 @@ const sizeHint = areaHint;
 
 /* ---------- views ---------- */
 let VIEW=ls.get('view','home');
-let HOME_SEL=null, HOME_NEW=false, HUB_EDIT=false;
+let HOME_SEL=null, HOME_NEW=false;
 let MAT_FILTER='all';
 let IMPORT={files:[],urls:[],busy:false,items:null,memo:'',err:''};
 let AUTH={mode:'login',busy:false,err:'',skipped:ls.get('skipLogin')==='1'};
@@ -916,19 +942,8 @@ function renderHub(p){
     <div class="row"><button class="btn ghost" data-act="homeBack">‹ 현장 목록</button><span class="spacer"></span>
       <span class="badge${p.status==='준공'?'':' warn'}">${esc(p.status||'준비')}</span></div>
     <section class="panel"><div class="panel-b">
-      ${HUB_EDIT?`
-        <input class="f hub-title" id="hub-name" data-bind="proj:name" value="${esc(p.name)}" placeholder="현장 이름을 입력하세요">
-        <div class="client-grid" style="margin-top:10px">
-          <label class="fl">고객명<input class="f" id="hub-client" data-bind="proj:client" value="${esc(p.client||'')}" placeholder="홍길동"></label>
-          <label class="fl">연락처<input class="f" type="tel" id="hub-phone" data-bind="proj:phone" value="${esc(p.phone||'')}" placeholder="010-0000-0000"></label>
-          <label class="fl span2">현장 주소<input class="f" id="hub-addr" data-bind="proj:address" value="${esc(p.address||'')}"></label>
-        </div>
-        <div class="row" style="margin-top:12px"><button class="btn pri" data-act="hubEditDone">수정 끝내기</button></div>`
-      :`<div class="row" style="gap:10px">
-          <h2 style="flex:1;min-width:0">${p.name?esc(p.name):'<span class="muted">이름 없음</span>'}</h2>
-          <button class="btn sm" data-act="hubEdit">✎ 수정</button>
-        </div>
-        <div class="muted small" style="margin-top:4px">${[p.client&&p.client+' 님',p.phone,p.address].filter(Boolean).map(esc).join(' · ')||'고객 정보 없음'}</div>`}
+      <h2>${p.name?esc(p.name):'<span class="muted">이름 없음</span>'}</h2>
+      <div class="muted small" style="margin-top:4px">${[p.client&&p.client+' 님',p.phone,p.address].filter(Boolean).map(esc).join(' · ')||'고객 정보 없음'}</div>
       <div class="prog" style="margin:12px 0 6px"><span style="width:${prog}%"></span></div>
       <div class="row small muted" style="gap:12px">
         <span>${r?`${dstr(r.from)} ~ ${dstr(r.to)}`:'일정 없음'}</span><span>진행 ${prog}%</span>
@@ -1642,8 +1657,7 @@ document.addEventListener('click',async ev=>{
     case 'view': VIEW=t.dataset.v; ls.set('view',VIEW);
       if(VIEW==='home'){ HOME_NEW=false; HOME_SEL=(S.curPid&&S.projects.has(S.curPid))?S.curPid:null; }   // 아래 “현장” 탭 = 지금 현장 메뉴
       render(); window.scrollTo(0,0); break;
-    case 'renameSite': { ev.stopPropagation(); HOME_SEL=t.dataset.id; S.curPid=t.dataset.id; ls.set('curPid',S.curPid); VIEW='home'; HUB_EDIT=true; render();
-      setTimeout(()=>{ const el=document.getElementById('hub-name'); el?.focus(); el?.select(); },80); break; }
+    case 'renameSite': { ev.stopPropagation(); const p=S.projects.get(t.dataset.id); if(p && await editSiteBox(p)) render(); break; }
     case 'homeList': VIEW='home'; ls.set('view',VIEW); HOME_SEL=null; HOME_NEW=false; render(); window.scrollTo(0,0); break;  // 위 배너 = 전체 현장 목록
     case 'newEst': { const n=newEstimate(); S.estimates.set(n.id,n); setCur(n.id); saveEst(n); VIEW='est'; render(); break; }
     case 'dupEst': { const n=clone(e); n.id=uid(); n.title=e.title+' (복사)'; n.no=newEstimate().no; S.estimates.set(n.id,n); setCur(n.id); saveEst(n); render(); toast('복제했습니다'); break; }
@@ -1711,7 +1725,7 @@ document.addEventListener('click',async ev=>{
       p.tasks.push({...src,id:uid(),name:src.name.replace(/ \d+차$/,'')+` ${same+1}차`,start:st,end:addDays(st,len),status:'예정'});
       saveProj(p); render(); toast('같은 작업을 뒤쪽 날짜로 하나 더 넣었습니다. 날짜를 고쳐주세요.'); break; }
     case 'sortTasks': { const p=curProj(); p.tasks.sort((a,b)=>String(a.start||'').localeCompare(String(b.start||''))); saveProj(p); render(); break; }
-    case 'openSite': HUB_EDIT=false; HOME_SEL=t.dataset.id; S.curPid=t.dataset.id; ls.set('curPid',S.curPid); render(); window.scrollTo(0,0); break;
+    case 'openSite': HOME_SEL=t.dataset.id; S.curPid=t.dataset.id; ls.set('curPid',S.curPid); render(); window.scrollTo(0,0); break;
     case 'delSite': { ev.stopPropagation(); const p=S.projects.get(t.dataset.id); if(!p) break;
       const n=(p.files||[]).length;
       const ok=await askConfirm({title:`“${p.name||'이름 없는 현장'}” 현장을 삭제할까요?`,
@@ -1725,9 +1739,7 @@ document.addEventListener('click',async ev=>{
       if(S.curPid===p.id){ S.curPid=[...S.projects.keys()][0]||null; ls.set('curPid',S.curPid); }
       if(HOME_SEL===p.id) HOME_SEL=null;
       render(); toast('현장을 삭제했습니다'); break; }
-    case 'homeBack': HOME_SEL=null; HOME_NEW=false; HUB_EDIT=false; render(); break;
-    case 'hubEdit': HUB_EDIT=true; render(); setTimeout(()=>{ const el=document.getElementById('hub-name'); el?.focus(); el?.select(); },60); break;
-    case 'hubEditDone': HUB_EDIT=false; render(); toast('저장했습니다'); break;
+    case 'homeBack': HOME_SEL=null; HOME_NEW=false; render(); break;
     case 'openSched': VIEW='sched'; SCHED_MODE='site'; ls.set('view',VIEW); render(); window.scrollTo(0,0); break;
     case 'openFiles': VIEW='sched'; SCHED_MODE='site'; ls.set('view',VIEW); render();
       setTimeout(()=>document.querySelector('.files')?.scrollIntoView({block:'center',behavior:'smooth'})||document.getElementById('pdz')?.scrollIntoView({block:'center'}),80); break;
