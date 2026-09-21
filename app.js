@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '1.7.0';
+const APP_VERSION = '1.8.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -287,7 +287,7 @@ function calcEst(e){
 /* ---------- model helpers ---------- */
 function newEstimate(){
   const n=S.estimates.size+1;
-  return {id:uid(),no:today().replace(/-/g,'')+'-'+String(n).padStart(2,'0'),title:'새 견적',
+  return {id:uid(),no:today().replace(/-/g,'')+'-'+String(n).padStart(2,'0'),title:'',
     client:{name:'',phone:'',address:'',size:''},date:today(),validDays:30,margin:20,discount:0,vat:true,
     showLinePrice:false,showImages:true,notes:'· 본 견적은 현장 실측 후 변동될 수 있습니다.\n· 계약금 10% / 중도금 40% / 잔금 50%\n· 공사 기간 중 추가 요청 사항은 별도 협의합니다.',
     processes:[],updated:Date.now()};
@@ -343,6 +343,13 @@ function safeRender(){
   if(a && a.closest?.('#app') && /INPUT|TEXTAREA|SELECT/.test(a.tagName)){ renderDeferred=true; return; }
   render();
 }
+/* 칸을 누르면 이미 있는 값이 통째로 선택돼, 지우지 않고 바로 덮어쓸 수 있습니다 */
+document.addEventListener('focusin',ev=>{
+  const t=ev.target;
+  if(t.tagName!=='INPUT'||!t.value) return;
+  if(['date','checkbox','radio','file','password','email','tel'].includes(t.type)) return;
+  requestAnimationFrame(()=>{ try{ t.select(); }catch{} });
+});
 document.addEventListener('focusout',()=>{ if(renderDeferred) setTimeout(()=>{ const a=document.activeElement; if(!(a&&a.closest?.('#app')&&/INPUT|TEXTAREA|SELECT/.test(a.tagName))){ renderDeferred=false; render(); } },50); });
 
 function renderAuth(){
@@ -373,7 +380,7 @@ function renderEst(){
   if(!e) return `<div class="panel"><div class="empty"><h2 style="margin-bottom:6px">아직 견적이 없습니다</h2><p>새 견적을 만들거나, 예시 견적으로 구조를 먼저 살펴보세요.</p><div class="row" style="justify-content:center;margin-top:12px"><button class="btn pri" data-act="newEst">+ 새 견적</button><button class="btn" data-act="seed">예시 데이터 넣기</button></div></div></div>`;
   const used=new Set(e.processes.map(p=>p.k));
   return `<div class="stack">
-  <div class="row"><div style="flex:1;min-width:220px"><div class="eyebrow">견적 번호 ${esc(e.no)}</div><input class="f" id="estTitle" data-bind="est:title" value="${esc(e.title)}" style="font-size:20px;font-weight:700;border-color:transparent;padding-left:0;background:transparent"></div>${estPicker()}</div>
+  <div class="row"><div style="flex:1;min-width:220px"><div class="eyebrow">견적 번호 ${esc(e.no)}</div><input class="f" id="estTitle" data-bind="est:title" value="${esc(e.title)}" placeholder="견적 제목 (예: 상계동 34평 리모델링)" style="font-size:20px;font-weight:700;border-color:transparent;padding-left:0;background:transparent"></div>${estPicker()}</div>
   <div class="est-grid">
     <div class="stack">
       <section class="panel"><div class="panel-b client-grid">
@@ -506,7 +513,7 @@ function renderMat(){
         <thead><tr><th class="w-img">사진</th><th class="w-name">자재 · 규격</th><th>공정</th><th>단위</th><th class="r">단가(원)</th><th class="r">1단위 시공㎡</th><th class="r">로스%</th><th class="r">㎡당 원가</th><th>메모</th><th></th></tr></thead>
         <tbody>${list.map(m=>`<tr>
           <td class="c-img"><button class="thumb-btn" data-act="matPhoto" data-id="${m.id}" aria-label="사진 바꾸기"><img class="thumb" src="${matImg(m)}" alt=""></button></td>
-          <td class="c-name"><input class="f" id="m-${m.id}-name" data-bind="mat:${m.id}:name" value="${esc(m.name)}" style="font-weight:500"><input class="f small" id="m-${m.id}-spec" data-bind="mat:${m.id}:spec" value="${esc(m.spec)}" placeholder="규격" style="margin-top:3px"></td>
+          <td class="c-name"><input class="f" id="m-${m.id}-name" data-bind="mat:${m.id}:name" value="${esc(m.name)}" placeholder="자재명" style="font-weight:500"><input class="f small" id="m-${m.id}-spec" data-bind="mat:${m.id}:spec" value="${esc(m.spec)}" placeholder="규격" style="margin-top:3px"></td>
           <td data-l="공정"><select class="f" id="m-${m.id}-proc" data-bind="mat:${m.id}:process" style="width:110px">${PROCS.map(p=>`<option value="${p.k}" ${p.k===m.process?'selected':''}>${p.n}</option>`).join('')}</select></td>
           <td data-l="단위"><input class="f" id="m-${m.id}-unit" data-bind="mat:${m.id}:unit" value="${esc(m.unit)}" style="width:56px"></td>
           <td class="r" data-l="단가(원)"><input class="f num w-n" type="number" inputmode="numeric" step="100" id="m-${m.id}-price" data-bind="mat:${m.id}:unitPrice" data-num value="${esc(m.unitPrice)}"></td>
@@ -920,7 +927,7 @@ const dnum = s => { const x=new Date(s+'T00:00:00'); return isNaN(x)?null:x.getT
 const addDays = (s,n) => dstr(new Date(dnum(s)+n*DAY));
 const STATUS = {예정:'#8a949013',진행:'var(--accent)',완료:'var(--muted)'};
 function newProject(from){
-  const p={id:uid(),name:from?.title||'새 현장',client:from?.client?.name||'',phone:from?.client?.phone||'',address:from?.client?.address||'',
+  const p={id:uid(),name:from?.title||'',client:from?.client?.name||'',phone:from?.client?.phone||'',address:from?.client?.address||'',
     note:'',estimateId:from?.id||null,tasks:[],files:[],share:{on:false,token:'',showMemo:true},updated:Date.now()};
   return p;
 }
@@ -1074,7 +1081,7 @@ function renderSched(){
 function renderProject(p){
   const r=projRange(p), prog=projProgress(p), used=new Set((p.tasks||[]).map(t=>t.proc));
   return `<section class="panel"><div class="panel-b client-grid">
-      <label class="fl span2">현장 이름<input class="f" id="pj-name" data-bind="proj:name" value="${esc(p.name)}"></label>
+      <label class="fl span2">현장 이름<input class="f" id="pj-name" data-bind="proj:name" value="${esc(p.name)}" placeholder="현장 이름"></label>
       <label class="fl">고객명<input class="f" id="pj-client" data-bind="proj:client" value="${esc(p.client)}"></label>
       <label class="fl">연락처<input class="f" type="tel" id="pj-phone" data-bind="proj:phone" value="${esc(p.phone)}"></label>
       <label class="fl span2">현장 주소<input class="f" id="pj-addr" data-bind="proj:address" value="${esc(p.address)}"></label>
@@ -1089,7 +1096,7 @@ function renderProject(p){
       <div class="tbl-wrap"><table class="t resp">
         <thead><tr><th class="w-name">작업</th><th>담당</th><th>시작</th><th>종료</th><th>상태</th><th>작업 메모</th><th></th></tr></thead>
         <tbody>${(p.tasks||[]).map((t,ti)=>`<tr>
-          <td class="c-name"><input class="f" id="t${ti}-name" data-bind="task:${ti}:name" value="${esc(t.name)}" style="font-weight:500"></td>
+          <td class="c-name"><input class="f" id="t${ti}-name" data-bind="task:${ti}:name" value="${esc(t.name)}" placeholder="작업 이름" style="font-weight:500"></td>
           <td data-l="담당"><input class="f" id="t${ti}-w" data-bind="task:${ti}:worker" value="${esc(t.worker||'')}" placeholder="예: 김반장"></td>
           <td data-l="시작"><input class="f" type="date" id="t${ti}-s" data-bind="task:${ti}:start" value="${esc(t.start||'')}"></td>
           <td data-l="종료"><input class="f" type="date" id="t${ti}-e" data-bind="task:${ti}:end" value="${esc(t.end||'')}"></td>
@@ -1611,7 +1618,7 @@ document.addEventListener('click',async ev=>{
     case 'revSaveAdd': saveReviewed(true); break;
     case 'revCancel': IMPORT={files:[],urls:[],busy:false,items:null,memo:'',err:''}; render(); break;
     case 'matFilter': MAT_FILTER=t.dataset.k; render(); break;
-    case 'addMat': { const m={id:uid(),name:'새 자재',spec:'',process:MAT_FILTER==='all'?'etc':MAT_FILTER,unit:'박스',unitPrice:0,coverage:1,loss:5,mode:'area',note:'',updated:Date.now()}; S.materials.set(m.id,m); saveMat(m); render(); document.getElementById('m-'+m.id+'-name')?.select(); break; }
+    case 'addMat': { const m={id:uid(),name:'',spec:'',process:MAT_FILTER==='all'?'etc':MAT_FILTER,unit:'박스',unitPrice:0,coverage:1,loss:5,mode:'area',note:'',updated:Date.now()}; S.materials.set(m.id,m); saveMat(m); render(); document.getElementById('m-'+m.id+'-name')?.select(); break; }
     case 'delMat': { const m=S.materials.get(t.dataset.id); if(confirm(`“${m.name}”을(를) 단가표에서 삭제할까요? 이미 만든 견적의 금액은 그대로 유지됩니다.`)){ deleteMat(m.id); render(); } break; }
     case 'matPhoto': photoTarget={kind:'mat',id:t.dataset.id}; $('#filePhoto').click(); break;
     case 'linePhoto': photoTarget={kind:'line',pi:+t.dataset.pi,li:+t.dataset.li}; $('#filePhoto').click(); break;
@@ -1646,8 +1653,8 @@ document.addEventListener('click',async ev=>{
       const st=last?addDays(last,1):today();
       p.tasks=p.tasks||[];
       const same=k?p.tasks.filter(x=>x.proc===k).length:0;
-      p.tasks.push({id:uid(),proc:k||'',name:P?(same?`${P.n} ${same+1}차`:P.n):'새 작업',start:st,end:addDays(st,1),worker:'',status:'예정',memo:''});
-      saveProj(p); render(); break; }
+      p.tasks.push({id:uid(),proc:k||'',name:P?(same?`${P.n} ${same+1}차`:P.n):'',start:st,end:addDays(st,1),worker:'',status:'예정',memo:''});
+      saveProj(p); render(); if(!P) setTimeout(()=>document.getElementById(`t${p.tasks.length-1}-name`)?.focus(),60); break; }
     case 'dupTask': { const p=curProj(); const src=p.tasks[+t.dataset.ti];
       const last=p.tasks.map(x=>x.end).filter(Boolean).sort().pop();
       const st=last?addDays(last,1):today(), len=Math.max(0,(dnum(src.end)-dnum(src.start))/DAY||0);
