@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '3.2.0';
+const APP_VERSION = '3.2.1';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -1024,7 +1024,7 @@ function docHTML(e){
 
     ${e.notes?`<h2 class="d-sec">비고 및 계약 조건</h2><div class="d-notes">${esc(e.notes)}</div>`:''}
     ${(co.bankName||co.bankNo||co.bank)?`<p style="margin-top:12px;font-size:12px"><b>입금 계좌</b> ${esc([co.bankName,co.bankNo,co.bankHolder&&('예금주 '+co.bankHolder)].filter(Boolean).join(' ')||co.bank||'')}</p>`:''}
-    <div class="d-sign"><div class="s">공급자 ${esc(e.supplier||[co.name,co.ceo].filter(Boolean).join(' '))} ${co.stamp?`<img src="${esc(co.stamp)}" alt="(인)" class="d-stamp">`:'(인)'}</div><div class="s">고객 ${esc(e.clientSign||e.client.name||'')} (서명)</div></div>
+    <div class="d-sign"><div class="s">공급자 ${esc(e.supplier||[co.name,co.ceo].filter(Boolean).join(' '))} (서명)</div><div class="s">고객 ${esc(e.clientSign||e.client.name||'')} (서명)</div></div>
     <div class="d-foot">본 견적서의 유효기간은 ${exp}까지입니다. 본 견적서는 ${dt} 기준이며 자재 단가 변동 및 현장 실측에 따라 조정될 수 있습니다.</div>
   </article>`;
 }
