@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -136,14 +136,16 @@ const idb = {
 };
 
 /* ---------- app state ---------- */
-const S = { materials:new Map(), estimates:new Map(), company:{}, curId:null };
+const S = { materials:new Map(), estimates:new Map(), projects:new Map(), company:{}, curId:null, curPid:null };
 const cur = () => S.estimates.get(S.curId);
+const curProj = () => S.projects.get(S.curPid);
 function setCur(id){ S.curId=id; ls.set('cur',id||null); }
 function strip(o){ const {id,...rest}=o; return rest; }
 
 function applyRecord(col,id,data){
   if(col==='materials'){ if(data) S.materials.set(id,{...data,id}); else S.materials.delete(id); }
   else if(col==='estimates'){ if(data) S.estimates.set(id,{...data,id}); else S.estimates.delete(id); }
+  else if(col==='projects'){ if(data) S.projects.set(id,{...data,id}); else S.projects.delete(id); }
   else if(col==='settings' && id==='company'){ S.company=data||{}; }
 }
 async function loadLocal(){
@@ -153,6 +155,8 @@ async function loadLocal(){
   recs.forEach(r=>{ if(!r.deleted) applyRecord(r.col,r.id,r.data); });
   S.curId = ls.get('cur');
   if(!S.estimates.has(S.curId)) S.curId=[...S.estimates.values()].sort((a,b)=>(b.updated||0)-(a.updated||0))[0]?.id||null;
+  S.curPid = ls.get('curPid');
+  if(!S.projects.has(S.curPid)) S.curPid=[...S.projects.values()].sort((a,b)=>(b.updated||0)-(a.updated||0))[0]?.id||null;
 }
 
 /* writes: debounced per record, flushed when the app goes to background */
@@ -171,8 +175,10 @@ async function writeRecord(col,id,data,deleted=false){
 const saveMat = m => queueWrite('materials',m.id,()=>strip(S.materials.get(m.id)||m));
 const saveEst = e => { e.updated=Date.now(); queueWrite('estimates',e.id,()=>strip(S.estimates.get(e.id)||e)); };
 const saveCo = () => queueWrite('settings','company',()=>S.company);
+const saveProj = p => { p.updated=Date.now(); queueWrite('projects',p.id,()=>strip(S.projects.get(p.id)||p)); if(p.share?.on) schedulePublish(p.id); };
 function deleteMat(id){ S.materials.delete(id); writeRecord('materials',id,null,true); }
 function deleteEst(id){ S.estimates.delete(id); writeRecord('estimates',id,null,true); }
+function deleteProj(id){ const p=S.projects.get(id); if(p?.share?.token) unpublishShare(p.share.token); S.projects.delete(id); writeRecord('projects',id,null,true); }
 
 /* ---------- cloud sync (Supabase) ---------- */
 const CFG = window.APP_CONFIG || {};
@@ -304,9 +310,10 @@ function render(){
   const tabs=$('#tabs');
   if(needLogin()){ tabs.hidden=true; $('#app').innerHTML=renderAuth(); updatePill(); return; }
   tabs.hidden=false;
-  ['est','mat','doc','set'].forEach(v=>$('#tab-'+v).setAttribute('aria-selected',String(v===VIEW)));
+  ['est','sched','mat','doc','set'].forEach(v=>$('#tab-'+v).setAttribute('aria-selected',String(v===VIEW)));
   const app=$('#app');
-  if(VIEW==='mat') app.innerHTML=renderMat();
+  if(VIEW==='sched') app.innerHTML=renderSched();
+  else if(VIEW==='mat') app.innerHTML=renderMat();
   else if(VIEW==='doc') app.innerHTML=renderDocView();
   else if(VIEW==='set') app.innerHTML=renderSettings();
   else app.innerHTML=renderEst();
@@ -779,6 +786,306 @@ async function downloadDoc(){
   await shareOrDownload(fname,new Blob([html],{type:'text/html'}));
 }
 
+/* ---------- 현장 일정 · 공유 · 도면 ---------- */
+const DAY = 86400000;
+const dstr = d => { const x=new Date(d); return isNaN(x)?'':x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0'); };
+const dnum = s => { const x=new Date(s+'T00:00:00'); return isNaN(x)?null:x.getTime(); };
+const addDays = (s,n) => dstr(new Date(dnum(s)+n*DAY));
+const STATUS = {예정:'#8a949013',진행:'var(--accent)',완료:'var(--muted)'};
+function newProject(from){
+  const p={id:uid(),name:from?.title||'새 현장',client:from?.client?.name||'',phone:from?.client?.phone||'',address:from?.client?.address||'',
+    note:'',estimateId:from?.id||null,tasks:[],files:[],share:{on:false,token:'',showMemo:true},updated:Date.now()};
+  return p;
+}
+function projRange(p){
+  const ds=(p.tasks||[]).flatMap(t=>[dnum(t.start),dnum(t.end)]).filter(Boolean);
+  if(!ds.length) return null;
+  return {from:Math.min(...ds), to:Math.max(...ds)};
+}
+function projProgress(p){
+  const t=p.tasks||[]; if(!t.length) return 0;
+  return Math.round(t.filter(x=>x.status==='완료').length/t.length*100);
+}
+const fileKind = f => /^image\//.test(f.type)?'img' : f.type==='application/pdf'?'pdf' : /\.(glb|gltf)$/i.test(f.name)?'glb' : 'other';
+const KIND_LABEL = {img:'사진',pdf:'PDF',glb:'3D 모델',other:'파일'};
+
+/* 공유 링크 */
+const shareUrl = t => location.origin + location.pathname + '?s=' + t;
+function sharePayload(p){
+  const r=projRange(p);
+  return {v:1, updatedAt:new Date().toISOString(),
+    site:{name:p.name,address:p.address,note:p.note,client:p.client,
+      from:r?dstr(r.from):'', to:r?dstr(r.to):'', progress:projProgress(p)},
+    showMemo:p.share?.showMemo!==false,
+    tasks:(p.tasks||[]).map(t=>({name:t.name,proc:t.proc,start:t.start,end:t.end,worker:t.worker,status:t.status||'예정',memo:p.share?.showMemo!==false?(t.memo||''):''})),
+    files:(p.files||[]).filter(f=>f.shared!==false).map(f=>({name:f.name,url:f.url,type:f.type,size:f.size})),
+    company:{name:S.company?.name||'',phone:S.company?.phone||''}};
+}
+const pubTimers={};
+function schedulePublish(pid){ clearTimeout(pubTimers[pid]); pubTimers[pid]=setTimeout(()=>publishShare(S.projects.get(pid)),1200); }
+async function publishShare(p){
+  if(!p||!sb||!session||!p.share?.on||!p.share?.token) return;
+  try{
+    const {error}=await sb.from('shares').upsert({token:p.share.token,user_id:session.user.id,payload:sharePayload(p),updated_at:new Date().toISOString()},{onConflict:'token'});
+    if(error) throw error;
+    p.share.publishedAt=Date.now();
+  }catch(e){ console.warn('share',e); toast('공유 링크 갱신에 실패했습니다: '+(e.message||'')); }
+}
+async function unpublishShare(token){ if(!sb||!session||!token) return; try{ await sb.from('shares').delete().eq('token',token); }catch(e){ console.warn(e); } }
+async function toggleShare(p,on){
+  if(on){
+    if(!sb||!session){ toast('로그인한 상태에서만 공유 링크를 만들 수 있습니다.'); return; }
+    p.share={...(p.share||{}),on:true,token:p.share?.token||(uid()+uid()),showMemo:p.share?.showMemo!==false};
+    saveProj(p); await publishShare(p); toast('공유 링크를 만들었습니다');
+  }else{
+    const t=p.share?.token; p.share={...(p.share||{}),on:false}; saveProj(p); await unpublishShare(t); toast('공유를 껐습니다. 기존 링크는 더 이상 열리지 않습니다.');
+  }
+  render();
+}
+async function copyShare(p){
+  const url=shareUrl(p.share.token);
+  try{ await navigator.clipboard.writeText(url); toast('링크를 복사했습니다'); }
+  catch{ prompt('이 주소를 복사해서 보내세요',url); }
+}
+
+/* 도면 파일 */
+async function uploadPlans(files,p){
+  if(!sb||!session){ toast('로그인한 상태에서만 파일을 올릴 수 있습니다.'); return; }
+  for(const f of [...files]){
+    if(f.size>50*1024*1024){ toast(`${f.name}: 50MB가 넘어 올리지 못했습니다.`); continue; }
+    const safe=f.name.replace(/[^\w.\-가-힣 ]/g,'_');
+    const path=`${session.user.id}/${p.id}/${uid()}-${safe}`;
+    try{
+      const {error}=await sb.storage.from('plans').upload(path,f,{contentType:f.type||'application/octet-stream'});
+      if(error) throw error;
+      const {data}=sb.storage.from('plans').getPublicUrl(path);
+      p.files=p.files||[]; p.files.push({id:uid(),name:f.name,path,url:data.publicUrl,type:f.type||'',size:f.size,shared:true,at:Date.now()});
+      saveProj(p); render(); toast(`${f.name} 올렸습니다`);
+    }catch(e){ toast(`${f.name} 올리지 못했습니다: ${e.message||e}`); }
+  }
+}
+async function removePlan(p,fid){
+  const f=(p.files||[]).find(x=>x.id===fid); if(!f) return;
+  if(!confirm(`“${f.name}”을(를) 지울까요?`)) return;
+  try{ await sb?.storage.from('plans').remove([f.path]); }catch(e){ console.warn(e); }
+  p.files=p.files.filter(x=>x.id!==fid); saveProj(p); render();
+}
+
+/* 일정 화면 */
+let SCHED_MODE=ls.get('schedMode','site');
+let MONTH=(()=>{ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); })();
+function renderSched(){
+  const list=[...S.projects.values()].sort((a,b)=>(b.updated||0)-(a.updated||0));
+  const head=`<div class="row">
+    <h2 style="flex:1">현장 일정</h2>
+    <div class="chips">
+      <button class="chip" data-act="schedMode" data-m="site" aria-pressed="${SCHED_MODE==='site'}">현장별</button>
+      <button class="chip" data-act="schedMode" data-m="month" aria-pressed="${SCHED_MODE==='month'}">전체 달력</button>
+    </div></div>`;
+  if(SCHED_MODE==='month') return `<div class="stack">${head}${renderMonth()}</div>`;
+  if(!list.length) return `<div class="stack">${head}<div class="panel"><div class="empty">
+    <h3 style="margin-bottom:6px">아직 현장이 없습니다</h3><p>현장을 만들면 공정별 일정과 도면을 고객·작업자에게 링크로 공유할 수 있어요.</p>
+    <div class="row" style="justify-content:center;margin-top:12px"><button class="btn pri" data-act="newProj">+ 새 현장</button>
+    ${cur()?`<button class="btn" data-act="projFromEst">“${esc(cur().title)}” 견적에서 만들기</button>`:''}</div></div></div></div>`;
+  const p=curProj()||list[0];
+  return `<div class="stack">${head}
+    <div class="row">
+      <select class="f" id="projSel" data-act-change="pickProj" style="width:auto;max-width:280px">${list.map(x=>`<option value="${x.id}" ${x.id===p.id?'selected':''}>${esc(x.name)}${x.share?.on?' · 공유중':''}</option>`).join('')}</select>
+      <button class="btn" data-act="newProj">+ 새 현장</button>
+      ${cur()?`<button class="btn" data-act="projFromEst">견적에서 만들기</button>`:''}
+      <span class="spacer"></span><button class="btn ghost danger" data-act="delProj">현장 삭제</button>
+    </div>
+    ${renderProject(p)}</div>`;
+}
+function renderProject(p){
+  const r=projRange(p), prog=projProgress(p), used=new Set((p.tasks||[]).map(t=>t.proc));
+  return `<section class="panel"><div class="panel-b client-grid">
+      <label class="fl span2">현장 이름<input class="f" id="pj-name" data-bind="proj:name" value="${esc(p.name)}"></label>
+      <label class="fl">고객명<input class="f" id="pj-client" data-bind="proj:client" value="${esc(p.client)}"></label>
+      <label class="fl">연락처<input class="f" type="tel" id="pj-phone" data-bind="proj:phone" value="${esc(p.phone)}"></label>
+      <label class="fl span2">현장 주소<input class="f" id="pj-addr" data-bind="proj:address" value="${esc(p.address)}"></label>
+      <label class="fl span2">고객·작업자에게 보일 안내<input class="f" id="pj-note" data-bind="proj:note" value="${esc(p.note)}" placeholder="예: 주차는 지하 2층, 자재는 엘리베이터 이용"></label>
+    </div></section>
+
+    <section class="panel">
+      <div class="panel-h"><h3>공정 일정</h3><span class="muted small">${r?`${dstr(r.from)} ~ ${dstr(r.to)} · ${Math.round((r.to-r.from)/DAY)+1}일`:'일정 없음'}</span>
+        <span class="spacer"></span><span class="badge">진행률 ${prog}%</span></div>
+      ${(p.tasks||[]).length?`<div class="gantt">${ganttHTML(p,r)}</div>`:''}
+      <div class="tbl-wrap"><table class="t resp">
+        <thead><tr><th class="w-name">작업</th><th>담당</th><th>시작</th><th>종료</th><th>상태</th><th>작업 메모</th><th></th></tr></thead>
+        <tbody>${(p.tasks||[]).map((t,ti)=>`<tr>
+          <td class="c-name"><input class="f" id="t${ti}-name" data-bind="task:${ti}:name" value="${esc(t.name)}" style="font-weight:500"></td>
+          <td data-l="담당"><input class="f" id="t${ti}-w" data-bind="task:${ti}:worker" value="${esc(t.worker||'')}" placeholder="예: 김반장"></td>
+          <td data-l="시작"><input class="f" type="date" id="t${ti}-s" data-bind="task:${ti}:start" value="${esc(t.start||'')}"></td>
+          <td data-l="종료"><input class="f" type="date" id="t${ti}-e" data-bind="task:${ti}:end" value="${esc(t.end||'')}"></td>
+          <td data-l="상태"><select class="f" id="t${ti}-st" data-bind="task:${ti}:status">${['예정','진행','완료'].map(s=>`<option ${s===(t.status||'예정')?'selected':''}>${s}</option>`).join('')}</select></td>
+          <td data-l="작업 메모"><input class="f" id="t${ti}-m" data-bind="task:${ti}:memo" value="${esc(t.memo||'')}" placeholder="작업자에게 전할 말"></td>
+          <td class="c-act"><button class="btn ghost sm danger" data-act="delTask" data-ti="${ti}" aria-label="삭제">✕ 삭제</button></td></tr>`).join('')
+          || `<tr><td colspan="7" class="muted small c-empty" style="padding:12px 8px">아래에서 공정을 눌러 일정을 추가하세요.</td></tr>`}</tbody>
+      </table></div>
+      <div class="proc-f"><b class="small">공정 추가</b><div class="chips">
+        ${PROCS.filter(x=>!used.has(x.k)).map(x=>`<button class="chip" data-act="addTask" data-k="${x.k}">+ ${x.n}</button>`).join('')}
+        <button class="chip" data-act="addTask" data-k="">+ 직접 입력</button></div></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-h"><h3>도면 · 사진</h3><span class="muted small">사진과 PDF는 링크에서 바로 보이고, 스케치업·캐드 파일은 내려받기로 열립니다.</span></div>
+      <div class="panel-b">
+        <div class="dropzone" id="pdz" style="padding:16px">
+          <div style="flex:1;min-width:180px"><b>파일 올리기</b><div class="muted small">사진, PDF, .skp, .dwg, .dxf, .glb — 한 개당 50MB까지</div></div>
+          <button class="btn" data-act="pickPlan">파일 선택</button>
+        </div>
+        ${(p.files||[]).length?`<div class="files">${p.files.map(f=>{const k=fileKind(f); return `<figure class="file">
+          ${k==='img'?`<a href="${esc(f.url)}" target="_blank" rel="noopener"><img src="${esc(f.url)}" alt="${esc(f.name)}" loading="lazy"></a>`
+            :`<a class="fi" href="${esc(f.url)}" target="_blank" rel="noopener"><span>${KIND_LABEL[k]}</span></a>`}
+          <figcaption><b title="${esc(f.name)}">${esc(f.name)}</b>
+            <span class="muted small">${(f.size/1024/1024).toFixed(1)}MB</span>
+            <label class="small row" style="gap:5px"><input type="checkbox" data-bind="file:${f.id}:shared" ${f.shared!==false?'checked':''}> 공유</label>
+            <button class="btn ghost sm danger" data-act="delPlan" data-fid="${f.id}">삭제</button></figcaption></figure>`;}).join('')}</div>`:''}
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-h"><h3>고객·작업자 공유</h3><span class="muted small">일정과 도면만 보입니다. 견적과 원가는 절대 나오지 않습니다.</span></div>
+      <div class="panel-b">
+        <label class="row" style="gap:8px"><input type="checkbox" id="sh-on" ${p.share?.on?'checked':''} data-act-change="shareOn"> <b>공유 링크 켜기</b></label>
+        ${p.share?.on&&p.share?.token?`
+          <div class="row" style="margin-top:10px"><input class="f" id="sh-url" readonly value="${esc(shareUrl(p.share.token))}" style="flex:1;min-width:220px" onclick="this.select()">
+            <button class="btn pri" data-act="copyShare">링크 복사</button>
+            <a class="btn" href="${esc(shareUrl(p.share.token))}" target="_blank" rel="noopener">미리보기</a></div>
+          <label class="row small" style="gap:6px;margin-top:10px"><input type="checkbox" id="sh-memo" ${p.share?.showMemo!==false?'checked':''} data-act-change="shareMemo"> 작업 메모도 함께 보여주기</label>
+          <p class="muted small" style="margin:8px 0 0">일정을 고치면 링크 내용도 자동으로 바뀝니다. 링크를 끄면 그 주소는 바로 안 열립니다.</p>`
+        :'<p class="muted small" style="margin:8px 0 0">켜면 주소가 만들어져요. 그 주소를 아는 사람만 볼 수 있고, 아무것도 수정할 수 없어요.</p>'}
+      </div>
+    </section>`;
+}
+function ganttHTML(p,r){
+  if(!r) return '';
+  const span=Math.max(1,(r.to-r.from)/DAY+1);
+  return (p.tasks||[]).filter(t=>dnum(t.start)&&dnum(t.end)).map(t=>{
+    const s=(dnum(t.start)-r.from)/DAY, w=Math.max(1,(dnum(t.end)-dnum(t.start))/DAY+1);
+    const st=t.status||'예정';
+    return `<div class="g-row"><span class="g-name">${esc(t.name)}</span>
+      <span class="g-track"><span class="g-bar ${st==='완료'?'done':st==='진행'?'now':''}" style="left:${s/span*100}%;width:${w/span*100}%" title="${esc(t.start)} ~ ${esc(t.end)}"></span></span></div>`;
+  }).join('');
+}
+function renderMonth(){
+  const [y,m]=MONTH.split('-').map(Number);
+  const first=new Date(y,m-1,1), start=new Date(first); start.setDate(1-first.getDay());
+  const projs=[...S.projects.values()];
+  const cells=[];
+  for(let i=0;i<42;i++){
+    const d=new Date(start); d.setDate(start.getDate()+i);
+    const key=dstr(d), t=d.getTime();
+    const items=[];
+    projs.forEach((p,pi)=>(p.tasks||[]).forEach(task=>{ const s=dnum(task.start),e=dnum(task.end);
+      if(s&&e&&t>=s&&t<=e) items.push({p,task,pi}); }));
+    cells.push({d,key,items,other:d.getMonth()!==m-1});
+  }
+  const todayKey=today();
+  return `<section class="panel">
+    <div class="panel-h"><button class="btn sm" data-act="month" data-d="-1">‹</button>
+      <b>${y}년 ${m}월</b><button class="btn sm" data-act="month" data-d="1">›</button>
+      <span class="spacer"></span><button class="btn sm" data-act="month" data-d="0">이번 달</button></div>
+    <div class="cal">
+      ${['일','월','화','수','목','금','토'].map((d,i)=>`<div class="cal-h${i===0?' sun':i===6?' sat':''}">${d}</div>`).join('')}
+      ${cells.map(c=>`<div class="cal-d${c.other?' out':''}${c.key===todayKey?' today':''}">
+        <span class="cal-n">${c.d.getDate()}</span>
+        ${c.items.slice(0,4).map(({p,task,pi})=>`<span class="cal-i c${pi%6}" title="${esc(p.name)} · ${esc(task.name)}${task.worker?' · '+esc(task.worker):''}">${esc(p.name)} ${esc(task.name)}</span>`).join('')}
+        ${c.items.length>4?`<span class="cal-i more">+${c.items.length-4}</span>`:''}
+      </div>`).join('')}
+    </div>
+    ${projs.length?`<div class="panel-b row small">${projs.map((p,i)=>`<span class="legend c${i%6}">${esc(p.name)}</span>`).join('')}</div>`:'<div class="empty">현장을 먼저 만들어주세요.</div>'}
+  </section>`;
+}
+
+/* 공유 링크로 열었을 때 보이는 화면 (로그인 없음, 수정 불가) */
+async function renderViewer(token){
+  const app=$('#app'); $('#tabs').hidden=true; $('#syncPill').hidden=true;
+  app.innerHTML=`<div class="empty"><span class="spin"></span> 불러오는 중</div>`;
+  const {url,key}=sbConf();
+  let payload=null, err='';
+  try{
+    const client=window.supabase.createClient(url,key,{auth:{persistSession:false}});
+    const {data,error}=await client.rpc('get_share',{p_token:token});
+    if(error) throw error; payload=data;
+  }catch(e){ err=e.message||String(e); }
+  if(!payload){ app.innerHTML=`<div class="panel" style="max-width:520px;margin:6vh auto"><div class="empty">
+    <h2 style="margin-bottom:8px">링크를 열 수 없습니다</h2>
+    <p>주소가 바뀌었거나 공유가 꺼졌을 수 있어요. 보내주신 분께 새 링크를 요청해주세요.</p>
+    ${err?`<p class="small muted">(${esc(err)})</p>`:''}</div></div>`; return; }
+  const s=payload.site||{}, tasks=payload.tasks||[], files=payload.files||[];
+  const r=tasks.length?{from:Math.min(...tasks.map(t=>dnum(t.start)).filter(Boolean)),to:Math.max(...tasks.map(t=>dnum(t.end)).filter(Boolean))}:null;
+  const span=r?Math.max(1,(r.to-r.from)/DAY+1):1;
+  const todayT=dnum(today());
+  app.innerHTML=`<div class="stack viewer">
+    <section class="panel"><div class="panel-b">
+      <div class="eyebrow">공사 일정 안내</div>
+      <h1 style="font-size:24px;margin:4px 0 6px">${esc(s.name||'현장')}</h1>
+      <div class="muted small">${[s.address,s.client?s.client+' 님':''].filter(Boolean).map(esc).join(' · ')}</div>
+      <div class="row" style="margin-top:12px">
+        ${s.from?`<span class="badge">${esc(s.from)} ~ ${esc(s.to)}</span>`:''}
+        <span class="badge">진행률 ${s.progress||0}%</span>
+        ${payload.company?.name?`<span class="spacer"></span><span class="small muted">${esc(payload.company.name)}${payload.company.phone?' · '+esc(payload.company.phone):''}</span>`:''}
+      </div>
+      ${s.note?`<p class="status" style="margin-top:12px">${esc(s.note)}</p>`:''}
+    </div></section>
+
+    <section class="panel"><div class="panel-h"><h3>공정 일정</h3><span class="muted small">보기 전용입니다</span></div>
+      ${r?`<div class="gantt">${tasks.filter(t=>dnum(t.start)&&dnum(t.end)).map(t=>{
+        const st=(dnum(t.start)-r.from)/DAY, w=Math.max(1,(dnum(t.end)-dnum(t.start))/DAY+1);
+        return `<div class="g-row"><span class="g-name">${esc(t.name)}</span><span class="g-track"><span class="g-bar ${t.status==='완료'?'done':t.status==='진행'?'now':''}" style="left:${st/span*100}%;width:${w/span*100}%"></span></span></div>`;
+      }).join('')}</div>`:''}
+      <div class="tbl-wrap"><table class="t resp"><thead><tr><th>작업</th><th>기간</th><th>담당</th><th>상태</th>${payload.showMemo?'<th>안내</th>':''}</tr></thead>
+        <tbody>${tasks.map(t=>{const s2=dnum(t.start),e2=dnum(t.end);
+          const on=s2&&e2&&todayT>=s2&&todayT<=e2;
+          return `<tr${on?' class="on"':''}><td class="c-name"><b>${esc(t.name)}</b></td>
+          <td data-l="기간">${esc(t.start||'')}${t.end&&t.end!==t.start?' ~ '+esc(t.end):''}</td>
+          <td data-l="담당">${esc(t.worker||'-')}</td>
+          <td data-l="상태"><span class="badge${t.status==='완료'?'':' warn'}">${esc(t.status||'예정')}</span></td>
+          ${payload.showMemo?`<td data-l="안내" class="small muted">${esc(t.memo||'')}</td>`:''}</tr>`;}).join('')
+          || '<tr><td colspan="5" class="empty c-empty">아직 등록된 일정이 없습니다.</td></tr>'}</tbody></table></div>
+    </section>
+
+    ${files.length?`<section class="panel"><div class="panel-h"><h3>도면 · 사진</h3></div><div class="panel-b">
+      <div class="files">${files.map((f,i)=>{const k=fileKind(f); return `<figure class="file">
+        ${k==='img'?`<a href="${esc(f.url)}" target="_blank" rel="noopener"><img src="${esc(f.url)}" alt="${esc(f.name)}" loading="lazy"></a>`
+          :k==='glb'?`<button class="fi glb" data-act="view3d" data-i="${i}"><span>3D 보기</span></button>`
+          :`<a class="fi" href="${esc(f.url)}" target="_blank" rel="noopener"><span>${KIND_LABEL[k]}</span></a>`}
+        <figcaption><b title="${esc(f.name)}">${esc(f.name)}</b>
+          <a class="btn sm" href="${esc(f.url)}" target="_blank" rel="noopener" download>${k==='pdf'||k==='img'?'열기':'내려받기'}</a></figcaption></figure>`;}).join('')}</div>
+      <p class="muted small" style="margin:10px 0 0">스케치업(.skp)·캐드(.dwg) 파일은 내려받아 해당 프로그램에서 열어주세요.</p>
+    </div></section>`:''}
+    <p class="muted small" style="text-align:center">${esc(payload.company?.name||'')} · 이 화면은 보기 전용입니다. 문의는 담당자에게 연락해주세요.</p>
+  </div>`;
+  window.__viewerFiles=files;
+}
+async function view3d(i){
+  const f=(window.__viewerFiles||[])[i]; if(!f) return;
+  const box=document.createElement('div'); box.className='modal';
+  box.innerHTML=`<div class="modal-b"><div class="row"><b style="flex:1">${esc(f.name)}</b><button class="btn sm" data-act="close3d">닫기</button></div><div class="v3d" id="v3d"><div class="empty"><span class="spin"></span> 3D 모델을 여는 중</div></div></div>`;
+  document.body.appendChild(box);
+  try{
+    if(!window.THREE){ await loadScript('https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js'); }
+    if(!window.THREE.GLTFLoader){ await loadScript('https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js'); }
+    if(!window.THREE.OrbitControls){ await loadScript('https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js'); }
+    const el=$('#v3d'); el.innerHTML='';
+    const W=el.clientWidth||600,H=el.clientHeight||420;
+    const scene=new THREE.Scene(); scene.background=new THREE.Color(0xf2f4f2);
+    const cam=new THREE.PerspectiveCamera(50,W/H,.1,5000); const rnd=new THREE.WebGLRenderer({antialias:true});
+    rnd.setSize(W,H); rnd.setPixelRatio(Math.min(2,devicePixelRatio)); el.appendChild(rnd.domElement);
+    scene.add(new THREE.HemisphereLight(0xffffff,0x888888,1.1));
+    const dl=new THREE.DirectionalLight(0xffffff,.8); dl.position.set(5,10,7); scene.add(dl);
+    const ctr=new THREE.OrbitControls(cam,rnd.domElement);
+    const gltf=await new Promise((res,rej)=>new THREE.GLTFLoader().load(f.url,res,undefined,rej));
+    scene.add(gltf.scene);
+    const b=new THREE.Box3().setFromObject(gltf.scene), c=b.getCenter(new THREE.Vector3()), sz=b.getSize(new THREE.Vector3()).length();
+    cam.position.set(c.x+sz*.7,c.y+sz*.5,c.z+sz*.7); cam.far=sz*10; cam.updateProjectionMatrix(); ctr.target.copy(c); ctr.update();
+    (function loop(){ if(!document.body.contains(box)) return; ctr.update(); rnd.render(scene,cam); requestAnimationFrame(loop); })();
+  }catch(e){ $('#v3d').innerHTML=`<div class="empty">3D로 열지 못했습니다. 아래 내려받기로 확인해주세요.<br><span class="small">${esc(e.message||e)}</span></div>`; }
+}
+function loadScript(src){ return new Promise((res,rej)=>{ const s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=()=>rej(new Error('불러오지 못함: '+src)); document.head.appendChild(s); }); }
+
 /* ---------- settings ---------- */
 function renderSettings(){
   const {url,key}=sbConf(), fromFile=!!(CFG.SUPABASE_URL&&CFG.SUPABASE_KEY);
@@ -880,6 +1187,12 @@ document.addEventListener('input',ev=>{
   else if(kind==='rev'){ const it=IMPORT.items[+rest[0]]; it[rest[1]]=val; if(rest[1]==='coverage') it.mode=val>0?'area':'qty';
     const o=document.getElementById('o-rv-'+rest[0]); if(o) o.innerHTML=perM2Html(matPerM2(it)); }
   else if(kind==='co'){ S.company[rest[0]]=val; saveCo(); refreshDoc(); }
+  else if(kind==='proj'){ const p=curProj(); if(!p) return; p[rest[0]]=val; saveProj(p); }
+  else if(kind==='task'){ const p=curProj(); const t=p?.tasks?.[+rest[0]]; if(!t) return; t[rest[1]]=val;
+    if(rest[1]==='start'&&(!t.end||dnum(t.end)<dnum(val))) t.end=val;
+    saveProj(p);
+    const g=document.querySelector('.gantt'); if(g) g.innerHTML=ganttHTML(p,projRange(p)); }
+  else if(kind==='file'){ const p=curProj(); const f=(p?.files||[]).find(x=>x.id===rest[0]); if(!f) return; f[rest[1]]=val; saveProj(p); }
 });
 document.addEventListener('change',ev=>{
   const t=ev.target, a=t.dataset?.actChange;
@@ -888,6 +1201,9 @@ document.addEventListener('change',ev=>{
   if(a==='pick'){ setCur(t.value); render(); }
   if(a==='addLine'&&t.value){ const e=cur(), p=e.processes[+t.dataset.pi], m=S.materials.get(t.value); if(m){ p.lines.push(lineFromMat(m)); saveEst(e); render(); } }
   if(a==='revAll'){ IMPORT.items.forEach(x=>x.on=t.checked); render(); }
+  if(a==='pickProj'){ S.curPid=t.value; ls.set('curPid',t.value); render(); }
+  if(a==='shareOn'){ toggleShare(curProj(),t.checked); }
+  if(a==='shareMemo'){ const p=curProj(); p.share={...(p.share||{}),showMemo:t.checked}; saveProj(p); publishShare(p); }
 });
 document.addEventListener('submit',async ev=>{
   if(ev.target.id!=='loginForm') return;
@@ -940,14 +1256,37 @@ document.addEventListener('click',async ev=>{
     case 'importBackup': $('#fileBackup').click(); break;
     case 'checkUpdate': checkUpdate(true); break;
     case 'applyUpdate': applyUpdate(); break;
+    case 'schedMode': SCHED_MODE=t.dataset.m; ls.set('schedMode',SCHED_MODE); render(); break;
+    case 'newProj': { const n=newProject(); S.projects.set(n.id,n); S.curPid=n.id; ls.set('curPid',n.id); saveProj(n); SCHED_MODE='site'; render(); break; }
+    case 'projFromEst': { const n=newProject(e); e.processes.forEach((pr,i)=>{ const P=PMAP[pr.k]||PMAP.etc; const st=addDays(today(),i*2);
+        n.tasks.push({id:uid(),proc:pr.k,name:P.n,start:st,end:addDays(st,1),worker:'',status:'예정',memo:''}); });
+      S.projects.set(n.id,n); S.curPid=n.id; ls.set('curPid',n.id); saveProj(n); VIEW='sched'; SCHED_MODE='site'; ls.set('view',VIEW); render(); toast('견적의 공정으로 일정을 만들었습니다. 날짜를 고쳐주세요.'); break; }
+    case 'delProj': { const p=curProj(); if(p&&confirm(`“${p.name}” 현장을 삭제할까요? 공유 링크도 닫힙니다.`)){ deleteProj(p.id); S.curPid=[...S.projects.keys()][0]||null; ls.set('curPid',S.curPid); render(); } break; }
+    case 'addTask': { const p=curProj(); const k=t.dataset.k; const P=PMAP[k];
+      const last=(p.tasks||[]).map(x=>x.end).filter(Boolean).sort().pop();
+      const st=last?addDays(last,1):today();
+      p.tasks=p.tasks||[]; p.tasks.push({id:uid(),proc:k||'',name:P?P.n:'새 작업',start:st,end:addDays(st,1),worker:'',status:'예정',memo:''});
+      saveProj(p); render(); break; }
+    case 'delTask': { const p=curProj(); p.tasks.splice(+t.dataset.ti,1); saveProj(p); render(); break; }
+    case 'pickPlan': $('#filePlan').click(); break;
+    case 'delPlan': removePlan(curProj(),t.dataset.fid); break;
+    case 'copyShare': copyShare(curProj()); break;
+    case 'month': { if(t.dataset.d==='0'){ const d=new Date(); MONTH=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }
+      else { const [y,m]=MONTH.split('-').map(Number); const d=new Date(y,m-1+ +t.dataset.d,1); MONTH=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }
+      render(); break; }
+    case 'view3d': view3d(+t.dataset.i); break;
+    case 'close3d': document.querySelector('.modal')?.remove(); break;
   }
 });
 $('#filePhoto').addEventListener('change',ev=>{ applyPhoto(ev.target.files[0]); ev.target.value=''; });
 $('#fileSheet').addEventListener('change',ev=>{ setSheetFiles(ev.target.files); ev.target.value=''; });
 $('#fileBackup').addEventListener('change',ev=>{ if(ev.target.files[0]) importBackup(ev.target.files[0]); ev.target.value=''; });
+$('#filePlan').addEventListener('change',ev=>{ if(ev.target.files.length) uploadPlans(ev.target.files,curProj()); ev.target.value=''; });
 document.addEventListener('dragover',ev=>{ const dz=ev.target.closest?.('#dz'); if(dz){ ev.preventDefault(); dz.classList.add('drag'); } });
 document.addEventListener('dragleave',ev=>{ ev.target.closest?.('#dz')?.classList.remove('drag'); });
-document.addEventListener('drop',ev=>{ const dz=ev.target.closest?.('#dz'); if(dz){ ev.preventDefault(); dz.classList.remove('drag'); if(ls.get('anthropic_key')) setSheetFiles(ev.dataTransfer.files); } });
+document.addEventListener('drop',ev=>{ const dz=ev.target.closest?.('#dz'); if(dz){ ev.preventDefault(); dz.classList.remove('drag'); if(ls.get('anthropic_key')) setSheetFiles(ev.dataTransfer.files); }
+  const pdz=ev.target.closest?.('#pdz'); if(pdz){ ev.preventDefault(); pdz.classList.remove('drag'); uploadPlans(ev.dataTransfer.files,curProj()); } });
+document.addEventListener('dragover',ev=>{ const pdz=ev.target.closest?.('#pdz'); if(pdz){ ev.preventDefault(); pdz.classList.add('drag'); } });
 document.addEventListener('paste',ev=>{ if(VIEW!=='mat'||!ls.get('anthropic_key')) return; const fs=[...(ev.clipboardData?.files||[])]; if(fs.length){ ev.preventDefault(); setSheetFiles(fs); } });
 document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='hidden') flushWrites(); else { scheduleSync(200); checkUpdate(false); } });
 window.addEventListener('pagehide',flushWrites);
@@ -1022,6 +1361,8 @@ async function connectSupabase(){
   sb.auth.onAuthStateChange((_ev,s)=>{ session=s; updatePill(); });
 }
 (async()=>{
+  const shareToken=new URLSearchParams(location.search).get('s');
+  if(shareToken){ await renderViewer(shareToken); registerSW(); return; }
   await loadLocal();
   await connectSupabase();
   render();
