@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '4.2.1';
+const APP_VERSION = '4.3.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -703,6 +703,22 @@ function renderEst(){
   </div></div>`;
 }
 
+/* 자재 고르는 목록: 업체 전체면 이 공정 자재를 업체별로 묶어서 보여줍니다 */
+function matOption(m){
+  return `<option value="${m.id}">${esc(m.name)} ${esc(m.spec||'')} · 재료 ${won(m.unitPrice)}${num(m.laborPrice)?' · 노무 '+won(m.laborPrice):''}원/${esc(m.unit)}</option>`;
+}
+function matOptions(mats, others, groupByVendor){
+  if(groupByVendor){
+    const groups=new Map();
+    mats.forEach(m=>{ const k=vendorName(m.vendorId)||(m.vendor||'').trim()||'업체 없음';
+      if(!groups.has(k)) groups.set(k,[]); groups.get(k).push(m); });
+    return [...groups.entries()]
+      .sort((a,b)=>a[0]==='업체 없음'?1:b[0]==='업체 없음'?-1:a[0].localeCompare(b[0],'ko'))
+      .map(([name,list])=>`<optgroup label="${esc(name)}">${list.map(matOption).join('')}</optgroup>`).join('');
+  }
+  return (mats.length?`<optgroup label="이 공정">${mats.map(matOption).join('')}</optgroup>`:'')
+       + (others.length?`<optgroup label="다른 공정">${others.map(matOption).join('')}</optgroup>`:'');
+}
 function renderProc(e,p,pi){ // e: 견적
   const P=PMAP[p.k]||PMAP.etc;
   const vf=LINE_VENDOR[pi]||'';
@@ -733,8 +749,7 @@ function renderProc(e,p,pi){ // e: 견적
           <option value="">업체 전체</option>${vs.map(v=>`<option value="${v.id}" ${LINE_VENDOR[pi]===v.id?'selected':''}>${esc(v.name||'(이름 없음)')}</option>`).join('')}</select>`:''; })()}
       <select class="f" id="p${pi}-addsel" style="width:auto;max-width:100%" data-act-change="addLine" data-pi="${pi}">
         <option value="">+ 자재 단가표에서 추가…</option>
-        ${mats.length?`<optgroup label="${P.n}">${mats.map(m=>`<option value="${m.id}">${esc(m.name)} ${esc(m.spec||'')} · 재료 ${won(m.unitPrice)}${num(m.laborPrice)?' · 노무 '+won(m.laborPrice):''}원/${esc(m.unit)}${m.vendor?' · '+esc(m.vendor):''}</option>`).join('')}</optgroup>`:''}
-        ${others.length?`<optgroup label="다른 공정">${others.map(m=>`<option value="${m.id}">${esc(m.name)} ${esc(m.spec||'')}${m.vendor?' · '+esc(m.vendor):''}</option>`).join('')}</optgroup>`:''}
+        ${matOptions(mats, others, !vf)}
       </select>
       <button class="btn sm" data-act="addBlank" data-pi="${pi}">직접 입력</button>
     </div>
