@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '2.4.0';
+const APP_VERSION = '2.5.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -79,6 +79,22 @@ function krWords(n){
   return s;
 }
 const isTouch = () => matchMedia('(pointer:coarse)').matches;
+/* 숫자만 적어도 전화번호 모양으로 바꿔줍니다 (010-1234-5678, 02-123-4567, 1588-1234) */
+function formatPhone(v){
+  const d=String(v??'').replace(/\D/g,'').slice(0,11);
+  if(!d) return '';
+  if(d.startsWith('02')){
+    if(d.length<=2) return d;
+    if(d.length<=5) return `${d.slice(0,2)}-${d.slice(2)}`;
+    if(d.length<=9) return `${d.slice(0,2)}-${d.slice(2,5)}-${d.slice(5)}`;
+    return `${d.slice(0,2)}-${d.slice(2,6)}-${d.slice(6,10)}`;
+  }
+  if(/^1[5-9]\d\d/.test(d) && d.length<=8) return d.length<=4 ? d : `${d.slice(0,4)}-${d.slice(4)}`;
+  if(d.length<=3) return d;
+  if(d.length<=7) return `${d.slice(0,3)}-${d.slice(3)}`;
+  if(d.length<=10) return `${d.slice(0,3)}-${d.slice(3,6)}-${d.slice(6)}`;
+  return `${d.slice(0,3)}-${d.slice(3,7)}-${d.slice(7)}`;
+}
 async function shareOrDownload(filename, blob){
   const file = new File([blob], filename, {type: blob.type});
   if(isTouch() && navigator.canShare?.({files:[file]})){
@@ -855,7 +871,7 @@ function renderDocView(){
   const e=cur();
   if(!e) return `<div class="panel"><div class="empty">먼저 견적을 만들어주세요. <button class="btn" data-act="view" data-v="est">견적 작성으로</button></div></div>`;
   const co=S.company||{};
-  const f=(k,l,ph='')=>`<label class="fl">${l}<input class="f" id="co-${k}" data-bind="co:${k}" value="${esc(co[k]||'')}" placeholder="${ph}"></label>`;
+  const f=(k,l,ph='')=>`<label class="fl">${l}<input class="f" ${k==='phone'?'type="tel"':''} id="co-${k}" data-bind="co:${k}" value="${esc(co[k]||'')}" placeholder="${ph}"></label>`;
   return `<div class="stack">
     <div class="row no-print"><h2 style="flex:1">고객용 견적서</h2>${estPicker()}</div>
     <details class="co panel no-print" ${co.name?'':'open'}><summary>우리 업체 정보 ${co.name?'· '+esc(co.name):'(견적서 발신란에 들어갑니다)'}</summary>
@@ -1593,6 +1609,13 @@ async function applyPhoto(file){
 function setPath(obj,path,val){ const ks=path.split('.'); let o=obj; ks.slice(0,-1).forEach(k=>o=o[k]??=({})); o[ks.at(-1)]=val; }
 document.addEventListener('input',ev=>{
   const t=ev.target;
+  if(t.type==='tel'){                       // 연락처는 적는 대로 - 를 넣어줍니다
+    const before=t.value, pos=t.selectionStart??before.length, f=formatPhone(before);
+    if(f!==before){
+      const atEnd=pos>=before.length; t.value=f;
+      try{ const c=atEnd?f.length:Math.min(pos+(f.length-before.length),f.length); t.setSelectionRange(c,c); }catch{}
+    }
+  }
   if(t.dataset?.size){                      // 면적: 숫자 칸 + 단위 선택
     const e=cur(); if(!e) return;
     if(t.dataset.size==='val') e.client.sizeVal=t.value.replace(/[^\d.]/g,'');
