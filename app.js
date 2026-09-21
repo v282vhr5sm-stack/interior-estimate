@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '3.0.1';
+const APP_VERSION = '3.1.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -442,7 +442,7 @@ const sizeHint = areaHint;
 
 /* ---------- views ---------- */
 let VIEW=ls.get('view','home');
-let HOME_SEL=null, HOME_NEW=false;
+let HOME_SEL=null, HOME_NEW=false, HUB_GALLERY=false;
 let MAT_FILTER='all';
 let IMPORT={files:[],urls:[],busy:false,items:null,memo:'',err:''};
 let AUTH={mode:'login',busy:false,err:'',skipped:ls.get('skipLogin')==='1'};
@@ -473,6 +473,61 @@ document.addEventListener('keydown',ev=>{
   const c=ev.target.closest?.('.card'); if(!c) return;
   if(ev.key==='Enter'||ev.key===' '){ ev.preventDefault(); c.click(); }
 });
+/* 사진을 누르면 크게 보고, 좌우로 넘길 수 있습니다 */
+let LB={list:[],i:0,el:null};
+function openLightbox(list,i){
+  closeLightbox();
+  LB={list,i,el:document.createElement('div')};
+  LB.el.className='lb';
+  LB.el.innerHTML=`<button class="lb-x" data-lb="close" aria-label="닫기">✕</button>
+    <button class="lb-nav prev" data-lb="prev" aria-label="이전 사진">‹</button>
+    <img class="lb-img" alt="">
+    <button class="lb-nav next" data-lb="next" aria-label="다음 사진">›</button>
+    <div class="lb-cap"></div>`;
+  document.body.appendChild(LB.el);
+  document.body.style.overflow='hidden';
+  LB.el.addEventListener('click',e=>{
+    const b=e.target.closest('[data-lb]');
+    if(b){ const a=b.dataset.lb; if(a==='close') closeLightbox(); else stepLightbox(a==='next'?1:-1); return; }
+    if(e.target===LB.el) closeLightbox();
+  });
+  let x0=null;
+  LB.el.addEventListener('touchstart',e=>{ x0=e.touches[0].clientX; },{passive:true});
+  LB.el.addEventListener('touchend',e=>{ if(x0==null) return; const dx=e.changedTouches[0].clientX-x0; x0=null;
+    if(Math.abs(dx)>50) stepLightbox(dx<0?1:-1); },{passive:true});
+  document.addEventListener('keydown',lbKey);
+  paintLightbox();
+}
+function lbKey(e){
+  if(!LB.el) return;
+  if(e.key==='Escape') closeLightbox();
+  else if(e.key==='ArrowRight') stepLightbox(1);
+  else if(e.key==='ArrowLeft') stepLightbox(-1);
+}
+function stepLightbox(d){ if(!LB.el||!LB.list.length) return; LB.i=(LB.i+d+LB.list.length)%LB.list.length; paintLightbox(); }
+function paintLightbox(){
+  const it=LB.list[LB.i]; if(!it) return;
+  LB.el.querySelector('.lb-img').src=it.url;
+  LB.el.querySelector('.lb-cap').innerHTML=`<b>${esc(it.cap||'')}</b><span>${LB.i+1} / ${LB.list.length}</span>`;
+  const one=LB.list.length<2;
+  LB.el.querySelectorAll('.lb-nav').forEach(b=>b.hidden=one);
+}
+function closeLightbox(){
+  if(LB.el){ LB.el.remove(); document.removeEventListener('keydown',lbKey); document.body.style.overflow=''; }
+  LB={list:[],i:0,el:null};
+}
+/* 사진을 누르면 새 창 대신 크게 보기로 */
+document.addEventListener('click',ev=>{
+  const a=ev.target.closest('.file a[href]'); if(!a||!a.querySelector('img')) return;
+  const wrap=a.closest('.stack, .panel-b, #app') || document;
+  const items=[...wrap.querySelectorAll('.file a[href] img')].map(im=>{
+    const fig=im.closest('.file');
+    return {url:im.src, cap:fig?.querySelector('figcaption b')?.textContent || fig?.querySelector('figcaption span')?.textContent || ''};
+  });
+  const idx=Math.max(0,items.findIndex(x=>x.url===a.querySelector('img').src));
+  if(!items.length) return;
+  ev.preventDefault(); openLightbox(items,idx);
+},true);
 /* 칸을 누르면 이미 있는 값이 통째로 선택돼, 지우지 않고 바로 덮어쓸 수 있습니다 */
 document.addEventListener('focusin',ev=>{
   const t=ev.target;
@@ -1032,7 +1087,7 @@ function renderNewSite(){
 function renderHome(){
   const projs=[...S.projects.values()].sort((a,b)=>(b.updated||0)-(a.updated||0));
   if(HOME_NEW) return renderNewSite();
-  if(HOME_SEL && S.projects.has(HOME_SEL)) return renderHub(S.projects.get(HOME_SEL));
+  if(HOME_SEL && S.projects.has(HOME_SEL)) return HUB_GALLERY ? renderGallery(S.projects.get(HOME_SEL)) : renderHub(S.projects.get(HOME_SEL));
   const loose=[...S.estimates.values()].filter(e=>!projs.some(p=>p.estimateId===e.id));
   return `<div class="stack">
     <div class="row"><h2 style="flex:1">현장</h2>
@@ -1072,6 +1127,25 @@ function renderHome(){
       </div></section>`:''}
   </div>`;
 }
+/* 사진만 모아 보는 화면 */
+function renderGallery(p){
+  const imgs=(p.files||[]).filter(f=>fileKind(f)==='img').sort((a,b)=>(b.at||0)-(a.at||0));
+  const byTask=new Map();
+  imgs.forEach(f=>{ const t=(p.tasks||[]).find(x=>x.id===f.taskId); const k=t?t.name:'공정 미지정';
+    if(!byTask.has(k)) byTask.set(k,[]); byTask.get(k).push(f); });
+  const card=f=>`<figure class="file">
+    <a href="${esc(f.url)}" target="_blank" rel="noopener"><img src="${esc(f.url)}" alt="${esc(f.memo||f.name)}" loading="lazy"></a>
+    <figcaption>${f.memo?`<b>${esc(f.memo)}</b>`:''}<span class="muted small">${new Date(f.at||Date.now()).toLocaleDateString('ko-KR')}</span></figcaption></figure>`;
+  return `<div class="stack">
+    <div class="row"><button class="btn ghost" data-act="hubBack">‹ ${esc(siteName(p))}</button><span class="spacer"></span>
+      <span class="muted small">사진 ${imgs.length}장</span>
+      <button class="btn sm" data-act="taskPhotoAny">📷 사진 추가</button></div>
+    ${imgs.length?[...byTask.entries()].map(([name,list])=>`<section class="panel">
+        <div class="panel-h"><h3>${esc(name)}</h3><span class="muted small">${list.length}장</span></div>
+        <div class="panel-b"><div class="files">${list.map(card).join('')}</div></div></section>`).join('')
+      :`<div class="panel"><div class="empty">아직 사진이 없습니다. 일정에서 공정별로 찍거나 여기서 추가하세요.</div></div>`}
+  </div>`;
+}
 function renderHub(p){
   const r=projRange(p), prog=projProgress(p), e=p.estimateId&&S.estimates.get(p.estimateId);
   const imgs=(p.files||[]).filter(f=>fileKind(f)==='img');
@@ -1105,7 +1179,7 @@ function renderHub(p){
     </div>
 
     ${imgs.length?`<section class="panel"><div class="panel-h"><h3>최근 사진</h3><span class="spacer"></span>
-      <button class="btn sm" data-act="openFiles">모두 보기</button></div>
+      <button class="btn sm" data-act="siteGallery">모두 보기</button></div>
       <div class="panel-b"><div class="files">${imgs.slice(-6).reverse().map(f=>`<figure class="file">
         <a href="${esc(f.url)}" target="_blank" rel="noopener"><img src="${esc(f.url)}" alt="" loading="lazy"></a>
         <figcaption>${f.memo?`<b>${esc(f.memo)}</b>`:`<span class="muted small">${esc(f.name)}</span>`}</figcaption></figure>`).join('')}</div></div>
@@ -1903,7 +1977,7 @@ document.addEventListener('click',async ev=>{
       p.tasks.push({...src,id:uid(),name:src.name.replace(/ \d+차$/,'')+` ${same+1}차`,start:st,end:addDays(st,len),status:'예정'});
       saveProj(p); render(); toast('같은 작업을 뒤쪽 날짜로 하나 더 넣었습니다. 날짜를 고쳐주세요.'); break; }
     case 'sortTasks': { const p=curProj(); p.tasks.sort((a,b)=>String(a.start||'').localeCompare(String(b.start||''))); saveProj(p); render(); break; }
-    case 'openSite': HOME_SEL=t.dataset.id; selectSite(t.dataset.id); VIEW='home'; ls.set('view',VIEW); render(); window.scrollTo(0,0); break;
+    case 'openSite': HUB_GALLERY=false; HOME_SEL=t.dataset.id; selectSite(t.dataset.id); VIEW='home'; ls.set('view',VIEW); render(); window.scrollTo(0,0); break;
     case 'moveProc': { const pi=+t.dataset.pi, d=+t.dataset.d, arr=e.processes;
       if(pi+d<0||pi+d>=arr.length) break;
       [arr[pi],arr[pi+d]]=[arr[pi+d],arr[pi]]; saveEst(e); render(); break; }
@@ -1918,7 +1992,10 @@ document.addEventListener('click',async ev=>{
       if(S.curPid===p.id){ S.curPid=[...S.projects.keys()][0]||null; ls.set('curPid',S.curPid); }
       if(HOME_SEL===p.id) HOME_SEL=null;
       render(); break; }
-    case 'homeBack': HOME_SEL=null; HOME_NEW=false; render(); break;
+    case 'homeBack': HOME_SEL=null; HOME_NEW=false; HUB_GALLERY=false; render(); break;
+    case 'siteGallery': HUB_GALLERY=true; render(); window.scrollTo(0,0); break;
+    case 'hubBack': HUB_GALLERY=false; render(); window.scrollTo(0,0); break;
+    case 'taskPhotoAny': PLAN_TASK=''; $('#filePlan').setAttribute('accept','image/*'); $('#filePlan').click(); break;
     case 'openSched': VIEW='sched'; SCHED_MODE='site'; ls.set('view',VIEW); render(); window.scrollTo(0,0); break;
     case 'openFiles': VIEW='sched'; SCHED_MODE='site'; ls.set('view',VIEW); render();
       setTimeout(()=>document.querySelector('.files')?.scrollIntoView({block:'center',behavior:'smooth'})||document.getElementById('pdz')?.scrollIntoView({block:'center'}),80); break;
