@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '4.3.0';
+const APP_VERSION = '4.4.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -554,6 +554,21 @@ function safeRender(){
   render();
 }
 document.addEventListener('keydown',ev=>{
+  /* 견적 줄에서 엔터 → 같은 품명으로 한 줄 더 */
+  if(ev.key==='Enter' && !ev.shiftKey){
+    const el=ev.target;
+    const b=el?.dataset?.bind||'';
+    if(b.startsWith('line:')){
+      const [,pi,li]=b.split(':'); const e=cur(), p=e?.processes[+pi], l=p?.lines[+li];
+      if(p&&l){
+        ev.preventDefault();
+        const copy={...l, id:uid(), qty:1, memo:''};
+        p.lines.splice(+li+1,0,copy); saveEst(e); render();
+        setTimeout(()=>{ const q=document.getElementById(`p${pi}l${+li+1}-qty`); q?.focus(); q?.select(); },60);
+        return;
+      }
+    }
+  }
   const c=ev.target.closest?.('.card'); if(!c) return;
   if(ev.key==='Enter'||ev.key===' '){ ev.preventDefault(); c.click(); }
 });
@@ -740,19 +755,19 @@ function renderProc(e,p,pi){ // e: 견적
         <button class="btn ghost sm" data-act="moveProc" data-pi="${pi}" data-d="1" title="아래로" ${pi===e.processes.length-1?'disabled':''}>▼</button>
         <button class="btn ghost sm danger" data-act="delProc" data-pi="${pi}" aria-label="${P.n} 공정 삭제">✕</button></div>
     </div>
-    <div class="tbl-wrap"><table class="t resp">
-      <thead><tr><th class="w-img"></th><th class="w-name">품명 · 규격</th><th class="r">수량</th><th>단위</th><th class="r">재료비 단가</th><th class="r">재료비 금액</th><th class="r">노무비 단가</th><th class="r">노무비 금액</th><th class="r">합계</th><th>비고</th><th></th></tr></thead>
-      <tbody>${(p.lines||[]).map((l,li)=>renderLine(p,pi,l,li)).join('') || `<tr><td colspan="11" class="muted small c-empty" style="padding:12px 8px">아래에서 자재를 추가하세요.</td></tr>`}</tbody>
-    </table></div>
-    <div class="proc-f">
+    <div class="proc-f proc-pick"><b class="small">업체 · 품명</b>
       ${(()=>{ const vs=vendorsFor(''); return vs.length?`<select class="f" id="p${pi}-vendorsel" data-vendorpick="${pi}" style="width:auto;max-width:150px">
           <option value="">업체 전체</option>${vs.map(v=>`<option value="${v.id}" ${LINE_VENDOR[pi]===v.id?'selected':''}>${esc(v.name||'(이름 없음)')}</option>`).join('')}</select>`:''; })()}
       <select class="f" id="p${pi}-addsel" style="width:auto;max-width:100%" data-act-change="addLine" data-pi="${pi}">
-        <option value="">+ 자재 단가표에서 추가…</option>
+        <option value="">품명 선택 (단가표에서 추가)</option>
         ${matOptions(mats, others, !vf)}
       </select>
       <button class="btn sm" data-act="addBlank" data-pi="${pi}">직접 입력</button>
     </div>
+    <div class="tbl-wrap"><table class="t resp">
+      <thead><tr><th class="w-img"></th><th class="w-name">품명 · 규격</th><th class="r">수량</th><th>단위</th><th class="r">재료비 단가</th><th class="r">재료비 금액</th><th class="r">노무비 단가</th><th class="r">노무비 금액</th><th class="r">합계</th><th>비고</th><th></th></tr></thead>
+      <tbody>${(p.lines||[]).map((l,li)=>renderLine(p,pi,l,li)).join('') || `<tr><td colspan="11" class="muted small c-empty" style="padding:12px 8px">위에서 업체와 품명을 고르거나 “직접 입력”을 누르세요.</td></tr>`}</tbody>
+    </table></div>
     <div class="labor">
       <span>재료비 <b id="o-p${pi}-mat"></b></span>
       <span>노무비 <b id="o-p${pi}-labor"></b></span>
