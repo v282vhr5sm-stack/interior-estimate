@@ -322,3 +322,14 @@ details.co[open] summary{border-bottom:1px solid var(--line2)}
 .vdoc .file{width:100%}
 .vdoc .file img{aspect-ratio:3/2}
 .vdoc figcaption{flex-direction:row;gap:4px;justify-content:space-between}
+
+/* 내용이 잘리지 않게 */
+table.t td input.f, table.t td select.f{ field-sizing:content; min-width:64px; max-width:680px; width:auto }
+table.t td input.f.num{ min-width:96px; max-width:220px }
+table.t td .c-name input.f, table.t td input[id$="-name"], table.t td input[id$="-spec"], table.t td input[id$="-memo"], table.t td input[id$="-note"]{ min-width:150px }
+table.t td{ white-space:nowrap }
+table.t td.c-name{ white-space:normal }
+.tbl-wrap{ overflow-x:auto; scrollbar-width:thin }
+@media (max-width:760px){
+  table.resp td input.f, table.resp td select.f{ width:100%!important; max-width:none; min-width:0 }
+}

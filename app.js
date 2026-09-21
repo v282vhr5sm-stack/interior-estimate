@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '4.0.0';
+const APP_VERSION = '4.0.1';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -364,20 +364,20 @@ const CUSTOM_UNIT = new Set();          // 직접 입력으로 열어둔 자재
 /* 업체 칸: 등록된 업체를 고르거나 직접 적습니다 */
 function vendorCell(m){
   const custom = !m.vendorId;
-  return `<select class="f" id="m-${m.id}-vendorsel" data-matvendor="${m.id}" style="width:130px">
+  return `<select class="f" id="m-${m.id}-vendorsel" data-matvendor="${m.id}" >
       ${[...S.vendors.values()].sort((a,b)=>String(a.name).localeCompare(String(b.name),'ko'))
         .map(v=>`<option value="${v.id}" ${m.vendorId===v.id?'selected':''}>${esc(v.name||'(이름 없음)')}</option>`).join('')}
       <option value="__custom" ${custom?'selected':''}>직접 입력</option>
     </select>
-    ${custom?`<input class="f" id="m-${m.id}-vendor" data-bind="mat:${m.id}:vendor" value="${esc(m.vendor||'')}" placeholder="업체명" style="width:120px;margin-top:4px">`:''}`;
+    ${custom?`<input class="f" id="m-${m.id}-vendor" data-bind="mat:${m.id}:vendor" value="${esc(m.vendor||'')}" placeholder="업체명" style="margin-top:4px">`:''}`;
 }
 function unitCell(m){
   const custom = CUSTOM_UNIT.has(m.id) || (m.unit && !UNITS.includes(m.unit));
-  return `<select class="f" id="m-${m.id}-unitsel" data-unitsel="${m.id}" style="width:86px">
+  return `<select class="f" id="m-${m.id}-unitsel" data-unitsel="${m.id}" >
       ${UNITS.map(u=>`<option value="${u}" ${!custom&&m.unit===u?'selected':''}>${u}</option>`).join('')}
       <option value="__custom" ${custom?'selected':''}>직접 입력</option>
     </select>
-    ${custom?`<input class="f" id="m-${m.id}-unit" data-bind="mat:${m.id}:unit" value="${esc(m.unit||'')}" placeholder="단위" style="width:76px;margin-top:4px">`:''}`;
+    ${custom?`<input class="f" id="m-${m.id}-unit" data-bind="mat:${m.id}:unit" value="${esc(m.unit||'')}" placeholder="단위" style="margin-top:4px">`:''}`;
 }
 const FRAC_UNITS = ['m','kg','L','ℓ','㎏'];
 function calcLine(l){
@@ -529,6 +529,7 @@ function render(){
   else if(VIEW==='set') app.innerHTML=renderSettings();
   else app.innerHTML=renderEst();
   if(VIEW==='est') recalc();
+  autoSizeAll();
   updatePill();
 }
 let renderDeferred=false;
@@ -739,19 +740,19 @@ function renderLine(p,pi,l,li){
     <td class="c-name"><input class="f" id="${id}-name" data-bind="line:${pi}:${li}:name" value="${esc(l.name)}" placeholder="품명" style="font-weight:500">
         <input class="f small" id="${id}-spec" data-bind="line:${pi}:${li}:spec" value="${esc(l.spec)}" placeholder="규격" style="margin-top:3px">
         ${m&&num(m.unitPrice)!==num(l.matPrice)?`<div class="small" style="margin-top:3px"><span class="badge warn">단가표 ${won(m.unitPrice)}원</span></div>`:''}</td>
-    <td class="r" data-l="수량"><input class="f num w-s" type="number" inputmode="decimal" step="0.1" id="${id}-qty" data-bind="line:${pi}:${li}:qty" data-num value="${esc(l.qty)}"></td>
+    <td class="r" data-l="수량"><input class="f num" type="number" inputmode="decimal" step="0.1" id="${id}-qty" data-bind="line:${pi}:${li}:qty" data-num value="${esc(l.qty)}"></td>
     <td data-l="단위">
-      <select class="f" id="${id}-unitsel" data-lineunit="${pi}:${li}" style="width:82px">
+      <select class="f" id="${id}-unitsel" data-lineunit="${pi}:${li}" >
         ${UNITS.map(u=>`<option value="${u}" ${!custom&&l.unit===u?'selected':''}>${u}</option>`).join('')}
         <option value="__custom" ${custom?'selected':''}>직접 입력</option>
       </select>
-      ${custom?`<input class="f" id="${id}-unit" data-bind="line:${pi}:${li}:unit" value="${esc(l.unit||'')}" placeholder="단위" style="width:72px;margin-top:4px">`:''}</td>
-    <td class="r" data-l="재료비 단가"><input class="f num w-n" type="number" inputmode="numeric" step="100" id="${id}-mprice" data-bind="line:${pi}:${li}:matPrice" data-num value="${esc(l.matPrice??0)}"></td>
+      ${custom?`<input class="f" id="${id}-unit" data-bind="line:${pi}:${li}:unit" value="${esc(l.unit||'')}" placeholder="단위" style="margin-top:4px">`:''}</td>
+    <td class="r" data-l="재료비 단가"><input class="f num" type="number" inputmode="numeric" step="100" id="${id}-mprice" data-bind="line:${pi}:${li}:matPrice" data-num value="${esc(l.matPrice??0)}"></td>
     <td class="cell-out" data-l="재료비 금액"><span id="o-${id}-mat"></span></td>
-    <td class="r" data-l="노무비 단가"><input class="f num w-n" type="number" inputmode="numeric" step="100" id="${id}-lprice" data-bind="line:${pi}:${li}:laborPrice" data-num value="${esc(l.laborPrice??0)}"></td>
+    <td class="r" data-l="노무비 단가"><input class="f num" type="number" inputmode="numeric" step="100" id="${id}-lprice" data-bind="line:${pi}:${li}:laborPrice" data-num value="${esc(l.laborPrice??0)}"></td>
     <td class="cell-out" data-l="노무비 금액"><span id="o-${id}-labor"></span></td>
     <td class="cell-out" data-l="합계"><b id="o-${id}-total"></b></td>
-    <td data-l="비고"><input class="f" id="${id}-memo" data-bind="line:${pi}:${li}:memo" value="${esc(l.memo||'')}" placeholder="비고" style="min-width:110px"></td>
+    <td data-l="비고"><input class="f" id="${id}-memo" data-bind="line:${pi}:${li}:memo" value="${esc(l.memo||'')}" placeholder="비고" ></td>
     <td class="c-act"><button class="btn ghost sm danger" data-act="delLine" data-pi="${pi}" data-li="${li}" aria-label="삭제">✕</button></td>
   </tr>`;
 }
@@ -813,10 +814,10 @@ function renderMat(){
           <td class="c-img"><button class="thumb-btn" data-act="matPhoto" data-id="${m.id}" aria-label="사진 바꾸기"><img class="thumb" src="${matImg(m)}" alt=""></button></td>
           <td class="c-name"><input class="f" id="m-${m.id}-name" data-bind="mat:${m.id}:name" value="${esc(m.name)}" placeholder="자재명" style="font-weight:500"><input class="f small" id="m-${m.id}-spec" data-bind="mat:${m.id}:spec" value="${esc(m.spec)}" placeholder="규격" style="margin-top:3px"></td>
           <td data-l="업체">${vendorCell(m)}</td>
-          <td data-l="공정"><select class="f" id="m-${m.id}-proc" data-bind="mat:${m.id}:process" style="width:110px">${PROCS.map(p=>`<option value="${p.k}" ${p.k===m.process?'selected':''}>${p.n}</option>`).join('')}</select></td>
+          <td data-l="공정"><select class="f" id="m-${m.id}-proc" data-bind="mat:${m.id}:process" >${PROCS.map(p=>`<option value="${p.k}" ${p.k===m.process?'selected':''}>${p.n}</option>`).join('')}</select></td>
           <td data-l="단위">${unitCell(m)}</td>
-          <td class="r" data-l="단가(원)"><input class="f num w-n" type="number" inputmode="numeric" step="100" id="m-${m.id}-price" data-bind="mat:${m.id}:unitPrice" data-num value="${esc(m.unitPrice)}"></td>
-          <td class="r" data-l="로스%"><input class="f num w-s" type="number" inputmode="decimal" id="m-${m.id}-loss" data-bind="mat:${m.id}:loss" data-num value="${esc(m.loss)}"></td>
+          <td class="r" data-l="단가(원)"><input class="f num" type="number" inputmode="numeric" step="100" id="m-${m.id}-price" data-bind="mat:${m.id}:unitPrice" data-num value="${esc(m.unitPrice)}"></td>
+          <td class="r" data-l="로스%"><input class="f num" type="number" inputmode="decimal" id="m-${m.id}-loss" data-bind="mat:${m.id}:loss" data-num value="${esc(m.loss)}"></td>
           <td class="cell-out" data-l="㎡당 원가"><span id="o-m-${m.id}">${perM2Html(matPerM2(m))}</span></td>
           <td data-l="메모" style="max-width:220px"><input class="f small" id="m-${m.id}-note" data-bind="mat:${m.id}:note" value="${esc(m.note||'')}" placeholder="메모 (예: 2025년 12월 기준)"></td>
           <td class="c-act"><button class="btn ghost sm danger" data-act="delMat" data-id="${m.id}" aria-label="삭제">✕ 삭제</button></td></tr>`).join('') || `<tr><td colspan="10" class="empty c-empty">자재가 없습니다. 단가표 사진을 올리거나 직접 추가하세요.</td></tr>`}</tbody>
@@ -845,11 +846,11 @@ function renderImport(){
       <tbody>${I.items.map((it,i)=>`<tr>
         <td class="c-img"><input type="checkbox" id="rv-${i}-on" data-bind="rev:${i}:on" ${it.on?'checked':''} aria-label="선택" style="width:20px;height:20px"></td>
         <td class="c-name"><input class="f" id="rv-${i}-name" data-bind="rev:${i}:name" value="${esc(it.name)}" style="font-weight:500"><input class="f small" id="rv-${i}-spec" data-bind="rev:${i}:spec" value="${esc(it.spec)}" style="margin-top:3px"></td>
-        <td data-l="업체"><input class="f" id="rv-${i}-vendor" data-bind="rev:${i}:vendor" value="${esc(it.vendor||'')}" placeholder="거래처" style="width:110px"></td>
-        <td data-l="공정"><select class="f" id="rv-${i}-proc" data-bind="rev:${i}:process" style="width:110px">${PROCS.map(p=>`<option value="${p.k}" ${p.k===it.process?'selected':''}>${p.n}</option>`).join('')}</select></td>
-        <td data-l="단위"><input class="f" id="rv-${i}-unit" data-bind="rev:${i}:unit" value="${esc(it.unit)}" style="width:56px"></td>
-        <td class="r" data-l="단가(원)"><input class="f num w-n" type="number" inputmode="numeric" id="rv-${i}-price" data-bind="rev:${i}:unitPrice" data-num value="${esc(it.unitPrice)}">${it.vatConverted?'<div><span class="badge">VAT 제외 환산</span></div>':''}</td>
-        <td class="r" data-l="로스%"><input class="f num w-s" type="number" inputmode="decimal" id="rv-${i}-loss" data-bind="rev:${i}:loss" data-num value="${esc(it.loss)}"></td>
+        <td data-l="업체"><input class="f" id="rv-${i}-vendor" data-bind="rev:${i}:vendor" value="${esc(it.vendor||'')}" placeholder="거래처" ></td>
+        <td data-l="공정"><select class="f" id="rv-${i}-proc" data-bind="rev:${i}:process" >${PROCS.map(p=>`<option value="${p.k}" ${p.k===it.process?'selected':''}>${p.n}</option>`).join('')}</select></td>
+        <td data-l="단위"><input class="f" id="rv-${i}-unit" data-bind="rev:${i}:unit" value="${esc(it.unit)}" ></td>
+        <td class="r" data-l="단가(원)"><input class="f num" type="number" inputmode="numeric" id="rv-${i}-price" data-bind="rev:${i}:unitPrice" data-num value="${esc(it.unitPrice)}">${it.vatConverted?'<div><span class="badge">VAT 제외 환산</span></div>':''}</td>
+        <td class="r" data-l="로스%"><input class="f num" type="number" inputmode="decimal" id="rv-${i}-loss" data-bind="rev:${i}:loss" data-num value="${esc(it.loss)}"></td>
         <td class="cell-out" data-l="㎡당 원가"><span id="o-rv-${i}">${perM2Html(matPerM2(it))}</span></td>
         <td class="small muted" data-l="근거" style="max-width:240px">${esc(it.note||'')}</td></tr>`).join('')}</tbody></table></div>
       <div class="panel-b row">
@@ -1090,7 +1091,7 @@ function docHTML(e){
     <div class="d-vatnote">${e.vat!==false?'부가세 포함':'부가세 별도'}</div>
 
     <h2 class="d-sec">공정별 금액</h2>
-    <table><thead><tr><th style="width:36px" class="c">No</th><th>공정</th><th>주요 자재</th><th class="r" style="width:90px">시공면적</th><th class="r" style="width:110px">금액(원)</th></tr></thead>
+    <table><thead><tr><th style="width:36px" class="c">No</th><th>공정</th><th>주요 자재</th><th class="r" style="width:90px">시공면적</th><th class="r" >금액(원)</th></tr></thead>
       <tbody>${procs.map(({p,pc,P},i)=>`<tr><td class="c">${i+1}</td><td><b>${P.n}</b></td><td>${esc((p.lines||[]).map(l=>l.name).filter(Boolean).join(', ')||'—')}</td><td class="r">${pc.area>0?r1(pc.area)+'㎡<br><span style="color:var(--d-mut);font-size:11px">'+Math.round(pc.area/PY)+'평</span>':'일식'}</td><td class="r">${won(pc.price)}</td></tr>`).join('')}</tbody>
       <tfoot>
         <tr><td colspan="4" class="r">소계</td><td class="r">${won(c.gross)}</td></tr>
@@ -1972,8 +1973,26 @@ async function applyPhoto(file){
 
 /* ---------- events ---------- */
 function setPath(obj,path,val){ const ks=path.split('.'); let o=obj; ks.slice(0,-1).forEach(k=>o=o[k]??=({})); o[ks.at(-1)]=val; }
+/* 아이폰 사파리처럼 field-sizing을 모르는 브라우저에서도 칸이 내용만큼 늘어나게 */
+const FIELD_SIZING = (()=>{ try{ return CSS.supports('field-sizing','content'); }catch{ return false; } })();
+let MEASURE=null;
+function autoSizeInput(el){
+  if(FIELD_SIZING || !(el instanceof HTMLInputElement)) return;
+  if(['checkbox','radio','date','file'].includes(el.type) || !el.closest('table.t')) return;
+  if(window.innerWidth<=760){ el.style.width=''; return; }
+  if(!MEASURE){ MEASURE=document.createElement('span');
+    MEASURE.style.cssText='position:absolute;visibility:hidden;white-space:pre;left:-9999px;top:0'; document.body.appendChild(MEASURE); }
+  const cs=getComputedStyle(el);
+  MEASURE.style.font=cs.font; MEASURE.style.letterSpacing=cs.letterSpacing;
+  MEASURE.textContent=el.value||el.placeholder||'';
+  const min = el.classList.contains('num') ? 96 : (/-(name|spec|memo|note)$/.test(el.id) ? 150 : 64);
+  el.style.width = Math.min(el.classList.contains('num')?220:680, Math.max(min, MEASURE.offsetWidth+26)) + 'px';
+}
+function autoSizeAll(){ if(FIELD_SIZING) return; document.querySelectorAll('table.t input.f').forEach(autoSizeInput); }
+window.addEventListener('resize',()=>{ clearTimeout(window.__asz); window.__asz=setTimeout(autoSizeAll,150); });
 document.addEventListener('input',ev=>{
   const t=ev.target;
+  autoSizeInput(t);
   if(t.type==='tel'){                       // 연락처는 적는 대로 - 를 넣어줍니다
     const before=t.value, pos=t.selectionStart??before.length, f=formatPhone(before);
     if(f!==before){
