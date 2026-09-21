@@ -267,6 +267,12 @@ details.co[open] summary{border-bottom:1px solid var(--line2)}
 .card-x:hover{background:var(--warn-weak);color:var(--bad)}
 @media (pointer:coarse){.card-x{padding:8px 10px;margin:-8px -8px -8px 0}}
 .card-t{font-size:16px;line-height:1.3}
+.hub-title{font-size:20px!important;font-weight:700;border-color:transparent!important;background:transparent!important;padding-left:0!important;padding-right:0!important}
+.hub-title:hover{border-color:var(--line)!important}
+.hub-title:focus{border-color:var(--focus)!important;background:var(--surface)!important;padding-left:8px!important}
+.hub-info summary{cursor:pointer;margin-top:6px;list-style:none}
+.hub-info summary::after{content:" ▾";color:var(--muted)}
+.hub-info[open] summary::after{content:" ▴"}
 .prog{height:6px;border-radius:3px;background:var(--line2);overflow:hidden}
 .prog span{display:block;height:100%;background:var(--accent);border-radius:3px}
 .tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px}

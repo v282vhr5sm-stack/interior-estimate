@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '2.0.0';
+const APP_VERSION = '2.1.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -881,8 +881,9 @@ function renderHome(){
         <div class="row" style="gap:6px"><span class="badge${p.status==='준공'?'':' warn'}">${esc(p.status||'준비')}</span>
           ${p.share?.on?'<span class="badge">공유중</span>':''}<span class="spacer"></span>
           <span class="muted small">${r?`${dstr(r.from).slice(5)}~${dstr(r.to).slice(5)}`:'일정 없음'}</span>
+          <button class="card-x" data-act="renameSite" data-id="${p.id}" title="현장 이름 고치기" aria-label="${esc(p.name||'현장')} 이름 고치기">✎</button>
           <button class="card-x" data-act="delSite" data-id="${p.id}" title="이 현장 삭제" aria-label="${esc(p.name||'현장')} 삭제">✕</button></div>
-        <b class="card-t">${esc(p.name||'(이름 없음)')}</b>
+        <b class="card-t">${p.name?esc(p.name):'<span class="muted">이름 없음 — 눌러서 지정</span>'}</b>
         <span class="muted small">${esc(p.client||'')}${p.address?' · '+esc(p.address):''}</span>
         <div class="prog"><span style="width:${prog}%"></span></div>
         <div class="row small muted" style="gap:10px">
@@ -915,8 +916,13 @@ function renderHub(p){
     <div class="row"><button class="btn ghost" data-act="homeBack">‹ 현장 목록</button><span class="spacer"></span>
       <span class="badge${p.status==='준공'?'':' warn'}">${esc(p.status||'준비')}</span></div>
     <section class="panel"><div class="panel-b">
-      <h2>${esc(p.name)}</h2>
-      <div class="muted small" style="margin-top:4px">${[p.client&&p.client+' 님',p.phone,p.address].filter(Boolean).map(esc).join(' · ')||'고객 정보 없음'}</div>
+      <input class="f hub-title" id="hub-name" data-bind="proj:name" value="${esc(p.name)}" placeholder="현장 이름을 입력하세요">
+      <details class="hub-info"${p.name?'':' open'}><summary class="muted small">${[p.client&&p.client+' 님',p.phone,p.address].filter(Boolean).map(esc).join(' · ')||'고객 정보 입력'}</summary>
+        <div class="client-grid" style="margin-top:10px">
+          <label class="fl">고객명<input class="f" id="hub-client" data-bind="proj:client" value="${esc(p.client||'')}" placeholder="홍길동"></label>
+          <label class="fl">연락처<input class="f" type="tel" id="hub-phone" data-bind="proj:phone" value="${esc(p.phone||'')}" placeholder="010-0000-0000"></label>
+          <label class="fl span2">현장 주소<input class="f" id="hub-addr" data-bind="proj:address" value="${esc(p.address||'')}"></label>
+        </div></details>
       <div class="prog" style="margin:12px 0 6px"><span style="width:${prog}%"></span></div>
       <div class="row small muted" style="gap:12px">
         <span>${r?`${dstr(r.from)} ~ ${dstr(r.to)}`:'일정 없음'}</span><span>진행 ${prog}%</span>
@@ -1630,6 +1636,8 @@ document.addEventListener('click',async ev=>{
     case 'view': VIEW=t.dataset.v; ls.set('view',VIEW);
       if(VIEW==='home'){ HOME_NEW=false; HOME_SEL=(S.curPid&&S.projects.has(S.curPid))?S.curPid:null; }   // 아래 “현장” 탭 = 지금 현장 메뉴
       render(); window.scrollTo(0,0); break;
+    case 'renameSite': { ev.stopPropagation(); HOME_SEL=t.dataset.id; S.curPid=t.dataset.id; ls.set('curPid',S.curPid); VIEW='home'; render();
+      setTimeout(()=>{ const el=document.getElementById('hub-name'); el?.focus(); el?.select(); },80); break; }
     case 'homeList': VIEW='home'; ls.set('view',VIEW); HOME_SEL=null; HOME_NEW=false; render(); window.scrollTo(0,0); break;  // 위 배너 = 전체 현장 목록
     case 'newEst': { const n=newEstimate(); S.estimates.set(n.id,n); setCur(n.id); saveEst(n); VIEW='est'; render(); break; }
     case 'dupEst': { const n=clone(e); n.id=uid(); n.title=e.title+' (복사)'; n.no=newEstimate().no; S.estimates.set(n.id,n); setCur(n.id); saveEst(n); render(); toast('복제했습니다'); break; }
