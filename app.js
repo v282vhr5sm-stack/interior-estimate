@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '2.6.0';
+const APP_VERSION = '2.6.1';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -1002,17 +1002,17 @@ function renderHub(p){
     </div></section>
 
     <div class="tiles">
+      ${e ? tile('openEst',`data-id="${e.id}"`,'🧾','견적서',`${esc(e.title||'제목 없음')} · ${won(calcEst(e).total)}원`)
+          : tile('newEstForSite','','🧾','견적서 만들기','이 현장의 견적을 새로 만듭니다')}
       ${tile('openSched','','📅','공정 일정','공정 추가·날짜 수정·사진 첨부',(p.tasks||[]).length||'')}
       ${p.share?.on&&p.share?.token
-        ? tile('copyShare','','🔗','고객 공유 링크','링크 복사 — 고객·작업자 보기 전용','열림')
-        : tile('startWork','','🔗','착공 · 공유 링크 열기','누르면 공유 주소가 만들어집니다')}
-      ${e ? tile('openEst',`data-id="${e.id}"`,'🧾','견적서',`${esc(e.title)} · ${won(calcEst(e).total)}원`)
-          : tile('newEstForSite','','🧾','견적서 만들기','이 현장의 견적을 새로 만듭니다')}
-      ${e ? tile('openDoc',`data-id="${e.id}"`,'📄','고객용 견적서','인쇄·PDF로 보내기') : ''}
+        ? tile('copyShare','','🔗','링크 열기','고객·작업자에게 보낼 주소 복사','열림')
+        : tile('startWork','','🔗','링크 열기','착공 처리하고 공유 주소를 만듭니다')}
       ${tile('openFiles','','🖼','사진 · 도면','공정별 사진과 도면 보기',(p.files||[]).length||'')}
-      ${tile('reportPdf','','📕','공사 보고서 PDF','일정·지시사항·사진 정리본')}
+      ${tile('reportPdf','','📕','공사 보고서','일정·지시사항·사진 정리본 PDF')}
       ${tile('archiveProj','','📦','자료 내려받기','ZIP으로 통째로 보관')}
-      ${p.status==='착공'?tile('endWork','','✅','준공 처리','공유 링크를 닫습니다'):''}
+      ${p.status==='착공'?tile('endWork','','✅','준공 처리','공유 링크를 닫습니다')
+        :p.status==='준공'?tile('startWork','','↺','다시 열기','A/S 등으로 공유를 다시 켭니다'):''}
     </div>
 
     ${imgs.length?`<section class="panel"><div class="panel-h"><h3>최근 사진</h3><span class="spacer"></span>
