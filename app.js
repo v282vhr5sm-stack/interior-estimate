@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '3.4.0';
+const APP_VERSION = '3.4.1';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -360,6 +360,16 @@ async function updatePill(){
 /* ---------- calculation ---------- */
 const UNITS = ['㎡','평','식','인','롤','박스','장','포','통','말','개','m','kg','대','매','세트'];
 const CUSTOM_UNIT = new Set();          // 직접 입력으로 열어둔 자재
+/* 업체 칸: 등록된 업체를 고르거나 직접 적습니다 */
+function vendorCell(m){
+  const custom = !m.vendorId;
+  return `<select class="f" id="m-${m.id}-vendorsel" data-matvendor="${m.id}" style="width:130px">
+      ${[...S.vendors.values()].sort((a,b)=>String(a.name).localeCompare(String(b.name),'ko'))
+        .map(v=>`<option value="${v.id}" ${m.vendorId===v.id?'selected':''}>${esc(v.name||'(이름 없음)')}</option>`).join('')}
+      <option value="__custom" ${custom?'selected':''}>직접 입력</option>
+    </select>
+    ${custom?`<input class="f" id="m-${m.id}-vendor" data-bind="mat:${m.id}:vendor" value="${esc(m.vendor||'')}" placeholder="업체명" style="width:120px;margin-top:4px">`:''}`;
+}
 function unitCell(m){
   const custom = CUSTOM_UNIT.has(m.id) || (m.unit && !UNITS.includes(m.unit));
   return `<select class="f" id="m-${m.id}-unitsel" data-unitsel="${m.id}" style="width:86px">
@@ -745,7 +755,10 @@ function renderMat(){
   const all=[...S.materials.values()];
   const counts={}; all.forEach(m=>counts[m.process]=(counts[m.process]||0)+1);
   const vendors=[...S.vendors.values()].sort((a,b)=>String(a.name).localeCompare(String(b.name),'ko'));
-  const list=all.filter(m=>(MAT_FILTER==='all'||m.process===MAT_FILTER)&&(VENDOR_FILTER==='all'||(VENDOR_FILTER==='__none'?!m.vendorId:m.vendorId===VENDOR_FILTER))).sort((a,b)=>PROCS.findIndex(p=>p.k===a.process)-PROCS.findIndex(p=>p.k===b.process)||String(a.name).localeCompare(b.name,'ko'));
+  const list=all.filter(m=>(MAT_FILTER==='all'||m.process===MAT_FILTER)&&(VENDOR_FILTER==='all'
+    ||(VENDOR_FILTER==='__none' ? (!m.vendorId&&!(m.vendor||'').trim())
+      : VENDOR_FILTER.startsWith('txt:') ? (!m.vendorId&&(m.vendor||'').trim()===VENDOR_FILTER.slice(4))
+      : m.vendorId===VENDOR_FILTER))).sort((a,b)=>PROCS.findIndex(p=>p.k===a.process)-PROCS.findIndex(p=>p.k===b.process)||String(a.name).localeCompare(b.name,'ko'));
   return `<div class="stack">
     <div><h2>자재 단가표</h2><p class="muted" style="margin:4px 0 0">거래명세서·단가표·카톡 캡처를 올리면 자재를 뽑아 1단위 시공면적과 ㎡당 원가까지 정리합니다.</p></div>
     ${renderImport()}
@@ -766,17 +779,16 @@ function renderMat(){
         <span class="small muted" style="align-self:center">업체</span>
         <button class="chip" data-act="vendorFilter" data-v="all" aria-pressed="${VENDOR_FILTER==='all'}">전체</button>
         ${vendors.map(v=>`<button class="chip" data-act="vendorFilter" data-v="${v.id}" aria-pressed="${VENDOR_FILTER===v.id}">${esc(v.name||'(이름 없음)')} ${all.filter(m=>m.vendorId===v.id).length}</button>`).join('')}
-        ${all.some(m=>!m.vendorId)?`<button class="chip" data-act="vendorFilter" data-v="__none" aria-pressed="${VENDOR_FILTER==='__none'}">업체 없음 ${all.filter(m=>!m.vendorId).length}</button>`:''}
+        ${[...new Set(all.filter(m=>!m.vendorId&&(m.vendor||'').trim()).map(m=>m.vendor.trim()))].sort((a,b)=>a.localeCompare(b,'ko'))
+          .map(nm=>`<button class="chip" data-act="vendorFilter" data-v="txt:${esc(nm)}" aria-pressed="${VENDOR_FILTER==='txt:'+nm}">${esc(nm)} ${all.filter(m=>!m.vendorId&&(m.vendor||'').trim()===nm).length}</button>`).join('')}
+        ${all.some(m=>!m.vendorId&&!(m.vendor||'').trim())?`<button class="chip" data-act="vendorFilter" data-v="__none" aria-pressed="${VENDOR_FILTER==='__none'}">업체 없음 ${all.filter(m=>!m.vendorId&&!(m.vendor||'').trim()).length}</button>`:''}
       </div>`:''}</div>
       <div class="tbl-wrap" style="margin-top:10px"><table class="t resp">
         <thead><tr><th class="w-img">사진</th><th class="w-name">자재 · 규격</th><th>업체</th><th>공정</th><th>단위</th><th class="r">단가(원)</th><th class="r">1단위 시공㎡</th><th class="r">로스%</th><th class="r">㎡당 원가</th><th>메모</th><th></th></tr></thead>
         <tbody>${list.map(m=>`<tr>
           <td class="c-img"><button class="thumb-btn" data-act="matPhoto" data-id="${m.id}" aria-label="사진 바꾸기"><img class="thumb" src="${matImg(m)}" alt=""></button></td>
           <td class="c-name"><input class="f" id="m-${m.id}-name" data-bind="mat:${m.id}:name" value="${esc(m.name)}" placeholder="자재명" style="font-weight:500"><input class="f small" id="m-${m.id}-spec" data-bind="mat:${m.id}:spec" value="${esc(m.spec)}" placeholder="규격" style="margin-top:3px"></td>
-          <td data-l="업체"><select class="f" id="m-${m.id}-vendor" data-matvendor="${m.id}" style="width:130px">
-            <option value="">업체 없음</option>
-            ${[...S.vendors.values()].sort((a,b)=>String(a.name).localeCompare(String(b.name),'ko')).map(v=>`<option value="${v.id}" ${m.vendorId===v.id?'selected':''}>${esc(v.name||'(이름 없음)')}</option>`).join('')}
-          </select></td>
+          <td data-l="업체">${vendorCell(m)}</td>
           <td data-l="공정"><select class="f" id="m-${m.id}-proc" data-bind="mat:${m.id}:process" style="width:110px">${PROCS.map(p=>`<option value="${p.k}" ${p.k===m.process?'selected':''}>${p.n}</option>`).join('')}</select></td>
           <td data-l="단위">${unitCell(m)}</td>
           <td class="r" data-l="단가(원)"><input class="f num w-n" type="number" inputmode="numeric" step="100" id="m-${m.id}-price" data-bind="mat:${m.id}:unitPrice" data-num value="${esc(m.unitPrice)}"></td>
@@ -2009,7 +2021,11 @@ function handleSelectChange(t){
   if(t.dataset.vendorpick!==undefined){ LINE_VENDOR[+t.dataset.vendorpick]=t.value; render(); return; }
   if(t.dataset.matvendor){                       // 자재의 업체 선택
     const m=S.materials.get(t.dataset.matvendor); if(!m) return;
-    m.vendorId=t.value||''; m.vendor=vendorName(t.value); m.updated=Date.now(); saveMat(m); render(); return;
+    if(t.value==='__custom'){ m.vendorId=''; }
+    else { m.vendorId=t.value; m.vendor=vendorName(t.value); }
+    m.updated=Date.now(); saveMat(m); render();
+    if(t.value==='__custom') setTimeout(()=>document.getElementById('m-'+m.id+'-vendor')?.focus(),60);
+    return;
   }
   if(t.dataset.procvendor!==undefined){          // 견적 공정의 업체 선택
     const e=cur(), p=e?.processes[+t.dataset.procvendor]; if(!p) return;
