@@ -2,10 +2,11 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '4.6.0';
+const APP_VERSION = '4.7.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
+  {k:'temp',n:'가설공사',pat:'scaffold'},
   {k:'demo',n:'철거',pat:'hatch'},{k:'plumb',n:'설비·방수',pat:'pipe'},{k:'elec',n:'전기·조명',pat:'wire'},
   {k:'carp',n:'목공',pat:'wood'},{k:'window',n:'창호·샷시',pat:'frame'},{k:'film',n:'필름',pat:'sheen'},
   {k:'paint',n:'도장',pat:'paint'},{k:'paper',n:'도배',pat:'paper'},{k:'tile',n:'타일',pat:'tile'},
@@ -130,7 +131,7 @@ const swCache = {};
 function rng(seed){ let s=seed>>>0||1; return ()=>((s=Math.imul(s^s>>>15,1|s)+0x6D2B79F5|0, ((s^s>>>14)>>>0)/4294967296)); }
 function hexA(h,a){ const n=parseInt(h.slice(1),16); return `rgba(${n>>16},${n>>8&255},${n&255},${a})`; }
 function shade(h,f){ const n=parseInt(h.slice(1),16); let r=n>>16,g=n>>8&255,b=n&255; const t=f<0?0:255,p=Math.abs(f); r=Math.round((t-r)*p+r);g=Math.round((t-g)*p+g);b=Math.round((t-b)*p+b); return '#'+((1<<24)+(r<<16)+(g<<8)+b).toString(16).slice(1); }
-const DEF_TONE = {hatch:'#9a9892',pipe:'#b87333',wire:'#2b2f33',wood:'#d8b98a',frame:'#8d9399',sheen:'#b89a78',paint:'#e9e5dc',paper:'#efece6',tile:'#e7e6e2',plank:'#b9885a',hex:'#dfe6e8',cabinet:'#e8e4dc',dots:'#cfd6d2'};
+const DEF_TONE = {scaffold:'#c9a961',hatch:'#9a9892',pipe:'#b87333',wire:'#2b2f33',wood:'#d8b98a',frame:'#8d9399',sheen:'#b89a78',paint:'#e9e5dc',paper:'#efece6',tile:'#e7e6e2',plank:'#b9885a',hex:'#dfe6e8',cabinet:'#e8e4dc',dots:'#cfd6d2'};
 function swatch(pat, tone){
   tone = /^#[0-9a-f]{6}$/i.test(tone||'') ? tone : DEF_TONE[pat] || '#cccccc';
   const key = pat+tone; if(swCache[key]) return swCache[key];
@@ -138,6 +139,16 @@ function swatch(pat, tone){
   g.fillStyle=tone; g.fillRect(0,0,W,H);
   const line=(x1,y1,x2,y2,col,w)=>{g.strokeStyle=col;g.lineWidth=w;g.beginPath();g.moveTo(x1,y1);g.lineTo(x2,y2);g.stroke();};
   switch(pat){
+    case 'scaffold': {
+      g.fillStyle='#e7e4dc'; g.fillRect(0,0,W,H);
+      g.strokeStyle=shade(tone,-.25); g.lineWidth=9; g.lineCap='round';
+      for(let x=36;x<W;x+=88){ g.beginPath(); g.moveTo(x,-10); g.lineTo(x,H+10); g.stroke(); }
+      for(let y=56;y<H;y+=76){ g.beginPath(); g.moveTo(-10,y); g.lineTo(W+10,y); g.stroke(); }
+      g.strokeStyle=hexA('#ffffff',.35); g.lineWidth=2;
+      for(let x=36;x<W;x+=88){ g.beginPath(); g.moveTo(x-3,-10); g.lineTo(x-3,H+10); g.stroke(); }
+      g.fillStyle=hexA(shade(tone,-.4),.5);
+      for(let y=56;y<H;y+=76) for(let x=36;x<W;x+=88) g.fillRect(x-6,y-6,12,12);
+      break; }
     case 'hatch':
       for(let x=-H;x<W;x+=16) line(x,H,x+H,0,hexA(shade(tone,-.35),.5),2);
       for(let i=0;i<14;i++){ g.fillStyle=shade(tone,(R()-.5)*.5); g.beginPath(); const x=R()*W,y=R()*H,s=8+R()*22; g.moveTo(x,y); for(let k=0;k<5;k++) g.lineTo(x+(R()-.5)*s*2,y+(R()-.5)*s*2); g.fill(); }
@@ -253,6 +264,7 @@ async function loadLocal(){
   if(!S.estimates.has(S.curId)) S.curId=[...S.estimates.values()].sort((a,b)=>(b.updated||0)-(a.updated||0))[0]?.id||null;
   migrateVendors();
   migrateLinesV2();
+  ensureTempProcess();
   S.curPid = ls.get('curPid');
   if(!S.projects.has(S.curPid)) S.curPid=[...S.projects.values()].sort((a,b)=>(b.updated||0)-(a.updated||0))[0]?.id||null;
 }
@@ -427,7 +439,7 @@ function newEstimate(){
   return {id:uid(),no:today().replace(/-/g,'')+'-'+String(n).padStart(2,'0'),title:'',
     client:{name:'',phone:'',address:'',size:''},date:today(),validDays:30,margin:20,discount:0,vat:true,
     showLinePrice:false,showImages:true,notes:'· 본 견적은 현장 실측 후 변동될 수 있습니다.\n· 계약금 10% / 중도금 40% / 잔금 50%\n· 공사 기간 중 추가 요청 사항은 별도 협의합니다.',
-    processes:[],updated:Date.now()};
+    processes:[{id:uid(),k:'temp',area:0,laborPerM2:0,laborLump:0,lines:[]}],updated:Date.now()};
 }
 /* 견적에 직접 적은 자재를 단가표에 저장하고, 단가표를 고치면 견적도 따라오게 합니다 */
 function syncLineToMaterial(e,p,l){
@@ -460,6 +472,17 @@ function syncMaterialToLines(m){
   return touched;
 }
 /* 예전 방식(면적·로스·1단위 시공㎡)으로 적어둔 줄을 수량 방식으로 옮깁니다. 금액은 그대로 유지됩니다. */
+/* 모든 견적의 첫 공정을 가설공사로 둡니다 */
+function ensureTempProcess(){
+  S.estimates.forEach(e=>{
+    if(e.tempAdded) return;
+    e.processes=e.processes||[];
+    const i=e.processes.findIndex(p=>p.k==='temp');
+    if(i<0) e.processes.unshift({id:uid(),k:'temp',area:0,laborPerM2:0,laborLump:0,lines:[]});
+    else if(i>0){ const [tp]=e.processes.splice(i,1); e.processes.unshift(tp); }
+    e.tempAdded=true; saveEst(e);
+  });
+}
 function migrateLinesV2(){
   S.estimates.forEach(e=>{
     if(e.v2) return;
