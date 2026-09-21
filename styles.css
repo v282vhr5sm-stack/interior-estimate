@@ -178,7 +178,16 @@ details.co[open] summary{border-bottom:1px solid var(--line2)}
 .g-row{display:grid;grid-template-columns:96px 1fr;gap:10px;align-items:center;font-size:12px}
 .g-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}
 .g-track{position:relative;height:14px;background:var(--line2);border-radius:7px}
-.g-bar{position:absolute;top:0;bottom:0;border-radius:7px;background:var(--accent-weak);border:1px solid var(--accent);min-width:8px}
+.g-bar{position:absolute;top:0;bottom:0;border-radius:7px;background:var(--accent-weak);border:1px solid var(--accent);min-width:8px;overflow:hidden}
+.g-bar b{position:absolute;left:6px;top:50%;transform:translateY(-50%);font-size:10px;font-weight:600;color:var(--ink);white-space:nowrap;opacity:0}
+.g-row.g-head{font-size:11px;color:var(--muted)}
+.g-axis{background:transparent;height:16px;border-bottom:1px solid var(--line)}
+.g-tick{position:absolute;top:0;transform:translateX(-50%);white-space:nowrap;padding-top:1px}
+.g-tick::before{content:"";position:absolute;left:50%;bottom:-5px;width:1px;height:4px;background:var(--line)}
+.g-tick.end{transform:translateX(-100%)}
+.g-tick.end::before{left:auto;right:0}
+.g-now{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--bad);border-radius:1px;z-index:1}
+.g-row.g-head .g-now{top:0;bottom:-4px}
 .g-bar.now{background:var(--accent)}
 .g-bar.done{background:var(--muted);border-color:var(--muted);opacity:.5}
 

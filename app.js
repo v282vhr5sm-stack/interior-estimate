@@ -239,7 +239,7 @@ async function pull(){
   if(changed){ if(!S.estimates.has(S.curId)) setCur([...S.estimates.values()].sort((a,b)=>(b.updated||0)-(a.updated||0))[0]?.id||null); safeRender(); }
 }
 async function updatePill(){
-  const el=$('#syncPill'); if(!el) return;
+  const el=$('#syncPill'); if(!el||window.__viewerMode) return;
   el.hidden=false;
   const n=await countDirty();
   let s,t;
@@ -959,16 +959,24 @@ function renderProject(p){
       </div>
     </section>`;
 }
-function ganttHTML(p,r){
+function ganttBars(tasks,r){
   if(!r) return '';
-  const span=Math.max(1,(r.to-r.from)/DAY+1);
-  return (p.tasks||[]).filter(t=>dnum(t.start)&&dnum(t.end)).map(t=>{
-    const s=(dnum(t.start)-r.from)/DAY, w=Math.max(1,(dnum(t.end)-dnum(t.start))/DAY+1);
-    const st=t.status||'예정';
-    return `<div class="g-row"><span class="g-name">${esc(t.name)}</span>
-      <span class="g-track"><span class="g-bar ${st==='완료'?'done':st==='진행'?'now':''}" style="left:${s/span*100}%;width:${w/span*100}%" title="${esc(t.start)} ~ ${esc(t.end)}"></span></span></div>`;
+  const span=Math.max(1,(r.to-r.from)/DAY+1), t0=dnum(today());
+  const md=ms=>{ const d=new Date(ms); return (d.getMonth()+1)+'/'+d.getDate(); };
+  const mark=(t0>=r.from&&t0<=r.to) ? `<span class="g-now" style="left:${(t0-r.from)/DAY/span*100}%"></span>` : '';
+  const step=Math.max(1,Math.round(span/6)), ticks=[];
+  for(let d=0; d<span-step*0.5; d+=step) ticks.push({p:d/span*100, l:md(r.from+d*DAY), last:false});
+  ticks.push({p:100, l:md(r.to), last:true});
+  const axis=`<div class="g-row g-head"><span class="g-name">날짜</span><span class="g-track g-axis">${
+    ticks.map(t=>`<span class="g-tick${t.last?' end':''}" style="left:${t.p}%">${t.l}</span>`).join('')}${mark}</span></div>`;
+  const rows=tasks.filter(t=>dnum(t.start)&&dnum(t.end)).map(t=>{
+    const s=(dnum(t.start)-r.from)/DAY, w=Math.max(1,(dnum(t.end)-dnum(t.start))/DAY+1), st=t.status||'예정';
+    return `<div class="g-row"><span class="g-name" title="${esc(t.name)}">${esc(t.name)}</span>
+      <span class="g-track">${mark}<span class="g-bar ${st==='완료'?'done':st==='진행'?'now':''}" style="left:${s/span*100}%;width:${w/span*100}%" title="${esc(t.start)} ~ ${esc(t.end)}"></span></span></div>`;
   }).join('');
+  return axis+rows;
 }
+function ganttHTML(p,r){ return ganttBars(p.tasks||[],r); }
 function renderMonth(){
   const [y,m]=MONTH.split('-').map(Number);
   const first=new Date(y,m-1,1), start=new Date(first); start.setDate(1-first.getDay());
@@ -1001,6 +1009,7 @@ function renderMonth(){
 
 /* 공유 링크로 열었을 때 보이는 화면 (로그인 없음, 수정 불가) */
 async function renderViewer(token){
+  window.__viewerMode=true;
   const app=$('#app'); $('#tabs').hidden=true; $('#syncPill').hidden=true;
   app.innerHTML=`<div class="empty"><span class="spin"></span> 불러오는 중</div>`;
   const {url,key}=sbConf();
@@ -1032,10 +1041,7 @@ async function renderViewer(token){
     </div></section>
 
     <section class="panel"><div class="panel-h"><h3>공정 일정</h3><span class="muted small">보기 전용입니다</span></div>
-      ${r?`<div class="gantt">${tasks.filter(t=>dnum(t.start)&&dnum(t.end)).map(t=>{
-        const st=(dnum(t.start)-r.from)/DAY, w=Math.max(1,(dnum(t.end)-dnum(t.start))/DAY+1);
-        return `<div class="g-row"><span class="g-name">${esc(t.name)}</span><span class="g-track"><span class="g-bar ${t.status==='완료'?'done':t.status==='진행'?'now':''}" style="left:${st/span*100}%;width:${w/span*100}%"></span></span></div>`;
-      }).join('')}</div>`:''}
+      ${r?`<div class="gantt">${ganttBars(tasks,r)}</div>`:''}
       <div class="tbl-wrap"><table class="t resp"><thead><tr><th>작업</th><th>기간</th><th>담당</th><th>상태</th>${payload.showMemo?'<th>안내</th>':''}</tr></thead>
         <tbody>${tasks.map(t=>{const s2=dnum(t.start),e2=dnum(t.end);
           const on=s2&&e2&&todayT>=s2&&todayT<=e2;
@@ -1288,7 +1294,7 @@ document.addEventListener('drop',ev=>{ const dz=ev.target.closest?.('#dz'); if(d
   const pdz=ev.target.closest?.('#pdz'); if(pdz){ ev.preventDefault(); pdz.classList.remove('drag'); uploadPlans(ev.dataTransfer.files,curProj()); } });
 document.addEventListener('dragover',ev=>{ const pdz=ev.target.closest?.('#pdz'); if(pdz){ ev.preventDefault(); pdz.classList.add('drag'); } });
 document.addEventListener('paste',ev=>{ if(VIEW!=='mat'||!ls.get('anthropic_key')) return; const fs=[...(ev.clipboardData?.files||[])]; if(fs.length){ ev.preventDefault(); setSheetFiles(fs); } });
-document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='hidden') flushWrites(); else { scheduleSync(200); checkUpdate(false); } });
+document.addEventListener('visibilitychange',()=>{ if(window.__viewerMode) return; if(document.visibilityState==='hidden') flushWrites(); else { scheduleSync(200); checkUpdate(false); } });
 window.addEventListener('pagehide',flushWrites);
 window.addEventListener('online',()=>scheduleSync(200));
 window.addEventListener('offline',updatePill);
