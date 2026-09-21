@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '1.8.0';
+const APP_VERSION = '1.9.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -164,21 +164,24 @@ const pending = new Map();
 function queueWrite(col,id,getData,ms=500){
   const key=col+'/'+id;
   clearTimeout(pending.get(key)?.t);
-  const fn=()=>{ pending.delete(key); writeRecord(col,id,getData()); };
+  const fn=()=>{ pending.delete(key); const d=getData(); if(d==null) return; writeRecord(col,id,d); };
   pending.set(key,{t:setTimeout(fn,ms),fn});
 }
 function flushWrites(){ [...pending.values()].forEach(p=>{ clearTimeout(p.t); p.fn(); }); }
+/* 삭제할 때 아직 저장 대기 중인 수정이 남아 있으면 지운 항목이 되살아납니다 */
+function cancelWrite(col,id){ const key=col+'/'+id, p=pending.get(key); if(p){ clearTimeout(p.t); pending.delete(key); } }
 async function writeRecord(col,id,data,deleted=false){
   await idb.put({key:col+'/'+id,col,id,data:deleted?null:data,updated:Date.now(),dirty:true,deleted});
   scheduleSync();
 }
-const saveMat = m => queueWrite('materials',m.id,()=>strip(S.materials.get(m.id)||m));
-const saveEst = e => { e.updated=Date.now(); queueWrite('estimates',e.id,()=>strip(S.estimates.get(e.id)||e)); };
+const saveMat = m => queueWrite('materials',m.id,()=>S.materials.has(m.id)?strip(S.materials.get(m.id)):null);
+const saveEst = e => { e.updated=Date.now(); queueWrite('estimates',e.id,()=>S.estimates.has(e.id)?strip(S.estimates.get(e.id)):null); };
 const saveCo = () => queueWrite('settings','company',()=>S.company);
-const saveProj = p => { p.updated=Date.now(); queueWrite('projects',p.id,()=>strip(S.projects.get(p.id)||p)); if(p.share?.on) schedulePublish(p.id); };
-function deleteMat(id){ S.materials.delete(id); writeRecord('materials',id,null,true); }
-function deleteEst(id){ S.estimates.delete(id); writeRecord('estimates',id,null,true); }
-function deleteProj(id){ const p=S.projects.get(id); if(p?.share?.token) unpublishShare(p.share.token); S.projects.delete(id); writeRecord('projects',id,null,true); }
+const saveProj = p => { p.updated=Date.now(); queueWrite('projects',p.id,()=>S.projects.has(p.id)?strip(S.projects.get(p.id)):null); if(p.share?.on) schedulePublish(p.id); };
+function deleteMat(id){ cancelWrite('materials',id); S.materials.delete(id); writeRecord('materials',id,null,true); }
+function deleteEst(id){ cancelWrite('estimates',id); S.estimates.delete(id); writeRecord('estimates',id,null,true); }
+function deleteProj(id){ const p=S.projects.get(id); if(p?.share?.token) unpublishShare(p.share.token);
+  cancelWrite('projects',id); S.projects.delete(id); writeRecord('projects',id,null,true); }
 
 /* ---------- cloud sync (Supabase) ---------- */
 const CFG = window.APP_CONFIG || {};
@@ -343,6 +346,10 @@ function safeRender(){
   if(a && a.closest?.('#app') && /INPUT|TEXTAREA|SELECT/.test(a.tagName)){ renderDeferred=true; return; }
   render();
 }
+document.addEventListener('keydown',ev=>{
+  const c=ev.target.closest?.('.card'); if(!c) return;
+  if(ev.key==='Enter'||ev.key===' '){ ev.preventDefault(); c.click(); }
+});
 /* 칸을 누르면 이미 있는 값이 통째로 선택돼, 지우지 않고 바로 덮어쓸 수 있습니다 */
 document.addEventListener('focusin',ev=>{
   const t=ev.target;
@@ -851,11 +858,12 @@ function renderHome(){
       const r=projRange(p), prog=projProgress(p), e=p.estimateId&&S.estimates.get(p.estimateId);
       const imgs=(p.files||[]).filter(f=>fileKind(f)==='img').length, docs=(p.files||[]).length-imgs;
       const next=(p.tasks||[]).filter(t=>dnum(t.end)>=dnum(today())).sort((a,b)=>String(a.start).localeCompare(String(b.start)))[0];
-      return `<button class="card" data-act="openSite" data-id="${p.id}">
+      return `<div class="card" role="button" tabindex="0" data-act="openSite" data-id="${p.id}">
         <div class="row" style="gap:6px"><span class="badge${p.status==='준공'?'':' warn'}">${esc(p.status||'준비')}</span>
           ${p.share?.on?'<span class="badge">공유중</span>':''}<span class="spacer"></span>
-          <span class="muted small">${r?`${dstr(r.from).slice(5)}~${dstr(r.to).slice(5)}`:'일정 없음'}</span></div>
-        <b class="card-t">${esc(p.name)}</b>
+          <span class="muted small">${r?`${dstr(r.from).slice(5)}~${dstr(r.to).slice(5)}`:'일정 없음'}</span>
+          <button class="card-x" data-act="delSite" data-id="${p.id}" title="이 현장 삭제" aria-label="${esc(p.name||'현장')} 삭제">✕</button></div>
+        <b class="card-t">${esc(p.name||'(이름 없음)')}</b>
         <span class="muted small">${esc(p.client||'')}${p.address?' · '+esc(p.address):''}</span>
         <div class="prog"><span style="width:${prog}%"></span></div>
         <div class="row small muted" style="gap:10px">
@@ -864,7 +872,7 @@ function renderHome(){
           ${e?`<span class="spacer"></span><span>견적 ${won(calcEst(e).total)}원</span>`:''}
         </div>
         ${next?`<span class="small" style="color:var(--accent)">다음: ${esc(next.name)} ${esc(next.start||'')}</span>`:''}
-      </button>`;}).join('')}</div>`
+      </div>`;}).join('')}</div>`
     :`<div class="panel"><div class="empty"><h3 style="margin-bottom:6px">아직 현장이 없습니다</h3>
       <p>현장을 만들면 일정, 사진, 공유 링크, 견적이 이 화면에 모입니다.</p></div></div>`}
 
@@ -1663,6 +1671,15 @@ document.addEventListener('click',async ev=>{
       saveProj(p); render(); toast('같은 작업을 뒤쪽 날짜로 하나 더 넣었습니다. 날짜를 고쳐주세요.'); break; }
     case 'sortTasks': { const p=curProj(); p.tasks.sort((a,b)=>String(a.start||'').localeCompare(String(b.start||''))); saveProj(p); render(); break; }
     case 'openSite': HOME_SEL=t.dataset.id; S.curPid=t.dataset.id; ls.set('curPid',S.curPid); render(); window.scrollTo(0,0); break;
+    case 'delSite': { ev.stopPropagation(); const p=S.projects.get(t.dataset.id); if(!p) break;
+      const n=(p.files||[]).length;
+      const msg=`“${p.name||'이름 없는 현장'}” 현장을 삭제할까요?\n\n· 일정 ${(p.tasks||[]).length}건${n?`, 사진·도면 ${n}개`:''}가 함께 지워집니다\n· 공유 링크도 닫힙니다\n· 되돌릴 수 없습니다\n\n자료를 남기려면 취소하고 현장 화면에서 “자료 내려받기”를 먼저 하세요.`;
+      if(!confirm(msg)) break;
+      if(n) try{ await sb?.storage.from('plans').remove(p.files.map(f=>f.path)); }catch(err){ console.warn(err); }
+      deleteProj(p.id);
+      if(S.curPid===p.id){ S.curPid=[...S.projects.keys()][0]||null; ls.set('curPid',S.curPid); }
+      if(HOME_SEL===p.id) HOME_SEL=null;
+      render(); toast('현장을 삭제했습니다'); break; }
     case 'homeBack': HOME_SEL=null; HOME_NEW=false; render(); break;
     case 'openSched': VIEW='sched'; SCHED_MODE='site'; ls.set('view',VIEW); render(); window.scrollTo(0,0); break;
     case 'openFiles': VIEW='sched'; SCHED_MODE='site'; ls.set('view',VIEW); render();
