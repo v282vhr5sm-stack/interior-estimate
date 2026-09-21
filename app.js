@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.6.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -298,9 +298,25 @@ function lineImg(l,k){ const m=l.mid&&S.materials.get(l.mid); return m?.image ||
 function matImg(m){ return m.image || swatch((PMAP[m.process]||PMAP.etc).pat, m.tone); }
 function matPerM2(m){ const c=num(m.coverage); return (m.mode!=='qty'&&c>0) ? num(m.unitPrice)/c*(1+num(m.loss)/100) : null; }
 const perM2Html = v => v==null ? '<span class="muted small">수량 기준</span>' : won(v)+'원';
+/* "84", "84㎡", "26평" 무엇을 넣어도 알아서 읽습니다. 평은 올림. */
+const ceilPy = m2 => Math.ceil(m2/PY);
+function parseArea(s){
+  const txt=String(s??''), v=parseFloat(txt.replace(/,/g,'').match(/-?[\d.]+/)?.[0]||'');
+  if(!isFinite(v)||v<=0) return {m2:0,py:0,typed:''};
+  const inPy=/평/.test(txt);
+  const m2 = inPy ? Math.round(v*PY*10)/10 : v;
+  return {m2, py:ceilPy(m2), typed:inPy?'평':'㎡'};
+}
+function areaHint(s){
+  if(/평/.test(String(s))&&/㎡|m2/i.test(String(s))) return '';   // 이미 둘 다 적혀 있으면 그대로 둡니다
+  const a=parseArea(s); if(!a.m2) return '';
+  return a.typed==='평' ? `= ${r1(a.m2)}㎡` : `= ${a.py}평`;
+}
+const sizeHint = areaHint;
 
 /* ---------- views ---------- */
-let VIEW=ls.get('view','est');
+let VIEW=ls.get('view','home');
+let HOME_SEL=null;
 let MAT_FILTER='all';
 let IMPORT={files:[],urls:[],busy:false,items:null,memo:'',err:''};
 let AUTH={mode:'login',busy:false,err:'',skipped:ls.get('skipLogin')==='1'};
@@ -310,9 +326,10 @@ function render(){
   const tabs=$('#tabs');
   if(needLogin()){ tabs.hidden=true; $('#app').innerHTML=renderAuth(); updatePill(); return; }
   tabs.hidden=false;
-  ['est','sched','mat','doc','set'].forEach(v=>$('#tab-'+v).setAttribute('aria-selected',String(v===VIEW)));
+  ['home','est','sched','mat','doc','set'].forEach(v=>$('#tab-'+v).setAttribute('aria-selected',String(v===VIEW)));
   const app=$('#app');
-  if(VIEW==='sched') app.innerHTML=renderSched();
+  if(VIEW==='home') app.innerHTML=renderHome();
+  else if(VIEW==='sched') app.innerHTML=renderSched();
   else if(VIEW==='mat') app.innerHTML=renderMat();
   else if(VIEW==='doc') app.innerHTML=renderDocView();
   else if(VIEW==='set') app.innerHTML=renderSettings();
@@ -363,7 +380,8 @@ function renderEst(){
         <label class="fl">고객명<input class="f" id="c-name" data-bind="est:client.name" value="${esc(e.client.name)}" placeholder="홍길동"></label>
         <label class="fl">연락처<input class="f" type="tel" id="c-phone" data-bind="est:client.phone" value="${esc(e.client.phone)}" placeholder="010-0000-0000"></label>
         <label class="fl span2">현장 주소<input class="f" id="c-addr" data-bind="est:client.address" value="${esc(e.client.address)}"></label>
-        <label class="fl">평형 / 전용면적<input class="f" id="c-size" data-bind="est:client.size" value="${esc(e.client.size)}" placeholder="32평 (84㎡)"></label>
+        <label class="fl">평형 / 전용면적<span class="unitf" style="width:100%"><input class="f" id="c-size" data-bind="est:client.size" value="${esc(e.client.size)}" placeholder="84 또는 32평">
+          <i id="o-size-conv">${sizeHint(e.client.size)}</i></span></label>
         <label class="fl">견적일<input class="f" type="date" id="c-date" data-bind="est:date" value="${esc(e.date)}"></label>
         <label class="fl">유효기간(일)<input class="f num" type="number" inputmode="numeric" id="c-valid" data-bind="est:validDays" data-num value="${esc(e.validDays)}"></label>
       </div></section>
@@ -403,7 +421,10 @@ function renderProc(e,p,pi){
     <div class="proc-h">
       <img class="sw" src="${procImg(p.k)}" alt="">
       <div><div class="proc-name">${P.n}</div>
-        <div class="proc-area small muted">시공면적 <input class="f num" type="number" inputmode="decimal" step="0.1" id="p${pi}-area" data-bind="proc:${pi}:area" data-num value="${esc(p.area)}"> ㎡ <span id="o-p${pi}-py"></span></div></div>
+        <div class="proc-area small muted">시공면적
+          <span class="unitf"><input class="f num" inputmode="decimal" id="p${pi}-area" data-area="${pi}" value="${esc(p.areaText ?? (p.area||''))}" placeholder="84 또는 26평">
+            <i id="o-p${pi}-unit">${areaHint(p.areaText ?? p.area)}</i></span>
+        </div></div>
       <div class="proc-sum"><div class="small muted">원가 소계 · <span id="o-p${pi}-m2"></span></div><b id="o-p${pi}-cost"></b></div>
       <button class="btn ghost sm danger" data-act="delProc" data-pi="${pi}" aria-label="${P.n} 공정 삭제">✕</button>
     </div>
@@ -457,7 +478,7 @@ function recalc(){
   setText('o-supply',won(c.supply)+'원'); setText('o-vat',won(c.vat)+'원'); setText('o-total',won(c.total)+'원');
   setText('o-profit',won(c.profit)+'원 ('+(c.supply>0?(c.profit/c.supply*100).toFixed(1):'0')+'%)');
   e.processes.forEach((p,pi)=>{ const pc=c.procs[pi];
-    setText(`o-p${pi}-py`, pc.area>0?`(${r1(pc.area/PY)}평)`:''); setText(`o-p${pi}-cost`,won(pc.cost)+'원');
+    setText(`o-p${pi}-cost`,won(pc.cost)+'원');
     setText(`o-p${pi}-m2`, pc.area>0?`㎡당 ${won(pc.perM2)}원`:'면적 미입력'); setText(`o-p${pi}-labor`,won(pc.labor)+'원');
     (p.lines||[]).forEach((l,li)=>{ const x=pc.lines[li], id=`p${pi}l${li}`;
       setText(`o-${id}-qty`, r1(x.qty)); setText(`o-${id}-cost`, won(x.cost)); setText(`o-${id}-m2`, x.perM2?won(x.perM2):'—'); });
@@ -708,7 +729,7 @@ function docHTML(e){
         <div class="d-name">${esc(e.client.name||'고객')} 귀하</div>
         <dl class="d-kv">
           ${e.client.address?`<dt>현장</dt><dd>${esc(e.client.address)}</dd>`:''}
-          ${e.client.size?`<dt>면적</dt><dd>${esc(e.client.size)}</dd>`:''}
+          ${e.client.size?`<dt>면적</dt><dd>${esc(e.client.size)}${sizeHint(e.client.size)?' ('+sizeHint(e.client.size).replace('= ','')+')':''}</dd>`:''}
           ${e.client.phone?`<dt>연락처</dt><dd>${esc(e.client.phone)}</dd>`:''}
           <dt>공사명</dt><dd>${esc(e.title)}</dd>
           <dt>유효기간</dt><dd>${exp}까지</dd>
@@ -731,7 +752,7 @@ function docHTML(e){
 
     <h2 class="d-sec">공정별 금액</h2>
     <table><thead><tr><th style="width:36px" class="c">No</th><th>공정</th><th>주요 자재</th><th class="r" style="width:90px">시공면적</th><th class="r" style="width:110px">금액(원)</th></tr></thead>
-      <tbody>${procs.map(({p,pc,P},i)=>`<tr><td class="c">${i+1}</td><td><b>${P.n}</b></td><td>${esc((p.lines||[]).map(l=>l.name).filter(Boolean).join(', ')||'—')}</td><td class="r">${pc.area>0?r1(pc.area)+'㎡':'일식'}</td><td class="r">${won(pc.price)}</td></tr>`).join('')}</tbody>
+      <tbody>${procs.map(({p,pc,P},i)=>`<tr><td class="c">${i+1}</td><td><b>${P.n}</b></td><td>${esc((p.lines||[]).map(l=>l.name).filter(Boolean).join(', ')||'—')}</td><td class="r">${pc.area>0?r1(pc.area)+'㎡<br><span style="color:var(--d-mut);font-size:11px">'+r1(pc.area/PY)+'평</span>':'일식'}</td><td class="r">${won(pc.price)}</td></tr>`).join('')}</tbody>
       <tfoot>
         <tr><td colspan="4" class="r">소계</td><td class="r">${won(c.gross)}</td></tr>
         ${num(e.discount)>0?`<tr><td colspan="4" class="r">할인</td><td class="r">−${won(e.discount)}</td></tr>`:''}
@@ -785,6 +806,88 @@ async function downloadDoc(){
 <style>body{margin:0;background:#e9ebe9;padding:24px 0;overflow-x:auto}@media print{body{background:#fff;padding:0}#doc{box-shadow:none!important;padding:0!important}}@page{size:A4;margin:12mm}${DOC_CSS}</style></head><body>${docHTML(e)}</body></html>`;
   const fname=`견적서_${(e.client.name||'고객').replace(/[\\/:*?"<>|]/g,'')}_${e.no}.html`;
   await shareOrDownload(fname,new Blob([html],{type:'text/html'}));
+}
+
+/* ---------- 첫 화면: 현장 목록 · 현장 홈 ---------- */
+function renderHome(){
+  const projs=[...S.projects.values()].sort((a,b)=>(b.updated||0)-(a.updated||0));
+  if(HOME_SEL && S.projects.has(HOME_SEL)) return renderHub(S.projects.get(HOME_SEL));
+  const loose=[...S.estimates.values()].filter(e=>!projs.some(p=>p.estimateId===e.id));
+  return `<div class="stack">
+    <div class="row"><h2 style="flex:1">현장</h2>
+      <button class="btn pri" data-act="newProj">+ 새 현장</button>
+      ${!projs.length&&!loose.length?`<button class="btn" data-act="seed">예시 데이터</button>`:''}</div>
+    ${projs.length?`<div class="cards">${projs.map(p=>{
+      const r=projRange(p), prog=projProgress(p), e=p.estimateId&&S.estimates.get(p.estimateId);
+      const imgs=(p.files||[]).filter(f=>fileKind(f)==='img').length, docs=(p.files||[]).length-imgs;
+      const next=(p.tasks||[]).filter(t=>dnum(t.end)>=dnum(today())).sort((a,b)=>String(a.start).localeCompare(String(b.start)))[0];
+      return `<button class="card" data-act="openSite" data-id="${p.id}">
+        <div class="row" style="gap:6px"><span class="badge${p.status==='준공'?'':' warn'}">${esc(p.status||'준비')}</span>
+          ${p.share?.on?'<span class="badge">공유중</span>':''}<span class="spacer"></span>
+          <span class="muted small">${r?`${dstr(r.from).slice(5)}~${dstr(r.to).slice(5)}`:'일정 없음'}</span></div>
+        <b class="card-t">${esc(p.name)}</b>
+        <span class="muted small">${esc(p.client||'')}${p.address?' · '+esc(p.address):''}</span>
+        <div class="prog"><span style="width:${prog}%"></span></div>
+        <div class="row small muted" style="gap:10px">
+          <span>진행 ${prog}%</span><span>공정 ${(p.tasks||[]).length}</span>
+          <span>사진 ${imgs}</span>${docs?`<span>도면 ${docs}</span>`:''}
+          ${e?`<span class="spacer"></span><span>견적 ${won(calcEst(e).total)}원</span>`:''}
+        </div>
+        ${next?`<span class="small" style="color:var(--accent)">다음: ${esc(next.name)} ${esc(next.start||'')}</span>`:''}
+      </button>`;}).join('')}</div>`
+    :`<div class="panel"><div class="empty"><h3 style="margin-bottom:6px">아직 현장이 없습니다</h3>
+      <p>현장을 만들면 일정, 사진, 공유 링크, 견적이 이 화면에 모입니다.</p></div></div>`}
+
+    ${loose.length?`<section class="panel">
+      <div class="panel-h"><h3>현장에 연결되지 않은 견적 ${loose.length}</h3></div>
+      <div class="panel-b" style="display:flex;flex-direction:column;gap:8px">
+        ${loose.map(e=>`<div class="row" style="gap:10px;border:1px solid var(--line2);border-radius:8px;padding:8px 10px">
+          <div style="flex:1;min-width:0"><b>${esc(e.title)}</b><div class="muted small">${esc(e.client?.name||'')} · ${won(calcEst(e).total)}원</div></div>
+          <button class="btn sm" data-act="openEst" data-id="${e.id}">견적 열기</button>
+          <button class="btn sm pri" data-act="projFromEstId" data-id="${e.id}">현장 만들기</button>
+        </div>`).join('')}
+      </div></section>`:''}
+  </div>`;
+}
+function renderHub(p){
+  const r=projRange(p), prog=projProgress(p), e=p.estimateId&&S.estimates.get(p.estimateId);
+  const imgs=(p.files||[]).filter(f=>fileKind(f)==='img');
+  const tile=(act,extra,icon,title,desc,badge)=>`<button class="tile" data-act="${act}" ${extra||''}>
+    <span class="tile-i">${icon}</span><b>${title}${badge?` <span class="badge">${badge}</span>`:''}</b><span class="muted small">${desc}</span></button>`;
+  return `<div class="stack">
+    <div class="row"><button class="btn ghost" data-act="homeBack">‹ 현장 목록</button><span class="spacer"></span>
+      <span class="badge${p.status==='준공'?'':' warn'}">${esc(p.status||'준비')}</span></div>
+    <section class="panel"><div class="panel-b">
+      <h2>${esc(p.name)}</h2>
+      <div class="muted small" style="margin-top:4px">${[p.client&&p.client+' 님',p.phone,p.address].filter(Boolean).map(esc).join(' · ')||'고객 정보 없음'}</div>
+      <div class="prog" style="margin:12px 0 6px"><span style="width:${prog}%"></span></div>
+      <div class="row small muted" style="gap:12px">
+        <span>${r?`${dstr(r.from)} ~ ${dstr(r.to)}`:'일정 없음'}</span><span>진행 ${prog}%</span>
+        ${p.startedAt?`<span>착공 ${esc(p.startedAt)}</span>`:''}${p.endedAt?`<span>준공 ${esc(p.endedAt)}</span>`:''}
+      </div>
+    </div></section>
+
+    <div class="tiles">
+      ${tile('openSched','','📅','공정 일정','공정 추가·날짜 수정·사진 첨부',(p.tasks||[]).length||'')}
+      ${p.share?.on&&p.share?.token
+        ? tile('copyShare','','🔗','고객 공유 링크','링크 복사 — 고객·작업자 보기 전용','열림')
+        : tile('startWork','','🔗','착공 · 공유 링크 열기','누르면 공유 주소가 만들어집니다')}
+      ${e ? tile('openEst',`data-id="${e.id}"`,'🧾','견적서',`${esc(e.title)} · ${won(calcEst(e).total)}원`)
+          : tile('newEstForSite','','🧾','견적서 만들기','이 현장의 견적을 새로 만듭니다')}
+      ${e ? tile('openDoc',`data-id="${e.id}"`,'📄','고객용 견적서','인쇄·PDF로 보내기') : ''}
+      ${tile('openFiles','','🖼','사진 · 도면','공정별 사진과 도면 보기',(p.files||[]).length||'')}
+      ${tile('reportPdf','','📕','공사 보고서 PDF','일정·지시사항·사진 정리본')}
+      ${tile('archiveProj','','📦','자료 내려받기','ZIP으로 통째로 보관')}
+      ${p.status==='착공'?tile('endWork','','✅','준공 처리','공유 링크를 닫습니다'):''}
+    </div>
+
+    ${imgs.length?`<section class="panel"><div class="panel-h"><h3>최근 사진</h3><span class="spacer"></span>
+      <button class="btn sm" data-act="openFiles">모두 보기</button></div>
+      <div class="panel-b"><div class="files">${imgs.slice(-6).reverse().map(f=>`<figure class="file">
+        <a href="${esc(f.url)}" target="_blank" rel="noopener"><img src="${esc(f.url)}" alt="" loading="lazy"></a>
+        <figcaption>${f.memo?`<b>${esc(f.memo)}</b>`:`<span class="muted small">${esc(f.name)}</span>`}</figcaption></figure>`).join('')}</div></div>
+    </section>`:''}
+  </div>`;
 }
 
 /* ---------- 현장 일정 · 공유 · 도면 ---------- */
@@ -1387,12 +1490,21 @@ async function applyPhoto(file){
 /* ---------- events ---------- */
 function setPath(obj,path,val){ const ks=path.split('.'); let o=obj; ks.slice(0,-1).forEach(k=>o=o[k]??=({})); o[ks.at(-1)]=val; }
 document.addEventListener('input',ev=>{
-  const t=ev.target, b=t.dataset?.bind; if(!b) return;
+  const t=ev.target;
+  if(t.dataset?.area!==undefined){          // 한 칸에서 ㎡·평 둘 다 입력 (평은 올림 표시)
+    const pi=+t.dataset.area, e=cur(), p=e?.processes[pi]; if(!p) return;
+    const a=parseArea(t.value);
+    p.areaText=t.value; p.area=a.m2; saveEst(e);
+    const hint=document.getElementById(`o-p${pi}-unit`); if(hint) hint.textContent=areaHint(t.value);
+    recalc(); return;
+  }
+  const b=t.dataset?.bind; if(!b) return;
   let val = t.type==='checkbox' ? t.checked : t.value;
   if('num' in t.dataset) val=num(val);
   if('numEmpty' in t.dataset) val = t.value===''?'':num(t.value);
   const [kind,...rest]=b.split(':');
   if(kind==='est'){ const e=cur(); setPath(e,rest[0],val); saveEst(e);
+    if(rest[0]==='client.size'){ const el=document.getElementById('o-size-conv'); if(el) el.textContent=sizeHint(val); }
     if(VIEW==='doc') refreshDoc(); else { recalc(); if(rest[0]==='title'){ const o=document.querySelector(`#estSel option[value="${e.id}"]`); if(o) o.textContent=`${e.title} · ${e.client.name||''}`; } } }
   else if(kind==='proc'){ const e=cur(); e.processes[+rest[0]][rest[1]]=val; saveEst(e); recalc(); }
   else if(kind==='line'){ const e=cur(); e.processes[+rest[0]].lines[+rest[1]][rest[2]]=val; saveEst(e); recalc(); }
@@ -1476,7 +1588,9 @@ document.addEventListener('click',async ev=>{
     case 'checkUpdate': checkUpdate(true); break;
     case 'applyUpdate': applyUpdate(); break;
     case 'schedMode': SCHED_MODE=t.dataset.m; ls.set('schedMode',SCHED_MODE); render(); break;
-    case 'newProj': { const n=newProject(); S.projects.set(n.id,n); S.curPid=n.id; ls.set('curPid',n.id); saveProj(n); SCHED_MODE='site'; render(); break; }
+    case 'newProj': { const n=newProject(); S.projects.set(n.id,n); S.curPid=n.id; ls.set('curPid',n.id); saveProj(n); SCHED_MODE='site';
+      if(VIEW==='home'){ HOME_SEL=null; VIEW='sched'; ls.set('view',VIEW); }
+      render(); setTimeout(()=>document.getElementById('pj-name')?.select(),80); break; }
     case 'projFromEst': { const n=newProject(e); e.processes.forEach((pr,i)=>{ const P=PMAP[pr.k]||PMAP.etc; const st=addDays(today(),i*2);
         n.tasks.push({id:uid(),proc:pr.k,name:P.n,start:st,end:addDays(st,1),worker:'',status:'예정',memo:''}); });
       S.projects.set(n.id,n); S.curPid=n.id; ls.set('curPid',n.id); saveProj(n); VIEW='sched'; SCHED_MODE='site'; ls.set('view',VIEW); render(); toast('견적의 공정으로 일정을 만들었습니다. 날짜를 고쳐주세요.'); break; }
@@ -1499,6 +1613,21 @@ document.addEventListener('click',async ev=>{
       p.tasks.push({...src,id:uid(),name:src.name.replace(/ \d+차$/,'')+` ${same+1}차`,start:st,end:addDays(st,len),status:'예정'});
       saveProj(p); render(); toast('같은 작업을 뒤쪽 날짜로 하나 더 넣었습니다. 날짜를 고쳐주세요.'); break; }
     case 'sortTasks': { const p=curProj(); p.tasks.sort((a,b)=>String(a.start||'').localeCompare(String(b.start||''))); saveProj(p); render(); break; }
+    case 'openSite': HOME_SEL=t.dataset.id; S.curPid=t.dataset.id; ls.set('curPid',S.curPid); render(); window.scrollTo(0,0); break;
+    case 'homeBack': HOME_SEL=null; render(); break;
+    case 'openSched': VIEW='sched'; SCHED_MODE='site'; ls.set('view',VIEW); render(); window.scrollTo(0,0); break;
+    case 'openFiles': VIEW='sched'; SCHED_MODE='site'; ls.set('view',VIEW); render();
+      setTimeout(()=>document.querySelector('.files')?.scrollIntoView({block:'center',behavior:'smooth'})||document.getElementById('pdz')?.scrollIntoView({block:'center'}),80); break;
+    case 'openEst': if(t.dataset.id){ setCur(t.dataset.id); } VIEW='est'; ls.set('view',VIEW); render(); window.scrollTo(0,0); break;
+    case 'openDoc': if(t.dataset.id){ setCur(t.dataset.id); } VIEW='doc'; ls.set('view',VIEW); render(); window.scrollTo(0,0); break;
+    case 'newEstForSite': { const p=curProj(); const n=newEstimate();
+      n.title=p.name; n.client={name:p.client||'',phone:p.phone||'',address:p.address||'',size:''};
+      S.estimates.set(n.id,n); setCur(n.id); saveEst(n); p.estimateId=n.id; saveProj(p);
+      VIEW='est'; ls.set('view',VIEW); render(); toast('이 현장의 견적을 만들었습니다'); break; }
+    case 'projFromEstId': { const src=S.estimates.get(t.dataset.id); if(!src) break;
+      const n=newProject(src); src.processes.forEach((pr,i)=>{ const P=PMAP[pr.k]||PMAP.etc; const st=addDays(today(),i*2);
+        n.tasks.push({id:uid(),proc:pr.k,name:P.n,start:st,end:addDays(st,1),worker:'',status:'예정',memo:''}); });
+      S.projects.set(n.id,n); S.curPid=n.id; ls.set('curPid',n.id); saveProj(n); HOME_SEL=n.id; render(); toast('견적의 공정으로 현장을 만들었습니다'); break; }
     case 'startWork': startWork(curProj()); break;
     case 'endWork': endWork(curProj()); break;
     case 'reportPdf': reportPdf(curProj()); break;
