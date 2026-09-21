@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '3.3.0';
+const APP_VERSION = '3.4.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -1789,23 +1789,75 @@ function loadScript(src){ return new Promise((res,rej)=>{ const s=document.creat
 function renderVendors(){
   const list=[...S.vendors.values()].sort((a,b)=>String(a.name).localeCompare(String(b.name),'ko'));
   const cnt=v=>[...S.materials.values()].filter(m=>m.vendorId===v.id).length;
+  const doc=(v,field,label)=>{
+    const f=v[field];
+    return `<div class="vdoc">
+      <span class="small muted">${label}</span>
+      ${f?.url?`<figure class="file" style="margin:0"><a href="${esc(f.url)}" target="_blank" rel="noopener"><img src="${esc(f.url)}" alt="${label}" loading="lazy"></a>
+        <figcaption><button class="btn ghost sm" data-act="vendorDoc" data-id="${v.id}" data-f="${field}">바꾸기</button>
+        <button class="btn ghost sm danger" data-act="vendorDocDel" data-id="${v.id}" data-f="${field}">삭제</button></figcaption></figure>`
+      :`<button class="btn sm" data-act="vendorDoc" data-id="${v.id}" data-f="${field}">📷 사진 넣기</button>`}
+    </div>`;
+  };
   return `<div class="stack">
     <div class="row"><h2 style="flex:1">업체</h2><button class="btn pri" data-act="addVendor">+ 업체 추가</button></div>
     <p class="muted small" style="margin:0">여기 등록한 업체를 자재와 견적에서 골라 씁니다. 공정을 지정하면 그 공정에서 먼저 보입니다.</p>
-    <section class="panel"><div class="tbl-wrap"><table class="t resp">
-      <thead><tr><th class="w-name">업체명</th><th>공정</th><th>연락처</th><th>메모</th><th class="r">자재</th><th></th></tr></thead>
-      <tbody>${list.map(v=>`<tr>
-        <td class="c-name"><input class="f" id="v-${v.id}-name" data-bind="vendor:${v.id}:name" value="${esc(v.name)}" placeholder="업체명" style="font-weight:500"></td>
-        <td data-l="공정"><select class="f" id="v-${v.id}-proc" data-bind="vendor:${v.id}:process" style="width:120px">
+    ${list.length?list.map(v=>`<section class="panel">
+      <div class="panel-h">
+        <input class="f" id="v-${v.id}-name" data-bind="vendor:${v.id}:name" value="${esc(v.name)}" placeholder="업체명" style="flex:1;min-width:160px;font-weight:700;font-size:16px">
+        <select class="f" id="v-${v.id}-proc" data-bind="vendor:${v.id}:process" style="width:120px">
           <option value="all" ${!v.process||v.process==='all'?'selected':''}>전체 공정</option>
-          ${PROCS.map(p=>`<option value="${p.k}" ${v.process===p.k?'selected':''}>${p.n}</option>`).join('')}</select></td>
-        <td data-l="연락처"><input class="f" type="tel" id="v-${v.id}-phone" data-bind="vendor:${v.id}:phone" value="${esc(v.phone||'')}" placeholder="010-0000-0000"></td>
-        <td data-l="메모"><input class="f" id="v-${v.id}-memo" data-bind="vendor:${v.id}:memo" value="${esc(v.memo||'')}" placeholder="결제 조건, 담당자 등"></td>
-        <td class="cell-out" data-l="자재"><button class="btn ghost sm" data-act="vendorMats" data-id="${v.id}">${cnt(v)}개 보기</button></td>
-        <td class="c-act"><button class="btn ghost sm danger" data-act="delVendor" data-id="${v.id}">✕ 삭제</button></td></tr>`).join('')
-        || `<tr><td colspan="6" class="empty c-empty">아직 등록한 업체가 없습니다. “+ 업체 추가”를 눌러주세요.</td></tr>`}</tbody>
-    </table></div></section>
+          ${PROCS.map(p=>`<option value="${p.k}" ${v.process===p.k?'selected':''}>${p.n}</option>`).join('')}</select>
+        <button class="btn ghost sm" data-act="vendorMats" data-id="${v.id}">자재 ${cnt(v)}개</button>
+        <button class="btn ghost sm danger" data-act="delVendor" data-id="${v.id}">✕ 삭제</button>
+      </div>
+      <div class="panel-b" style="display:flex;flex-direction:column;gap:14px">
+        <div>
+          <div class="eyebrow">연락처</div>
+          <div class="client-grid" style="margin-top:6px">
+            <label class="fl">휴대폰<input class="f" type="tel" id="v-${v.id}-mobile" data-bind="vendor:${v.id}:mobile" value="${esc(v.mobile||v.phone||'')}" placeholder="010-0000-0000"></label>
+            <label class="fl">전화<input class="f" type="tel" id="v-${v.id}-tel" data-bind="vendor:${v.id}:tel" value="${esc(v.tel||'')}" placeholder="02-000-0000"></label>
+            <label class="fl">팩스<input class="f" type="tel" id="v-${v.id}-fax" data-bind="vendor:${v.id}:fax" value="${esc(v.fax||'')}" placeholder="02-000-0000"></label>
+          </div>
+        </div>
+        <div>
+          <div class="eyebrow">결제</div>
+          <div class="client-grid" style="margin-top:6px">
+            <label class="fl">은행<input class="f" id="v-${v.id}-bankName" data-bind="vendor:${v.id}:bankName" value="${esc(v.bankName||'')}" placeholder="국민은행"></label>
+            <label class="fl">계좌번호<input class="f" id="v-${v.id}-bankNo" data-bind="vendor:${v.id}:bankNo" value="${esc(v.bankNo||'')}" placeholder="000000-00-000000"></label>
+            <label class="fl">예금주<input class="f" id="v-${v.id}-bankHolder" data-bind="vendor:${v.id}:bankHolder" value="${esc(v.bankHolder||'')}" placeholder="홍길동"></label>
+          </div>
+        </div>
+        <div>
+          <div class="eyebrow">서류 사진</div>
+          <div class="vdocs">${doc(v,'bizDoc','사업자등록증')}${doc(v,'bankDoc','통장 사본')}</div>
+        </div>
+        <label class="fl">메모<input class="f" id="v-${v.id}-memo" data-bind="vendor:${v.id}:memo" value="${esc(v.memo||'')}" placeholder="결제 조건, 담당자 등"></label>
+      </div>
+    </section>`).join('')
+    :`<div class="panel"><div class="empty">아직 등록한 업체가 없습니다. “+ 업체 추가”를 눌러주세요.</div></div>`}
   </div>`;
+}
+
+/* 업체 서류 사진: 저장소에 올리고 주소만 기록합니다 */
+let VENDOR_DOC=null;
+async function uploadVendorDoc(file,v,field){
+  if(!sb||!session){ toast('로그인한 상태에서만 사진을 올릴 수 있습니다.'); return; }
+  try{
+    const img=await loadImage(file);
+    const max=1800, s=Math.min(1,max/Math.max(img.width,img.height));
+    const c=document.createElement('canvas'); c.width=Math.round(img.width*s); c.height=Math.round(img.height*s);
+    c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+    const blob=await new Promise(r=>c.toBlob(r,'image/jpeg',.85));
+    const path=`${session.user.id}/vendors/${uid()}.jpg`;
+    const {error}=await sb.storage.from('plans').upload(path,blob,{contentType:'image/jpeg'});
+    if(error) throw error;
+    const {data}=sb.storage.from('plans').getPublicUrl(path);
+    const old=v[field];
+    v[field]={url:data.publicUrl,path,at:Date.now()};
+    saveVendor(v); render(); toast('사진을 넣었습니다');
+    if(old?.path) try{ await sb.storage.from('plans').remove([old.path]); }catch{}
+  }catch(e){ toast('사진을 올리지 못했습니다: '+(e.message||e)); }
 }
 
 /* ---------- settings ---------- */
@@ -2033,7 +2085,12 @@ document.addEventListener('click',async ev=>{
     case 'revSaveAdd': saveReviewed(true); break;
     case 'revCancel': IMPORT={files:[],urls:[],busy:false,items:null,memo:'',err:''}; render(); break;
     case 'matFilter': MAT_FILTER=t.dataset.k; render(); break;
-    case 'addVendor': { const v={id:uid(),name:'',process:'all',phone:'',memo:'',updated:Date.now()};
+    case 'vendorDoc': VENDOR_DOC={id:t.dataset.id,field:t.dataset.f}; $('#filePhoto').click(); break;
+    case 'vendorDocDel': { const v=S.vendors.get(t.dataset.id); const f=v?.[t.dataset.f]; if(!v||!f) break;
+      if(await askConfirm({title:'이 사진을 지울까요?',lines:['업체 정보는 그대로 남습니다'],ok:'네, 지웁니다',cancel:'아니요'})){
+        try{ await sb?.storage.from('plans').remove([f.path]); }catch(err){ console.warn(err); }
+        v[t.dataset.f]=null; saveVendor(v); render(); } break; }
+    case 'addVendor': { const v={id:uid(),name:'',process:'all',mobile:'',tel:'',fax:'',bankName:'',bankNo:'',bankHolder:'',memo:'',updated:Date.now()};
       S.vendors.set(v.id,v); saveVendor(v); render(); setTimeout(()=>document.getElementById('v-'+v.id+'-name')?.focus(),60); break; }
     case 'delVendor': { const v=S.vendors.get(t.dataset.id); if(!v) break;
       const used=[...S.materials.values()].filter(m=>m.vendorId===v.id).length;
@@ -2148,6 +2205,7 @@ document.addEventListener('click',async ev=>{
 let STAMP_PICK=false;
 $('#filePhoto').addEventListener('change',async ev=>{
   const f=ev.target.files[0]; ev.target.value='';
+  if(VENDOR_DOC){ const {id,field}=VENDOR_DOC; VENDOR_DOC=null; const v=S.vendors.get(id); if(f&&v) await uploadVendorDoc(f,v,field); return; }
   if(STAMP_PICK){ STAMP_PICK=false; if(f){ try{ S.company.stamp=await fileToStamp(f); saveCo(); render(); toast('도장을 넣었습니다 · 견적서 발신란과 서명란에 바로 찍힙니다'); }catch(err){ toast('사진을 읽지 못했습니다'); } } return; }
   applyPhoto(f);
 });

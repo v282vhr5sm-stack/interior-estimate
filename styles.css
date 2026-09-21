@@ -315,3 +315,10 @@ details.co[open] summary{border-bottom:1px solid var(--line2)}
 .lb-cap{position:absolute;left:0;right:0;bottom:calc(12px + env(safe-area-inset-bottom));display:flex;flex-direction:column;align-items:center;gap:2px;color:#fff;font-size:13px;text-align:center;padding:0 16px}
 .lb-cap span{opacity:.7;font-size:12px}
 @media (max-width:760px){.lb-nav{width:38px;height:64px;font-size:22px}}
+
+/* 업체 서류 사진 */
+.vdocs{display:flex;gap:14px;flex-wrap:wrap;margin-top:6px}
+.vdoc{display:flex;flex-direction:column;gap:6px;width:170px}
+.vdoc .file{width:100%}
+.vdoc .file img{aspect-ratio:3/2}
+.vdoc figcaption{flex-direction:row;gap:4px;justify-content:space-between}
