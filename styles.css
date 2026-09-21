@@ -270,6 +270,8 @@ details.co[open] summary{border-bottom:1px solid var(--line2)}
 .card-x{border:0;background:transparent;color:var(--muted);cursor:pointer;font-size:14px;line-height:1;padding:4px 6px;border-radius:6px;margin:-4px -4px -4px 0}
 .card-x:hover{background:var(--warn-weak);color:var(--bad)}
 @media (pointer:coarse){.card-x{padding:8px 10px;margin:-8px -8px -8px 0}}
+.sitebar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--accent-weak);border:1px solid var(--line2);border-radius:8px;padding:8px 12px;font-size:13px}
+.sitebar.warn{background:var(--warn-weak);color:var(--warn)}
 .card-t{font-size:16px;line-height:1.3}
 .hub-title{font-size:20px!important;font-weight:700;border-color:transparent!important;background:transparent!important;padding-left:0!important;padding-right:0!important}
 .hub-title:hover{border-color:var(--line)!important}

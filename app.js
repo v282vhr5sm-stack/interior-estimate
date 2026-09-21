@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '2.5.1';
+const APP_VERSION = '2.6.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -200,6 +200,12 @@ const idb = {
 const S = { materials:new Map(), estimates:new Map(), projects:new Map(), company:{}, curId:null, curPid:null };
 const cur = () => S.estimates.get(S.curId);
 const curProj = () => S.projects.get(S.curPid);
+/* 현장을 고르면 그 현장에 연결된 견적도 함께 선택합니다 */
+function selectSite(id){
+  S.curPid=id; ls.set('curPid',id||null);
+  const p=S.projects.get(id);
+  if(p?.estimateId && S.estimates.has(p.estimateId)) setCur(p.estimateId);
+}
 function setCur(id){ S.curId=id; ls.set('cur',id||null); }
 function strip(o){ const {id,...rest}=o; return rest; }
 
@@ -462,7 +468,18 @@ function renderEst(){
   const e=cur();
   if(!e) return `<div class="panel"><div class="empty"><h2 style="margin-bottom:6px">아직 견적이 없습니다</h2><p>새 견적을 만들거나, 예시 견적으로 구조를 먼저 살펴보세요.</p><div class="row" style="justify-content:center;margin-top:12px"><button class="btn pri" data-act="newEst">+ 새 견적</button><button class="btn" data-act="seed">예시 데이터 넣기</button></div></div></div>`;
   const used=new Set(e.processes.map(p=>p.k));
+  const sp=curProj(), owner=[...S.projects.values()].find(x=>x.estimateId===e.id);
   return `<div class="stack">
+  ${owner&&sp&&owner.id!==sp.id?`<div class="sitebar warn">
+      <span>지금 고른 현장은 <b>${esc(siteName(sp))}</b>인데, 이 견적은 <b>${esc(siteName(owner))}</b> 현장 것입니다.</span><span class="spacer"></span>
+      ${sp.estimateId&&S.estimates.has(sp.estimateId)
+        ? `<button class="btn sm pri" data-act="openEst" data-id="${sp.estimateId}">“${esc(siteName(sp))}” 견적 열기</button>`
+        : `<button class="btn sm pri" data-act="newEstForSite">“${esc(siteName(sp))}” 견적 만들기</button>`}
+      <button class="btn sm" data-act="openSite" data-id="${owner.id}">${esc(siteName(owner))} 현장</button></div>`
+   :owner?`<div class="sitebar"><span class="badge">${esc(siteName(owner))}</span> 현장의 견적입니다
+      <span class="spacer"></span><button class="btn sm" data-act="openSite" data-id="${owner.id}">현장 화면</button></div>`
+   :sp?`<div class="sitebar warn"><span>이 견적은 아직 어느 현장에도 연결되지 않았습니다.</span><span class="spacer"></span>
+      <button class="btn sm" data-act="linkEstToSite">“${esc(siteName(sp))}” 현장에 연결</button></div>`:''}
   <div class="row"><div style="flex:1;min-width:220px"><div class="eyebrow">견적 번호 ${esc(e.no)}</div><input class="f" id="estTitle" data-bind="est:title" value="${esc(e.title)}" placeholder="견적 제목 (예: 상계동 34평 리모델링)" style="font-size:20px;font-weight:700;border-color:transparent;padding-left:0;background:transparent"></div>${estPicker()}</div>
   <div class="est-grid">
     <div class="stack">
@@ -1664,7 +1681,7 @@ document.addEventListener('change',ev=>{
   if(a==='pick'){ setCur(t.value); render(); }
   if(a==='addLine'&&t.value){ const e=cur(), p=e.processes[+t.dataset.pi], m=S.materials.get(t.value); if(m){ p.lines.push(lineFromMat(m)); saveEst(e); render(); } }
   if(a==='revAll'){ IMPORT.items.forEach(x=>x.on=t.checked); render(); }
-  if(a==='pickProj'){ S.curPid=t.value; ls.set('curPid',t.value); render(); }
+  if(a==='pickProj'){ selectSite(t.value); render(); }
   if(a==='autoLogin'){ ls.set('autoLogin',t.checked?'1':'0'); if(!t.checked) ls.set('autoPw',null); toast(t.checked?'다음 로그인 때부터 자동으로 들어갑니다':'자동 로그인을 껐습니다'); render(); }
   if(a==='shareOn'){ toggleShare(curProj(),t.checked); }
   if(a==='shareMemo'){ const p=curProj(); p.share={...(p.share||{}),showMemo:t.checked}; saveProj(p); publishShare(p); }
@@ -1776,7 +1793,8 @@ document.addEventListener('click',async ev=>{
       p.tasks.push({...src,id:uid(),name:src.name.replace(/ \d+차$/,'')+` ${same+1}차`,start:st,end:addDays(st,len),status:'예정'});
       saveProj(p); render(); toast('같은 작업을 뒤쪽 날짜로 하나 더 넣었습니다. 날짜를 고쳐주세요.'); break; }
     case 'sortTasks': { const p=curProj(); p.tasks.sort((a,b)=>String(a.start||'').localeCompare(String(b.start||''))); saveProj(p); render(); break; }
-    case 'openSite': HOME_SEL=t.dataset.id; S.curPid=t.dataset.id; ls.set('curPid',S.curPid); render(); window.scrollTo(0,0); break;
+    case 'openSite': HOME_SEL=t.dataset.id; selectSite(t.dataset.id); render(); window.scrollTo(0,0); break;
+    case 'linkEstToSite': { const p=curProj(); if(!p||!e) break; p.estimateId=e.id; saveProj(p); render(); toast(`“${siteName(p)}” 현장에 연결했습니다`); break; }
     case 'delSite': { ev.stopPropagation(); const p=S.projects.get(t.dataset.id); if(!p) break;
       const n=(p.files||[]).length;
       const ok=await askConfirm({title:`“${siteName(p)}” 현장을 삭제할까요?`,
