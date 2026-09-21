@@ -231,6 +231,9 @@ details.co[open] summary{border-bottom:1px solid var(--line2)}
 .file .fi{display:grid;place-items:center;aspect-ratio:4/3;background:var(--surface2);color:var(--accent);font-weight:600;font-size:13px;text-decoration:none;border:0;width:100%;cursor:pointer}
 .file figcaption{padding:7px 8px;display:flex;flex-direction:column;gap:4px;font-size:12px}
 .file figcaption b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.file figcaption span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fgroup{padding:12px 0;border-bottom:1px solid var(--line2)}
+.fgroup:last-of-type{border-bottom:0;padding-bottom:0}
 
 /* 3D 보기 */
 .modal{position:fixed;inset:0;background:rgba(10,16,14,.6);display:grid;place-items:center;z-index:60;padding:16px}

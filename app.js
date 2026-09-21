@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.5.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -818,8 +818,8 @@ function sharePayload(p){
     site:{name:p.name,address:p.address,note:p.note,client:p.client,
       from:r?dstr(r.from):'', to:r?dstr(r.to):'', progress:projProgress(p)},
     showMemo:p.share?.showMemo!==false,
-    tasks:(p.tasks||[]).map(t=>({name:t.name,proc:t.proc,start:t.start,end:t.end,worker:t.worker,status:t.status||'예정',memo:p.share?.showMemo!==false?(t.memo||''):''})),
-    files:(p.files||[]).filter(f=>f.shared!==false).map(f=>({name:f.name,url:f.url,type:f.type,size:f.size})),
+    tasks:(p.tasks||[]).map(t=>({id:t.id,name:t.name,proc:t.proc,start:t.start,end:t.end,worker:t.worker,status:t.status||'예정',memo:p.share?.showMemo!==false?(t.memo||''):''})),
+    files:(p.files||[]).filter(f=>f.shared!==false).map(f=>({name:f.name,url:f.url,type:f.type,size:f.size,taskId:f.taskId||'',memo:f.memo||''})),
     company:{name:S.company?.name||'',phone:S.company?.phone||''}};
 }
 const pubTimers={};
@@ -868,7 +868,7 @@ async function copyShare(p){
 }
 
 /* 도면 파일 */
-async function uploadPlans(files,p){
+async function uploadPlans(files,p,taskId){
   if(!sb||!session){ toast('로그인한 상태에서만 파일을 올릴 수 있습니다.'); return; }
   for(const f of [...files]){
     if(f.size>50*1024*1024){ toast(`${f.name}: 50MB가 넘어 올리지 못했습니다.`); continue; }
@@ -878,7 +878,7 @@ async function uploadPlans(files,p){
       const {error}=await sb.storage.from('plans').upload(path,f,{contentType:f.type||'application/octet-stream'});
       if(error) throw error;
       const {data}=sb.storage.from('plans').getPublicUrl(path);
-      p.files=p.files||[]; p.files.push({id:uid(),name:f.name,path,url:data.publicUrl,type:f.type||'',size:f.size,shared:true,at:Date.now()});
+      p.files=p.files||[]; p.files.push({id:uid(),name:f.name,path,url:data.publicUrl,type:f.type||'',size:f.size,shared:true,at:Date.now(),taskId:taskId||'',memo:''});
       saveProj(p); render(); toast(`${f.name} 올렸습니다`);
     }catch(e){ toast(`${f.name} 올리지 못했습니다: ${e.message||e}`); }
   }
@@ -897,7 +897,9 @@ async function archiveProject(p,thenDelete){
     let failed=0;
     for(const f of files){
       try{ const res=await fetch(f.url); if(!res.ok) throw new Error(res.status);
-        zip.file((fileKind(f)==='img'?'사진/':'도면/')+f.name.replace(/[\\/]/g,'_'),await res.blob()); }
+        const t=(p.tasks||[]).find(x=>x.id===f.taskId);
+        const dir=fileKind(f)==='img' ? ('사진/'+(t?t.name.replace(/[\\/]/g,'_')+'/':'')) : '도면/';
+        zip.file(dir+(f.memo?f.memo.replace(/[\\/:*?"<>|]/g,'_')+'_':'')+f.name.replace(/[\\/]/g,'_'),await res.blob()); }
       catch{ failed++; }
     }
     const blob=await zip.generateAsync({type:'blob'});
@@ -967,7 +969,7 @@ function renderProject(p){
           <td data-l="종료"><input class="f" type="date" id="t${ti}-e" data-bind="task:${ti}:end" value="${esc(t.end||'')}"></td>
           <td data-l="상태"><select class="f" id="t${ti}-st" data-bind="task:${ti}:status">${['예정','진행','완료'].map(s=>`<option ${s===(t.status||'예정')?'selected':''}>${s}</option>`).join('')}</select></td>
           <td data-l="작업 메모"><input class="f" id="t${ti}-m" data-bind="task:${ti}:memo" value="${esc(t.memo||'')}" placeholder="작업자에게 전할 말"></td>
-          <td class="c-act"><button class="btn ghost sm" data-act="dupTask" data-ti="${ti}" title="같은 작업을 다른 날짜에 한 번 더 넣기">한 번 더</button><button class="btn ghost sm danger" data-act="delTask" data-ti="${ti}" aria-label="삭제">✕ 삭제</button></td></tr>`).join('')
+          <td class="c-act"><button class="btn ghost sm" data-act="taskPhoto" data-ti="${ti}" title="이 공정 사진 올리기">📷 사진${(p.files||[]).filter(f=>f.taskId===t.id).length||''}</button><button class="btn ghost sm" data-act="dupTask" data-ti="${ti}" title="같은 작업을 다른 날짜에 한 번 더 넣기">한 번 더</button><button class="btn ghost sm danger" data-act="delTask" data-ti="${ti}" aria-label="삭제">✕ 삭제</button></td></tr>`).join('')
           || `<tr><td colspan="7" class="muted small c-empty" style="padding:12px 8px">아래에서 공정을 눌러 일정을 추가하세요.</td></tr>`}</tbody>
       </table></div>
       <div class="proc-f"><b class="small">공정 추가</b><div class="chips">
@@ -988,9 +990,15 @@ function renderProject(p){
           ${k==='img'?`<a href="${esc(f.url)}" target="_blank" rel="noopener"><img src="${esc(f.url)}" alt="${esc(f.name)}" loading="lazy"></a>`
             :`<a class="fi" href="${esc(f.url)}" target="_blank" rel="noopener"><span>${KIND_LABEL[k]}</span></a>`}
           <figcaption><b title="${esc(f.name)}">${esc(f.name)}</b>
-            <span class="muted small">${(f.size/1024/1024).toFixed(1)}MB</span>
-            <label class="small row" style="gap:5px"><input type="checkbox" data-bind="file:${f.id}:shared" ${f.shared!==false?'checked':''}> 공유</label>
-            <button class="btn ghost sm danger" data-act="delPlan" data-fid="${f.id}">삭제</button></figcaption></figure>`;}).join('')}</div>`:''}
+            <select class="f small" data-bind="file:${f.id}:taskId" style="padding:3px 5px">
+              <option value="">공정 미지정</option>
+              ${(p.tasks||[]).map(t=>`<option value="${t.id}" ${f.taskId===t.id?'selected':''}>${esc(t.name)}</option>`).join('')}
+            </select>
+            <input class="f small" data-bind="file:${f.id}:memo" value="${esc(f.memo||'')}" placeholder="사진 설명 (예: 방수 2회차 완료)" style="padding:3px 5px">
+            <div class="row" style="gap:6px;justify-content:space-between">
+              <label class="small row" style="gap:5px"><input type="checkbox" data-bind="file:${f.id}:shared" ${f.shared!==false?'checked':''}> 공유</label>
+              <span class="muted small">${(f.size/1024/1024).toFixed(1)}MB</span>
+              <button class="btn ghost sm danger" data-act="delPlan" data-fid="${f.id}">삭제</button></div></figcaption></figure>`;}).join('')}</div>`:''}
       </div>
     </section>
 
@@ -1133,7 +1141,10 @@ const REPORT_CSS=`
 function reportHTML(p,forZip){
   const co=S.company||{}, r=projRange(p), tasks=(p.tasks||[]).slice().sort((a,b)=>String(a.start||'').localeCompare(String(b.start||'')));
   const imgs=(p.files||[]).filter(f=>fileKind(f)==='img'), others=(p.files||[]).filter(f=>fileKind(f)!=='img');
-  const src=f=>forZip?('사진/'+f.name.replace(/[\\/]/g,'_')):f.url;
+  const safe=s=>String(s||'').replace(/[\\/:*?"<>|]/g,'_');
+  const src=f=>{ if(!forZip) return f.url;
+    const t=tasks.find(x=>x.id===f.taskId);
+    return '사진/'+(t?safe(t.name)+'/':'')+(f.memo?safe(f.memo)+'_':'')+safe(f.name); };
   const body=`<article id="report">
     <h1>${esc(p.name)} 공사 보고서</h1>
     <div class="r-sub">${esc(co.name||'')}${co.phone?' · '+esc(co.phone):''} · 출력일 ${today()}</div>
@@ -1154,7 +1165,13 @@ function reportHTML(p,forZip){
 
     ${tasks.some(t=>t.memo)?`<h2>작업 지시사항</h2><ul class="r-memo">${tasks.filter(t=>t.memo).map(t=>`<li><b>${esc(t.name)}</b> (${esc(t.start||'')}${t.worker?' · '+esc(t.worker):''}) — ${esc(t.memo)}</li>`).join('')}</ul>`:''}
 
-    ${imgs.length?`<h2>현장 사진 ${imgs.length}장</h2><div class="r-photos">${imgs.map(f=>`<figure><img src="${esc(src(f))}" alt=""><figcaption>${esc(f.name)}</figcaption></figure>`).join('')}</div>`:''}
+    ${imgs.length?(()=>{
+      const groups=tasks.map(t=>({t,fs:imgs.filter(f=>f.taskId===t.id)})).filter(g=>g.fs.length);
+      const rest=imgs.filter(f=>!f.taskId||!tasks.some(t=>t.id===f.taskId));
+      const grid=fs=>`<div class="r-photos">${fs.map(f=>`<figure><img src="${esc(src(f))}" alt=""><figcaption>${f.memo?esc(f.memo)+'<br>':''}${esc(f.name)}</figcaption></figure>`).join('')}</div>`;
+      return `<h2>현장 사진 ${imgs.length}장</h2>
+        ${groups.map(g=>`<h3 style="font-size:12.5px;margin:12px 0 4px">${esc(g.t.name)} <span style="color:var(--r-mut);font-weight:400">${esc(g.t.start||'')}${g.t.worker?' · '+esc(g.t.worker):''} · ${g.fs.length}장</span></h3>${grid(g.fs)}`).join('')}
+        ${rest.length?`<h3 style="font-size:12.5px;margin:12px 0 4px">${groups.length?'기타':'전체'} <span style="color:var(--r-mut);font-weight:400">${rest.length}장</span></h3>${grid(rest)}`:''}`;})():''}
 
     ${others.length?`<h2>도면 · 첨부 파일</h2><table><thead><tr><th>파일</th><th style="width:80px">종류</th><th style="width:70px">크기</th></tr></thead>
       <tbody>${others.map(f=>`<tr><td>${esc(f.name)}</td><td>${KIND_LABEL[fileKind(f)]}</td><td>${(f.size/1024/1024).toFixed(1)}MB</td></tr>`).join('')}</tbody></table>
@@ -1236,15 +1253,24 @@ function paintViewer(){
           || '<tr><td colspan="5" class="empty c-empty">아직 등록된 일정이 없습니다.</td></tr>'}</tbody></table></div>
     </section>
 
-    ${files.length?`<section class="panel"><div class="panel-h"><h3>도면 · 사진</h3></div><div class="panel-b">
-      <div class="files">${files.map((f,i)=>{const k=fileKind(f); return `<figure class="file">
+    ${files.length?(()=>{
+      const card=(f,i)=>{ const k=fileKind(f); return `<figure class="file">
         ${k==='img'?`<a href="${esc(f.url)}" target="_blank" rel="noopener"><img src="${esc(f.url)}" alt="${esc(f.name)}" loading="lazy"></a>`
           :k==='glb'?`<button class="fi glb" data-act="view3d" data-i="${i}"><span>3D 보기</span></button>`
           :`<a class="fi" href="${esc(f.url)}" target="_blank" rel="noopener"><span>${KIND_LABEL[k]}</span></a>`}
-        <figcaption><b title="${esc(f.name)}">${esc(f.name)}</b>
-          <a class="btn sm" href="${esc(f.url)}" target="_blank" rel="noopener" download>${k==='pdf'||k==='img'?'열기':'내려받기'}</a></figcaption></figure>`;}).join('')}</div>
-      <p class="muted small" style="margin:10px 0 0">스케치업(.skp)·캐드(.dwg) 파일은 내려받아 해당 프로그램에서 열어주세요.</p>
-    </div></section>`:''}
+        <figcaption>${f.memo?`<b>${esc(f.memo)}</b>`:''}<span class="muted small" title="${esc(f.name)}">${esc(f.name)}</span>
+          <a class="btn sm" href="${esc(f.url)}" target="_blank" rel="noopener" download>${k==='pdf'||k==='img'?'열기':'내려받기'}</a></figcaption></figure>`; };
+      const idx=new Map(files.map((f,i)=>[f,i]));
+      const groups=tasks.map(t=>({t,fs:files.filter(f=>f.taskId&&f.taskId===t.id)})).filter(g=>g.fs.length);
+      const rest=files.filter(f=>!f.taskId||!tasks.some(t=>t.id===f.taskId));
+      return `<section class="panel"><div class="panel-h"><h3>공정별 사진 · 도면</h3><span class="muted small">사진을 누르면 크게 볼 수 있습니다</span></div><div class="panel-b">
+        ${groups.map(g=>`<div class="fgroup"><div class="row" style="gap:8px"><b>${esc(g.t.name)}</b>
+          <span class="muted small">${esc(g.t.start||'')}${g.t.end&&g.t.end!==g.t.start?' ~ '+esc(g.t.end):''}</span>
+          <span class="badge${g.t.status==='완료'?'':' warn'}">${esc(g.t.status||'예정')}</span></div>
+          <div class="files">${g.fs.map(f=>card(f,idx.get(f))).join('')}</div></div>`).join('')}
+        ${rest.length?`<div class="fgroup"><b>${groups.length?'기타 자료':'현장 자료'}</b><div class="files">${rest.map(f=>card(f,idx.get(f))).join('')}</div></div>`:''}
+        <p class="muted small" style="margin:10px 0 0">스케치업(.skp)·캐드(.dwg) 파일은 내려받아 해당 프로그램에서 열어주세요.</p>
+      </div></section>`;})():''}
     <p class="muted small" style="text-align:center">${esc(payload.company?.name||'')} · 이 화면은 보기 전용입니다. 문의는 담당자에게 연락해주세요.</p>
   </div>`;
   window.__viewerFiles=files;
@@ -1479,7 +1505,8 @@ document.addEventListener('click',async ev=>{
     case 'archiveProj': archiveProject(curProj(),false); break;
     case 'purgeProj': archiveProject(curProj(),true); break;
     case 'delTask': { const p=curProj(); p.tasks.splice(+t.dataset.ti,1); saveProj(p); render(); break; }
-    case 'pickPlan': $('#filePlan').click(); break;
+    case 'pickPlan': PLAN_TASK=''; $('#filePlan').click(); break;
+    case 'taskPhoto': { const p=curProj(); PLAN_TASK=p.tasks[+t.dataset.ti]?.id||''; $('#filePlan').setAttribute('accept','image/*'); $('#filePlan').click(); break; }
     case 'delPlan': removePlan(curProj(),t.dataset.fid); break;
     case 'copyShare': copyShare(curProj()); break;
     case 'month': { if(t.dataset.d==='0'){ const d=new Date(); MONTH=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }
@@ -1496,7 +1523,8 @@ document.addEventListener('click',async ev=>{
 $('#filePhoto').addEventListener('change',ev=>{ applyPhoto(ev.target.files[0]); ev.target.value=''; });
 $('#fileSheet').addEventListener('change',ev=>{ setSheetFiles(ev.target.files); ev.target.value=''; });
 $('#fileBackup').addEventListener('change',ev=>{ if(ev.target.files[0]) importBackup(ev.target.files[0]); ev.target.value=''; });
-$('#filePlan').addEventListener('change',ev=>{ if(ev.target.files.length) uploadPlans(ev.target.files,curProj()); ev.target.value=''; });
+let PLAN_TASK='';
+$('#filePlan').addEventListener('change',ev=>{ if(ev.target.files.length) uploadPlans(ev.target.files,curProj(),PLAN_TASK); ev.target.value=''; ev.target.removeAttribute('accept'); PLAN_TASK=''; });
 document.addEventListener('dragover',ev=>{ const dz=ev.target.closest?.('#dz'); if(dz){ ev.preventDefault(); dz.classList.add('drag'); } });
 document.addEventListener('dragleave',ev=>{ ev.target.closest?.('#dz')?.classList.remove('drag'); });
 document.addEventListener('drop',ev=>{ const dz=ev.target.closest?.('#dz'); if(dz){ ev.preventDefault(); dz.classList.remove('drag'); if(ls.get('anthropic_key')) setSheetFiles(ev.dataTransfer.files); }
