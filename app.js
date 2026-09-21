@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '2.6.1';
+const APP_VERSION = '3.0.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -13,7 +13,6 @@ const PROCS = [
   {k:'etc',n:'기타·청소',pat:'dots'}];
 const PMAP = Object.fromEntries(PROCS.map(p=>[p.k,p]));
 const PY = 3.3058;
-const ANTHROPIC_SDK_URL = 'https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@0.126.0/+esm';
 
 /* ---------- utils ---------- */
 const $ = s => document.querySelector(s);
@@ -41,7 +40,7 @@ function editSiteBox(p){
       <div class="row" style="justify-content:flex-end;margin-top:6px">
         <button class="btn" data-x="no">취소</button><button class="btn pri" data-x="yes">저장</button></div></div>`;
     const close=save=>{
-      if(save){ p.name=box.querySelector('#es-name').value.trim(); p.client=box.querySelector('#es-client').value.trim();
+      if(save){ const prev=p.name||''; p.name=box.querySelector('#es-name').value.trim(); syncEstTitle(p,prev); p.client=box.querySelector('#es-client').value.trim();
         p.phone=box.querySelector('#es-phone').value.trim(); p.address=box.querySelector('#es-addr').value.trim(); saveProj(p); }
       box.remove(); document.removeEventListener('keydown',key); res(save);
     };
@@ -53,17 +52,21 @@ function editSiteBox(p){
   });
 }
 /* 실수로 눌러도 바로 지워지지 않도록, 직접 “삭제”를 한 번 더 고르게 합니다 */
-function askConfirm({title,lines=[],ok='삭제',cancel='취소',danger=true}){
+function askConfirm({title,lines=[],ok='삭제',cancel='취소',danger=true,checkbox=null}){
   return new Promise(res=>{
     const box=document.createElement('div'); box.className='modal';
     box.innerHTML=`<div class="modal-b ask">
       <h3>${esc(title)}</h3>
       ${lines.length?`<ul class="ask-l">${lines.map(l=>`<li>${esc(l)}</li>`).join('')}</ul>`:''}
+      ${checkbox?`<label class="row" style="gap:8px;font-size:13px;padding:8px 10px;border:1px solid var(--line);border-radius:8px">
+        <input type="checkbox" id="ask-cb" ${checkbox.checked?'checked':''}> ${esc(checkbox.label)}</label>`:''}
       <div class="row" style="justify-content:flex-end;margin-top:6px">
         <button class="btn" data-x="no">${esc(cancel)}</button>
         <button class="btn ${danger?'del':'pri'}" data-x="yes">${esc(ok)}</button>
       </div></div>`;
-    const close=v=>{ box.remove(); document.removeEventListener('keydown',key); res(v); };
+    const close=v=>{ const checked=!!box.querySelector('#ask-cb')?.checked;
+      box.remove(); document.removeEventListener('keydown',key);
+      res(v ? (checkbox?{ok:true,checked}:true) : false); };
     const key=e=>{ if(e.key==='Escape') close(false); };
     box.addEventListener('click',e=>{ const b=e.target.closest('[data-x]'); if(b) close(b.dataset.x==='yes'); else if(e.target===box) close(false); });
     document.addEventListener('keydown',key);
@@ -197,9 +200,16 @@ const idb = {
 };
 
 /* ---------- app state ---------- */
-const S = { materials:new Map(), estimates:new Map(), projects:new Map(), company:{}, curId:null, curPid:null };
+const S = { materials:new Map(), estimates:new Map(), projects:new Map(), sheets:new Map(), company:{}, curId:null, curPid:null };
 const cur = () => S.estimates.get(S.curId);
 const curProj = () => S.projects.get(S.curPid);
+/* 현장 이름이 바뀌면 그 현장 견적 제목도 같이 바꿉니다 (직접 다른 제목을 적어둔 경우는 그대로) */
+function syncEstTitle(p,prevName){
+  const e=p.estimateId&&S.estimates.get(p.estimateId);
+  if(!e) return;
+  const t=(e.title||'').trim();
+  if(t==='' || t===(prevName||'').trim() || t===(p.address||'').trim()){ e.title=siteName(p); saveEst(e); }
+}
 /* 현장을 고르면 그 현장에 연결된 견적도 함께 선택합니다 */
 function selectSite(id){
   S.curPid=id; ls.set('curPid',id||null);
@@ -213,6 +223,7 @@ function applyRecord(col,id,data){
   if(col==='materials'){ if(data) S.materials.set(id,{...data,id}); else S.materials.delete(id); }
   else if(col==='estimates'){ if(data) S.estimates.set(id,{...data,id}); else S.estimates.delete(id); }
   else if(col==='projects'){ if(data) S.projects.set(id,{...data,id}); else S.projects.delete(id); }
+  else if(col==='sheets'){ if(data) S.sheets.set(id,{...data,id}); else S.sheets.delete(id); }
   else if(col==='settings' && id==='company'){ S.company=data||{}; }
 }
 async function loadLocal(){
@@ -362,6 +373,36 @@ function newEstimate(){
     showLinePrice:false,showImages:true,notes:'· 본 견적은 현장 실측 후 변동될 수 있습니다.\n· 계약금 10% / 중도금 40% / 잔금 50%\n· 공사 기간 중 추가 요청 사항은 별도 협의합니다.',
     processes:[],updated:Date.now()};
 }
+/* 견적에 직접 적은 자재를 단가표에 저장하고, 단가표를 고치면 견적도 따라오게 합니다 */
+function syncLineToMaterial(e,p,l){
+  if(!l || !String(l.name||'').trim()) return;
+  const vendor=(p.vendor||'').trim();
+  if(l.mid && S.materials.has(l.mid)){
+    const m=S.materials.get(l.mid);
+    const next={name:l.name,spec:l.spec||'',unit:l.unit||'',unitPrice:num(l.unitPrice),coverage:num(l.coverage),loss:num(l.loss),mode:l.mode||'area'};
+    if(vendor && !m.vendor) next.vendor=vendor;
+    const changed=Object.keys(next).some(k=>String(m[k]??'')!==String(next[k]??''));
+    if(changed){ Object.assign(m,next,{updated:Date.now()}); saveMat(m); }
+    return;
+  }
+  const m={id:uid(),name:l.name,spec:l.spec||'',process:p.k,vendor,unit:l.unit||'',unitPrice:num(l.unitPrice),
+    coverage:num(l.coverage),loss:num(l.loss),mode:l.mode||(num(l.coverage)>0?'area':'qty'),note:'견적에서 추가',updated:Date.now()};
+  S.materials.set(m.id,m); saveMat(m); l.mid=m.id; saveEst(e);
+}
+function syncMaterialToLines(m){
+  let touched=0;
+  S.estimates.forEach(e=>{
+    let hit=false;
+    (e.processes||[]).forEach(p=>(p.lines||[]).forEach(l=>{
+      if(l.mid!==m.id) return;
+      l.name=m.name; l.spec=m.spec||''; l.unit=m.unit||'';
+      l.unitPrice=num(m.unitPrice); l.coverage=num(m.coverage); l.loss=num(m.loss); l.mode=m.mode||l.mode;
+      hit=true; touched++;
+    }));
+    if(hit) saveEst(e);
+  });
+  return touched;
+}
 function lineFromMat(m){ return {mid:m.id,name:m.name,spec:m.spec||'',unit:m.unit||'',unitPrice:num(m.unitPrice),coverage:num(m.coverage),loss:num(m.loss),mode:m.mode||(num(m.coverage)>0?'area':'qty'),qty:m.mode==='qty'?1:0,area:''}; }
 function ensureProc(e,k){ let p=e.processes.find(x=>x.k===k); if(!p){ p={id:uid(),k,area:0,laborPerM2:0,laborLump:0,lines:[]}; e.processes.push(p); } return p; }
 function lineImg(l,k){ const m=l.mid&&S.materials.get(l.mid); return m?.image || swatch((PMAP[k]||PMAP.etc).pat, m?.tone); }
@@ -411,7 +452,7 @@ function render(){
   const tabs=$('#tabs');
   if(needLogin()){ tabs.hidden=true; $('#app').innerHTML=renderAuth(); updatePill(); return; }
   tabs.hidden=false;
-  ['home','est','sched','mat','doc','set'].forEach(v=>$('#tab-'+v).setAttribute('aria-selected',String(v===VIEW)));
+  ['home','est','sched','doc','mat','set'].forEach(v=>$('#tab-'+v).setAttribute('aria-selected',String(v===VIEW)));
   const app=$('#app');
   if(VIEW==='home') app.innerHTML=renderHome();
   else if(VIEW==='sched') app.innerHTML=renderSched();
@@ -522,7 +563,7 @@ function renderEst(){
   </div></div>`;
 }
 
-function renderProc(e,p,pi){
+function renderProc(e,p,pi){ // e: 견적
   const P=PMAP[p.k]||PMAP.etc;
   const mats=[...S.materials.values()].filter(m=>m.process===p.k);
   const others=[...S.materials.values()].filter(m=>m.process!==p.k);
@@ -534,8 +575,13 @@ function renderProc(e,p,pi){
           <span class="unitf"><input class="f num" inputmode="decimal" id="p${pi}-area" data-area="${pi}" value="${esc(p.areaText ?? (p.area||''))}" placeholder="84 또는 26평">
             <i id="o-p${pi}-unit">${areaHint(p.areaText ?? p.area)}</i></span>
         </div></div>
+      <label class="fl" style="width:150px">업체 <span class="muted">(고객에게 안 보임)</span>
+        <input class="f" id="p${pi}-vendor" data-bind="proc:${pi}:vendor" value="${esc(p.vendor||'')}" placeholder="예: OO타일"></label>
       <div class="proc-sum"><div class="small muted">원가 소계 · <span id="o-p${pi}-m2"></span></div><b id="o-p${pi}-cost"></b></div>
-      <button class="btn ghost sm danger" data-act="delProc" data-pi="${pi}" aria-label="${P.n} 공정 삭제">✕</button>
+      <div class="row" style="gap:2px;flex-wrap:nowrap">
+        <button class="btn ghost sm" data-act="moveProc" data-pi="${pi}" data-d="-1" title="위로" ${pi===0?'disabled':''}>▲</button>
+        <button class="btn ghost sm" data-act="moveProc" data-pi="${pi}" data-d="1" title="아래로" ${pi===e.processes.length-1?'disabled':''}>▼</button>
+        <button class="btn ghost sm danger" data-act="delProc" data-pi="${pi}" aria-label="${P.n} 공정 삭제">✕</button></div>
     </div>
     <div class="tbl-wrap"><table class="t resp">
       <thead><tr><th class="w-img"></th><th class="w-name">자재 · 규격</th><th class="r">적용면적㎡</th><th class="r">로스%</th><th class="r">1단위 시공㎡</th><th class="r">필요수량</th><th>단위</th><th class="r">단가</th><th class="r">자재비</th><th class="r">㎡당</th><th></th></tr></thead>
@@ -605,6 +651,13 @@ function renderMat(){
   return `<div class="stack">
     <div><h2>자재 단가표</h2><p class="muted" style="margin:4px 0 0">거래명세서·단가표·카톡 캡처를 올리면 자재를 뽑아 1단위 시공면적과 ㎡당 원가까지 정리합니다.</p></div>
     ${renderImport()}
+    ${S.sheets.size?`<section class="panel">
+      <div class="panel-h"><h3>가져온 단가표 사진 ${S.sheets.size}</h3><span class="muted small">원본은 그대로 보관됩니다</span></div>
+      <div class="panel-b"><div class="files">${[...S.sheets.values()].sort((a,b)=>b.at-a.at).map(s=>`<figure class="file">
+        <a href="${esc(s.url)}" target="_blank" rel="noopener"><img src="${esc(s.url)}" alt="단가표" loading="lazy"></a>
+        <figcaption><span class="muted small">${new Date(s.at).toLocaleDateString('ko-KR')}</span>
+          <button class="btn ghost sm danger" data-act="delSheet" data-id="${s.id}">삭제</button></figcaption></figure>`).join('')}</div></div>
+    </section>`:''}
     <section class="panel">
       <div class="panel-h"><h3>저장된 자재 ${all.length}</h3><span class="spacer"></span><button class="btn sm" data-act="addMat">+ 자재 직접 추가</button></div>
       <div class="panel-b" style="padding-bottom:0"><div class="chips">
@@ -612,10 +665,11 @@ function renderMat(){
         ${PROCS.filter(p=>counts[p.k]).map(p=>`<button class="chip" data-act="matFilter" data-k="${p.k}" aria-pressed="${MAT_FILTER===p.k}">${p.n} ${counts[p.k]}</button>`).join('')}
       </div></div>
       <div class="tbl-wrap" style="margin-top:10px"><table class="t resp">
-        <thead><tr><th class="w-img">사진</th><th class="w-name">자재 · 규격</th><th>공정</th><th>단위</th><th class="r">단가(원)</th><th class="r">1단위 시공㎡</th><th class="r">로스%</th><th class="r">㎡당 원가</th><th>메모</th><th></th></tr></thead>
+        <thead><tr><th class="w-img">사진</th><th class="w-name">자재 · 규격</th><th>업체</th><th>공정</th><th>단위</th><th class="r">단가(원)</th><th class="r">1단위 시공㎡</th><th class="r">로스%</th><th class="r">㎡당 원가</th><th>메모</th><th></th></tr></thead>
         <tbody>${list.map(m=>`<tr>
           <td class="c-img"><button class="thumb-btn" data-act="matPhoto" data-id="${m.id}" aria-label="사진 바꾸기"><img class="thumb" src="${matImg(m)}" alt=""></button></td>
           <td class="c-name"><input class="f" id="m-${m.id}-name" data-bind="mat:${m.id}:name" value="${esc(m.name)}" placeholder="자재명" style="font-weight:500"><input class="f small" id="m-${m.id}-spec" data-bind="mat:${m.id}:spec" value="${esc(m.spec)}" placeholder="규격" style="margin-top:3px"></td>
+          <td data-l="업체"><input class="f" id="m-${m.id}-vendor" data-bind="mat:${m.id}:vendor" value="${esc(m.vendor||'')}" placeholder="거래처" style="width:110px"></td>
           <td data-l="공정"><select class="f" id="m-${m.id}-proc" data-bind="mat:${m.id}:process" style="width:110px">${PROCS.map(p=>`<option value="${p.k}" ${p.k===m.process?'selected':''}>${p.n}</option>`).join('')}</select></td>
           <td data-l="단위"><input class="f" id="m-${m.id}-unit" data-bind="mat:${m.id}:unit" value="${esc(m.unit)}" style="width:56px"></td>
           <td class="r" data-l="단가(원)"><input class="f num w-n" type="number" inputmode="numeric" step="100" id="m-${m.id}-price" data-bind="mat:${m.id}:unitPrice" data-num value="${esc(m.unitPrice)}"></td>
@@ -623,26 +677,33 @@ function renderMat(){
           <td class="r" data-l="로스%"><input class="f num w-s" type="number" inputmode="decimal" id="m-${m.id}-loss" data-bind="mat:${m.id}:loss" data-num value="${esc(m.loss)}"></td>
           <td class="cell-out" data-l="㎡당 원가"><span id="o-m-${m.id}">${perM2Html(matPerM2(m))}</span></td>
           <td class="small muted" data-l="메모" style="max-width:220px">${esc(m.note||'')}</td>
-          <td class="c-act"><button class="btn ghost sm danger" data-act="delMat" data-id="${m.id}" aria-label="삭제">✕ 삭제</button></td></tr>`).join('') || `<tr><td colspan="10" class="empty c-empty">자재가 없습니다. 단가표 사진을 올리거나 직접 추가하세요.</td></tr>`}</tbody>
+          <td class="c-act"><button class="btn ghost sm danger" data-act="delMat" data-id="${m.id}" aria-label="삭제">✕ 삭제</button></td></tr>`).join('') || `<tr><td colspan="11" class="empty c-empty">자재가 없습니다. 단가표 사진을 올리거나 직접 추가하세요.</td></tr>`}</tbody>
       </table></div>
     </section>
   </div>`;
 }
 function renderImport(){
-  const I=IMPORT, hasKey=!!ls.get('anthropic_key');
+  const I=IMPORT;
   let body='';
-  if(I.busy) body=`<div class="status"><span class="spin"></span> 단가표를 읽고 있습니다. 사진 장수에 따라 20초~1분 걸립니다.</div>`;
+  if(I.busy) body=`<div class="status"><span class="spin"></span> 사진에서 글자를 읽고 있습니다 <b id="ocr-prog">${Math.round((I.prog||0)*100)}%</b> · 처음 한 번은 한글 인식 파일을 받느라 조금 더 걸립니다.</div>`;
   else if(I.err) body=`<div class="status err">${esc(I.err)}</div>`;
   if(I.items && !I.busy){
     const e=cur();
     body+=`<div class="panel" style="margin-top:12px">
       <div class="panel-h"><h3>읽어낸 자재 ${I.items.length}개</h3><span class="muted small">저장 전에 확인·수정하세요. <span class="badge warn">추정</span>은 사진에 규격이 없어 일반 시공 기준으로 잡은 값입니다.</span></div>
       ${I.memo?`<div class="panel-b memo">${esc(I.memo)}</div>`:''}
-      <div class="panel-b" style="padding-block:6px"><label class="row small" style="gap:6px"><input type="checkbox" id="rv-all" data-act-change="revAll" ${I.items.every(x=>x.on)?'checked':''}> 전체 선택</label></div>
-      <div class="tbl-wrap"><table class="t resp"><thead><tr><th></th><th class="w-name">자재 · 규격</th><th>공정</th><th>단위</th><th class="r">단가(원)</th><th class="r">1단위 시공㎡</th><th class="r">로스%</th><th class="r">㎡당 원가</th><th>근거</th></tr></thead>
+      <div class="panel-b row" style="padding-block:6px">
+        <label class="row small" style="gap:6px"><input type="checkbox" id="rv-all" data-act-change="revAll" ${I.items.every(x=>x.on)?'checked':''}> 전체 선택</label>
+        <span class="spacer"></span>
+        <label class="row small" style="gap:6px">업체 한 번에 지정 <input class="f" id="rv-vendor-all" data-act-change="revVendor" placeholder="예: OO자재" style="width:140px"></label>
+        <label class="row small" style="gap:6px">공정 한 번에 지정
+          <select class="f" id="rv-proc-all" data-act-change="revProc" style="width:120px"><option value="">선택</option>${PROCS.map(p=>`<option value="${p.k}">${p.n}</option>`).join('')}</select></label>
+      </div>
+      <div class="tbl-wrap"><table class="t resp"><thead><tr><th></th><th class="w-name">자재 · 규격</th><th>업체</th><th>공정</th><th>단위</th><th class="r">단가(원)</th><th class="r">1단위 시공㎡</th><th class="r">로스%</th><th class="r">㎡당 원가</th><th>근거</th></tr></thead>
       <tbody>${I.items.map((it,i)=>`<tr>
         <td class="c-img"><input type="checkbox" id="rv-${i}-on" data-bind="rev:${i}:on" ${it.on?'checked':''} aria-label="선택" style="width:20px;height:20px"></td>
         <td class="c-name"><input class="f" id="rv-${i}-name" data-bind="rev:${i}:name" value="${esc(it.name)}" style="font-weight:500"><input class="f small" id="rv-${i}-spec" data-bind="rev:${i}:spec" value="${esc(it.spec)}" style="margin-top:3px"></td>
+        <td data-l="업체"><input class="f" id="rv-${i}-vendor" data-bind="rev:${i}:vendor" value="${esc(it.vendor||'')}" placeholder="거래처" style="width:110px"></td>
         <td data-l="공정"><select class="f" id="rv-${i}-proc" data-bind="rev:${i}:process" style="width:110px">${PROCS.map(p=>`<option value="${p.k}" ${p.k===it.process?'selected':''}>${p.n}</option>`).join('')}</select></td>
         <td data-l="단위"><input class="f" id="rv-${i}-unit" data-bind="rev:${i}:unit" value="${esc(it.unit)}" style="width:56px"></td>
         <td class="r" data-l="단가(원)"><input class="f num w-n" type="number" inputmode="numeric" id="rv-${i}-price" data-bind="rev:${i}:unitPrice" data-num value="${esc(it.unitPrice)}">${it.vatConverted?'<div><span class="badge">VAT 제외 환산</span></div>':''}</td>
@@ -660,12 +721,12 @@ function renderImport(){
     <div class="dropzone" id="dz">
       <div class="dz-icon" aria-hidden="true"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" style="color:var(--accent)"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg></div>
       <div style="flex:1;min-width:200px"><b>단가표 사진 가져오기</b>
-        <div class="muted small">${hasKey?'사진을 찍거나 고르세요. 노트북에서는 끌어다 놓거나 붙여넣기(Ctrl+V)도 됩니다.':'AI 사진 읽기를 쓰려면 <a href="#" data-act="view" data-v="set">설정</a>에서 API 키를 넣어주세요. 키 없이도 아래에서 직접 추가할 수 있습니다.'}</div>
+        <div class="muted small">사진을 찍거나 고르면 글자를 읽어 표로 정리합니다. 노트북에서는 끌어다 놓거나 붙여넣기(Ctrl+V)도 됩니다.</div>
         ${IMPORT.urls.length?`<div class="previews" style="margin-top:8px">${IMPORT.urls.map(u=>`<img src="${u}" alt="올린 단가표">`).join('')}</div>`:''}</div>
-      ${hasKey?`<div class="row">
-        <button class="btn" data-act="pickSheet" ${I.busy?'disabled':''}>사진 선택</button>
-        ${IMPORT.files.length?`<button class="btn pri" data-act="parse" ${I.busy?'disabled':''}>${I.busy?'<span class="spin"></span> 읽는 중':'AI로 정리하기'}</button>`:''}
-      </div>`:''}
+      <div class="row">
+        <button class="btn pri" data-act="shootSheet" ${I.busy?'disabled':''}>📷 사진 찍기</button>
+        <button class="btn" data-act="pickSheet" ${I.busy?'disabled':''}>앨범에서 고르기</button>
+      </div>
     </div>
     ${body?`<div style="margin-top:10px">${body}</div>`:''}
   </section>`;
@@ -678,6 +739,7 @@ function setSheetFiles(files){
   IMPORT.urls.forEach(u=>URL.revokeObjectURL(u));
   IMPORT.files=imgs.slice(0,6); IMPORT.urls=IMPORT.files.map(f=>URL.createObjectURL(f)); IMPORT.err=''; IMPORT.items=null;
   VIEW='mat'; render();
+  parseSheets();
 }
 async function loadImage(file){
   const url=URL.createObjectURL(file);
@@ -722,52 +784,79 @@ const PARSE_SCHEMA = {
         mode:{type:'string', enum:['area','qty']}, loss:{type:'number'}, tone:{type:'string'}, note:{type:'string'} }}}
   }
 };
-let AnthropicSDK=null;
+let OCR=null;
+async function ocrText(file,onProgress){
+  if(!window.Tesseract) await loadScript('https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js');
+  if(!OCR) OCR=await Tesseract.createWorker(['kor','eng'],1,{logger:m=>{ if(m.status==='recognizing text') onProgress?.(m.progress); }});
+  const {data}=await OCR.recognize(file);
+  return data.text||'';
+}
+const UNIT_WORDS=['롤','박스','장','말','통','포','개','m','M','kg','KG','식','대','セ','세트','자','평','매'];
+const COV_HINT={'롤':16.5,'박스':1.5,'장':1.62,'포':5,'통':30,'말':30};
+/* 사진에서 읽은 글자 줄을 자재 항목으로 바꿉니다 */
+function rowsFromText(txt){
+  const out=[];
+  for(const raw of String(txt).split(/\r?\n/)){
+    const line=raw.replace(/\s+/g,' ').trim();
+    if(line.length<3) continue;
+    if(/합계|소계|총액|부가세|공급가|계$|금액계|VAT/i.test(line)) continue;   // 합계 줄은 자재가 아닙니다
+    const nums=[...line.matchAll(/[\d][\d,\.]*/g)].map(m=>({v:num(m[0]),at:m.index}));
+    const priced=nums.filter(n=>n.v>=500);
+    if(!priced.length) continue;
+    const price=Math.round(priced[priced.length-1].v);
+    let name=line.slice(0,priced[priced.length-1].at).replace(/[|:\-–—]+$/,'').replace(/\d[\d,\.]*\s*(원|won)?$/i,'').trim();
+    if(!name || name.length<2) continue;
+    // 단위는 이름 뒤에 떨어져 있는 낱말에서 찾고, 이름에서는 뺍니다
+    const um=name.match(/(?:^|[\s(])(롤|박스|박|장|말|통|포|개|매|세트|식|대|자|병|kg|KG|Kg|g|m|M|EA|ea)\s*$/);
+    const unit=um?um[1]:'';
+    if(um) name=name.slice(0,um.index).trim();
+    name=name.replace(/(d)s*[%*xX]s*(d)/g,'$1×$2');   // 600%600 → 600×600
+    if(!name || name.length<2) continue;
+    const spec=(line.match(/\d{2,4}\s*[x×X*%]\s*\d{2,4}(\s*[x×X*]\s*\d+)?/)||[''])[0].replace('%','×');
+    const cov=COV_HINT[unit]||0;
+    out.push({on:true,name,spec,process:'etc',unit:unit||'개',unitPrice:price,vendor:'',
+      coverage:cov,coverageBasis:cov?'추정':'없음',mode:cov?'area':'qty',loss:cov?5:0,tone:'',
+      note:'사진에서 읽음 · 확인 필요'});
+  }
+  return out;
+}
 async function parseSheets(){
   if(IMPORT.busy||!IMPORT.files.length) return;
-  const apiKey=ls.get('anthropic_key');
-  if(!apiKey){ IMPORT.err='설정에서 API 키를 먼저 넣어주세요.'; render(); return; }
-  if(!navigator.onLine){ IMPORT.err='인터넷에 연결되어 있을 때만 사진을 읽을 수 있습니다.'; render(); return; }
-  IMPORT.busy=true; IMPORT.err=''; render();
+  IMPORT.busy=true; IMPORT.err=''; IMPORT.prog=0; render();
   try{
-    if(!AnthropicSDK) AnthropicSDK=(await import(ANTHROPIC_SDK_URL)).default;
-    const client=new AnthropicSDK({apiKey, dangerouslyAllowBrowser:true});
-    const images=[];
-    for(const f of IMPORT.files) images.push({type:'image',source:{type:'base64',media_type:'image/jpeg',data:await toBase64Jpeg(f)}});
-    const res=await client.beta.messages.create({
-      model:'claude-opus-5',
-      max_tokens:16000,
-      betas:['server-side-fallback-2026-07-01'],
-      fallbacks:'default',
-      output_config:{format:{type:'json_schema',schema:PARSE_SCHEMA}},
-      messages:[{role:'user',content:[...images,{type:'text',text:PARSE_PROMPT}]}],
-    });
-    if(res.stop_reason==='refusal') throw {code:'refusal'};
-    if(res.stop_reason==='max_tokens') throw {code:'too_long'};
-    const text=res.content.filter(b=>b.type==='text').map(b=>b.text).join('');
-    let out; try{ out=JSON.parse(text); }catch{ throw {code:'invalid_json'}; }
-    const items=(out.items||[]).map(it=>{
-      let price=num(it.unitPrice), conv=false;
-      if(it.vatIncluded){ price=Math.round(price/1.1); conv=true; }
-      const cov=num(it.coverage);
-      return {on:true,name:String(it.name||''),spec:String(it.spec||''),process:PMAP[it.process]?it.process:'etc',unit:String(it.unit||''),unitPrice:price,vatConverted:conv,
-        coverage:cov,coverageBasis:it.coverageBasis,mode:(it.mode==='qty'||cov<=0)?'qty':'area',loss:num(it.loss),tone:/^#[0-9a-f]{6}$/i.test(it.tone||'')?it.tone:'',note:String(it.note||'')};
-    });
+    let items=[];
+    for(const f of IMPORT.files){
+      const txt=await ocrText(f,p=>{ IMPORT.prog=p; const el=document.getElementById('ocr-prog'); if(el) el.textContent=Math.round(p*100)+'%'; });
+      items=items.concat(rowsFromText(txt));
+    }
+    // 같은 이름은 하나로
+    const seen=new Map();
+    for(const it of items){ const k=it.name+'|'+it.unitPrice; if(!seen.has(k)) seen.set(k,it); }
+    items=[...seen.values()];
     if(!items.length) throw {code:'empty'};
-    IMPORT.items=items; IMPORT.memo=String(out.memo||'');
+    IMPORT.items=items;
+    IMPORT.memo='사진에서 읽은 값입니다. 공정·단위·1단위 시공면적은 확인해서 고쳐주세요.';
+    uploadSheetPhotos();          // 원본 사진은 따로 보관
   }catch(e){
-    const S_=AnthropicSDK;
-    let msg;
-    if(S_ && e instanceof S_.AuthenticationError) msg='API 키가 맞지 않습니다. 설정에서 키를 다시 확인해주세요.';
-    else if(S_ && e instanceof S_.PermissionDeniedError) msg='이 API 키로는 사용할 수 없습니다. Anthropic 콘솔에서 키 권한과 결제 상태를 확인해주세요.';
-    else if(S_ && e instanceof S_.RateLimitError) msg='요청이 많아 잠시 막혔습니다. 1분 뒤 다시 시도하세요.';
-    else if(S_ && e instanceof S_.BadRequestError) msg='요청을 처리하지 못했습니다: '+(e.message||'')+' (크레딧 잔액이 부족할 때도 이 메시지가 나옵니다)';
-    else if(S_ && e instanceof S_.APIConnectionError) msg='AI 서버에 연결하지 못했습니다. 인터넷 연결을 확인하고 다시 시도하세요.';
-    else if(S_ && e instanceof S_.APIError) msg='AI 서버 오류로 읽지 못했습니다. 잠시 후 다시 시도하세요.';
-    else msg={refusal:'이 사진은 처리하지 못했습니다. 다른 사진으로 시도해주세요.',too_long:'항목이 너무 많아 다 읽지 못했습니다. 사진을 나눠서 올려주세요.',invalid_json:'결과를 표로 정리하지 못했습니다. 다시 한 번 눌러주세요.',empty:'사진에서 자재 항목을 찾지 못했습니다. 글자가 선명한 사진으로 다시 올려주세요.'}[e?.code]
-      || ('읽지 못했습니다: '+(e?.message||e));
-    IMPORT.err=msg;
+    IMPORT.err = e?.code==='empty'
+      ? '사진에서 금액이 있는 줄을 찾지 못했습니다. 밝은 곳에서 글자가 크게 나오도록 다시 찍어주세요.'
+      : '사진을 읽지 못했습니다: '+(e?.message||e);
   }finally{ IMPORT.busy=false; render(); }
+}
+/* 원본 단가표 사진 보관 (로그인 상태에서만) */
+async function uploadSheetPhotos(){
+  if(!sb||!session) return;
+  for(const f of IMPORT.files){
+    try{
+      const ext=(f.name.match(/\.[A-Za-z0-9]{1,5}$/)||['.jpg'])[0].toLowerCase();
+      const path=`${session.user.id}/price-sheets/${uid()}${ext}`;
+      const {error}=await sb.storage.from('plans').upload(path,f,{contentType:f.type||'image/jpeg'});
+      if(error) throw error;
+      const {data}=sb.storage.from('plans').getPublicUrl(path);
+      const s={id:uid(),url:data.publicUrl,path,at:Date.now(),name:f.name};
+      S.sheets.set(s.id,s); queueWrite('sheets',s.id,()=>S.sheets.has(s.id)?strip(S.sheets.get(s.id)):null,0);
+    }catch(e){ console.warn('sheet',e); }
+  }
 }
 function saveReviewed(addToEst){
   const sel=(IMPORT.items||[]).filter(x=>x.on&&x.name.trim());
@@ -879,9 +968,9 @@ function docHTML(e){
     </div>`).join('')}
 
     ${e.notes?`<h2 class="d-sec">비고 및 계약 조건</h2><div class="d-notes">${esc(e.notes)}</div>`:''}
-    ${co.bank?`<p style="margin-top:12px;font-size:12px"><b>입금 계좌</b> ${esc(co.bank)}</p>`:''}
-    <div class="d-sign"><div class="s">공급자 ${esc(co.name||'')} ${esc(co.ceo||'')} (인)</div><div class="s">고객 ${esc(e.client.name||'')} (서명)</div></div>
-    <div class="d-foot">본 견적서는 ${dt} 기준이며 자재 단가 변동 및 현장 실측에 따라 조정될 수 있습니다.</div>
+    ${(co.bankName||co.bankNo||co.bank)?`<p style="margin-top:12px;font-size:12px"><b>입금 계좌</b> ${esc([co.bankName,co.bankNo,co.bankHolder&&('예금주 '+co.bankHolder)].filter(Boolean).join(' ')||co.bank||'')}</p>`:''}
+    <div class="d-sign"><div class="s">공급자 ${esc(co.name||'')} ${esc(co.ceo||'')} ${co.stamp?`<img src="${esc(co.stamp)}" alt="(인)" class="d-stamp">`:'(인)'}</div><div class="s">고객 ${esc(e.client.name||'')} (서명)</div></div>
+    <div class="d-foot">본 견적서의 유효기간은 ${exp}까지입니다. 본 견적서는 ${dt} 기준이며 자재 단가 변동 및 현장 실측에 따라 조정될 수 있습니다.</div>
   </article>`;
 }
 function renderDocView(){
@@ -892,7 +981,12 @@ function renderDocView(){
   return `<div class="stack">
     <div class="row no-print"><h2 style="flex:1">고객용 견적서</h2>${estPicker()}</div>
     <details class="co panel no-print" ${co.name?'':'open'}><summary>우리 업체 정보 ${co.name?'· '+esc(co.name):'(견적서 발신란에 들어갑니다)'}</summary>
-      <div class="panel-b co-grid">${f('name','상호','○○인테리어')}${f('ceo','대표자')}${f('bizNo','사업자등록번호','000-00-00000')}${f('phone','연락처')}${f('email','이메일')}${f('address','주소')}${f('bank','입금 계좌','○○은행 000-000000-00 예금주')}</div></details>
+      <div class="panel-b co-grid">${f('name','상호','○○인테리어')}${f('ceo','대표자')}${f('bizNo','사업자등록번호','000-00-00000')}${f('phone','연락처')}${f('email','이메일')}${f('address','주소')}${f('bankName','입금 은행','국민은행')}${f('bankNo','계좌번호','000000-00-000000')}${f('bankHolder','예금주','홍길동')}
+      <label class="fl">대표 도장 <span class="muted">(견적서 (인) 자리에 찍힙니다)</span>
+        <div class="row">${co.stamp?`<img src="${esc(co.stamp)}" alt="도장" class="stamp-prev">`:''}
+          <button class="btn sm" data-act="pickStamp">${co.stamp?'바꾸기':'도장 사진 넣기'}</button>
+          ${co.stamp?'<button class="btn ghost sm danger" data-act="clearStamp">지우기</button>':''}</div></label>
+      </div></details>
     <section class="panel no-print"><div class="panel-b">
       <div class="doc-tools">
         <label><input type="checkbox" id="d-img" data-bind="est:showImages" ${e.showImages!==false?'checked':''}> 자재 사진 표시</label>
@@ -919,7 +1013,6 @@ async function downloadDoc(){
 
 /* ---------- 첫 화면: 현장 목록 · 현장 홈 ---------- */
 function renderNewSite(){
-  const ests=[...S.estimates.values()].sort((a,b)=>(b.updated||0)-(a.updated||0));
   return `<div class="stack" style="max-width:520px;margin:0 auto">
     <div class="row"><button class="btn ghost" data-act="homeBack">‹ 현장 목록</button></div>
     <section class="panel"><div class="panel-h"><h2>새 현장</h2></div>
@@ -931,10 +1024,6 @@ function renderNewSite(){
           <label class="fl">연락처<input class="f" type="tel" id="ns-phone" placeholder="010-0000-0000"></label>
         </div>
         <label class="fl">현장 주소<input class="f" id="ns-addr"></label>
-        ${ests.length?`<label class="fl">견적 연결 <span class="muted">(선택)</span>
-          <select class="f" id="ns-est"><option value="">연결 안 함</option>
-          ${ests.map(e=>`<option value="${e.id}">${esc(e.title)} · ${esc(e.client?.name||'')}</option>`).join('')}</select></label>
-          <span class="small muted" style="margin-top:-6px">견적을 연결하면 그 견적의 공정이 일정으로 들어옵니다.</span>`:''}
         <div class="row"><button class="btn pri" type="submit">현장 만들기</button>
           <button class="btn ghost" type="button" data-act="homeBack">취소</button></div>
       </form></section>
@@ -1110,7 +1199,8 @@ async function uploadPlans(files,p,taskId){
   if(!sb||!session){ toast('로그인한 상태에서만 파일을 올릴 수 있습니다.'); return; }
   for(const f of [...files]){
     if(f.size>50*1024*1024){ toast(`${f.name}: 50MB가 넘어 올리지 못했습니다.`); continue; }
-    const safe=f.name.replace(/[^\w.\-가-힣 ]/g,'_');
+    const ext=(f.name.match(/\.[A-Za-z0-9]{1,5}$/)||[''])[0].toLowerCase();
+    const safe=(f.name.replace(ext,'').replace(/[^A-Za-z0-9._-]/g,'').slice(0,24)||'photo')+(ext||'.jpg');
     const path=`${session.user.id}/${p.id}/${uid()}-${safe}`;
     try{
       const {error}=await sb.storage.from('plans').upload(path,f,{contentType:f.type||'application/octet-stream'});
@@ -1121,6 +1211,28 @@ async function uploadPlans(files,p,taskId){
     }catch(e){ toast(`${f.name} 올리지 못했습니다: ${e.message||e}`); }
   }
 }
+/* 현장 삭제: 연결된 견적을 함께 지울지 고르게 합니다 (견적은 현장과 따로 저장됩니다) */
+function askSiteDelete(p,n){
+  const est=p.estimateId&&S.estimates.get(p.estimateId);
+  return askConfirm({
+    title:`“${siteName(p)}” 현장을 삭제할까요?`,
+    lines:[`일정 ${(p.tasks||[]).length}건${n?`, 사진·도면 ${n}개`:''} 모두 지워집니다`,
+           p.share?.on?'고객·작업자 공유 링크도 닫힙니다':'되돌릴 수 없습니다',
+           '자료를 남기려면 취소하고 “자료 내려받기”를 먼저 하세요'],
+    ok:'네, 삭제합니다', cancel:'아니요, 그대로 둡니다',
+    checkbox: est ? {label:`연결된 견적 “${est.title||'제목 없음'}” (${won(calcEst(est).total)}원)도 함께 삭제`, checked:false} : null,
+  }).then(r=>r===true?{checked:false}:r||null);
+}
+async function doSiteDelete(p,n,alsoEstimate){
+  if(n) try{ await sb?.storage.from('plans').remove(p.files.map(f=>f.path)); }catch(err){ console.warn(err); }
+  if(alsoEstimate && p.estimateId && S.estimates.has(p.estimateId)){
+    deleteEst(p.estimateId);
+    if(S.curId===p.estimateId) setCur([...S.estimates.keys()][0]||null);
+  }
+  deleteProj(p.id);
+  toast(alsoEstimate?'현장과 견적을 삭제했습니다':'현장을 삭제했습니다');
+}
+
 /* 현장 자료 내려받기(ZIP) · 정리 */
 async function archiveProject(p,thenDelete){
   const files=p.files||[];
@@ -1285,7 +1397,8 @@ function renderProject(p){
 }
 const DAYW=34;               // 하루 한 칸의 너비(px)
 const WD=['일','월','화','수','목','금','토'];
-let SEL_DAY=null;            // 눌러서 펼쳐 본 날짜
+let SEL_DAY=null;
+const LINE_SYNC={}, MAT_SYNC={};            // 눌러서 펼쳐 본 날짜
 const onDay=(t,key)=>{ const s=dnum(t.start),e=dnum(t.end),d=dnum(key); return s&&e&&d>=s&&d<=e; };
 function ganttBars(tasks,r,sel){
   if(!r) return '';
@@ -1542,7 +1655,6 @@ function loadScript(src){ return new Promise((res,rej)=>{ const s=document.creat
 /* ---------- settings ---------- */
 function renderSettings(){
   const {url,key}=sbConf(), fromFile=!!(CFG.SUPABASE_URL&&CFG.SUPABASE_KEY);
-  const apiKey=ls.get('anthropic_key')||'';
   return `<div class="stack"><h2>설정</h2><div class="set-grid">
     <section class="panel"><div class="panel-h"><h3>계정 · 동기화</h3></div><div class="panel-b">
       ${!sb?`<p class="muted small" style="margin:0">서버가 연결되지 않아 이 기기에만 저장되고 있습니다. 아래 “서버 연결”을 먼저 채워주세요.</p>`
@@ -1551,12 +1663,6 @@ function renderSettings(){
           <div class="row"><button class="btn" data-act="syncNow">지금 동기화</button><button class="btn ghost danger" data-act="logout">로그아웃</button></div>
           <p class="muted small" style="margin:0">로그아웃하면 이 기기의 데이터는 지워지고, 다시 로그인하면 클라우드에서 받아옵니다.</p>`
         : `<p class="muted small" style="margin:0">로그인하지 않아 이 기기에만 저장되고 있습니다. 로그인하면 지금 데이터가 계정으로 올라갑니다.</p><div><button class="btn pri" data-act="showLogin">로그인</button></div>`}
-    </div></section>
-
-    <section class="panel"><div class="panel-h"><h3>AI 단가표 읽기</h3></div><div class="panel-b">
-      <p class="muted small" style="margin:0">Anthropic API 키를 넣으면 단가표 사진을 자동으로 정리합니다. 사용한 만큼 Anthropic 계정에서 요금이 나갑니다. 키는 이 기기에만 저장되고 동기화되지 않으니, 기기마다 한 번씩 넣어주세요.</p>
-      <label class="fl">API 키<input class="f" type="password" id="set-akey" autocomplete="off" placeholder="sk-ant-..." value="${esc(apiKey)}"></label>
-      <div class="row"><button class="btn pri" data-act="saveAKey">저장</button>${apiKey?`<button class="btn ghost danger" data-act="clearAKey">키 지우기</button>`:''}</div>
     </div></section>
 
     <section class="panel"><div class="panel-h"><h3>백업</h3></div><div class="panel-b">
@@ -1658,10 +1764,16 @@ document.addEventListener('input',ev=>{
     if(rest[0]==='client.size'){ const el=document.getElementById('o-size-conv'); if(el) el.textContent=sizeHint(val); }
     if(VIEW==='doc') refreshDoc(); else { recalc(); if(rest[0]==='title'){ const o=document.querySelector(`#estSel option[value="${e.id}"]`); if(o) o.textContent=`${e.title} · ${e.client.name||''}`; } } }
   else if(kind==='proc'){ const e=cur(); e.processes[+rest[0]][rest[1]]=val; saveEst(e); recalc(); }
-  else if(kind==='line'){ const e=cur(); e.processes[+rest[0]].lines[+rest[1]][rest[2]]=val; saveEst(e); recalc(); }
+  else if(kind==='line'){ const e=cur(), p=e.processes[+rest[0]], l=p.lines[+rest[1]];
+    l[rest[2]]=val; saveEst(e); recalc();
+    clearTimeout(LINE_SYNC[l.mid||('n'+rest[0]+'_'+rest[1])]);
+    LINE_SYNC[l.mid||('n'+rest[0]+'_'+rest[1])]=setTimeout(()=>syncLineToMaterial(e,p,l),1200); }
   else if(kind==='mat'){ const m=S.materials.get(rest[0]); if(!m) return; m[rest[1]]=val;
     if(rest[1]==='coverage'){ m.mode=val>0?'area':'qty'; m.coverageBasis=''; }
     m.updated=Date.now(); saveMat(m);
+    if(['name','spec','unit','unitPrice','coverage','loss'].includes(rest[1])){
+      clearTimeout(MAT_SYNC[m.id]); MAT_SYNC[m.id]=setTimeout(()=>{ const n=syncMaterialToLines(m); if(n) toast(`견적 ${n}곳의 단가를 함께 고쳤습니다`); },1200);
+    }
     const o=document.getElementById('o-m-'+m.id); if(o) o.innerHTML=perM2Html(matPerM2(m)); }
   else if(kind==='rev'){ const it=IMPORT.items[+rest[0]]; it[rest[1]]=val; if(rest[1]==='coverage') it.mode=val>0?'area':'qty';
     const o=document.getElementById('o-rv-'+rest[0]); if(o) o.innerHTML=perM2Html(matPerM2(it)); }
@@ -1681,6 +1793,8 @@ document.addEventListener('change',ev=>{
   if(a==='pick'){ setCur(t.value); render(); }
   if(a==='addLine'&&t.value){ const e=cur(), p=e.processes[+t.dataset.pi], m=S.materials.get(t.value); if(m){ p.lines.push(lineFromMat(m)); saveEst(e); render(); } }
   if(a==='revAll'){ IMPORT.items.forEach(x=>x.on=t.checked); render(); }
+  if(a==='revVendor'){ const v=t.value.trim(); IMPORT.items.forEach(x=>{ if(x.on) x.vendor=v; }); render(); }
+  if(a==='revProc'&&t.value){ IMPORT.items.forEach(x=>{ if(x.on) x.process=t.value; }); render(); }
   if(a==='pickProj'){ selectSite(t.value); render(); }
   if(a==='autoLogin'){ ls.set('autoLogin',t.checked?'1':'0'); if(!t.checked) ls.set('autoPw',null); toast(t.checked?'다음 로그인 때부터 자동으로 들어갑니다':'자동 로그인을 껐습니다'); render(); }
   if(a==='shareOn'){ toggleShare(curProj(),t.checked); }
@@ -1691,15 +1805,11 @@ document.addEventListener('submit',async ev=>{
     ev.preventDefault();
     const name=$('#ns-name').value.trim(), addr0=$('#ns-addr').value.trim();
     if(!name && !addr0){ toast('현장 이름이나 주소 중 하나는 적어주세요'); $('#ns-name').focus(); return; }
-    const estId=$('#ns-est')?.value||'';
-    const src=estId?S.estimates.get(estId):null;
-    const n=newProject(src||undefined);
+    const n=newProject();
     n.name=name;                                   // 사용자가 쓴 이름을 현장 제목으로
     n.client=$('#ns-client').value.trim()||n.client;
     n.phone=$('#ns-phone').value.trim()||n.phone;
     n.address=$('#ns-addr').value.trim()||n.address;
-    if(src) src.processes.forEach((pr,i)=>{ const P=PMAP[pr.k]||PMAP.etc; const st=addDays(today(),i*2);
-      n.tasks.push({id:uid(),proc:pr.k,name:P.n,start:st,end:addDays(st,1),worker:'',status:'예정',memo:''}); });
     S.projects.set(n.id,n); S.curPid=n.id; ls.set('curPid',n.id); saveProj(n);
     HOME_NEW=false; HOME_SEL=n.id; render(); window.scrollTo(0,0);
     toast(`“${siteName(n)}” 현장을 만들었습니다`);
@@ -1737,13 +1847,18 @@ document.addEventListener('click',async ev=>{
     case 'delLine': e.processes[+t.dataset.pi].lines.splice(+t.dataset.li,1); saveEst(e); render(); break;
     case 'toggleMode': { const p=e.processes[+t.dataset.pi], l=p.lines[+t.dataset.li]; if(l.mode==='qty'){ l.mode='area'; if(!num(l.coverage)) l.coverage=1; } else { l.qty=calcLine({...l,mode:'area'},num(p.area)).qty; l.mode='qty'; } saveEst(e); render(); break; }
     case 'refreshPrices': { let n=0; e.processes.forEach(p=>p.lines.forEach(l=>{ const m=l.mid&&S.materials.get(l.mid); if(m&&num(m.unitPrice)!==num(l.unitPrice)){ l.unitPrice=num(m.unitPrice); n++; } })); saveEst(e); render(); toast(n?`${n}개 자재 단가를 바꿨습니다`:'바뀐 단가가 없습니다'); break; }
-    case 'goImport': VIEW='mat'; render(); if(ls.get('anthropic_key')) $('#fileSheet').click(); break;
-    case 'pickSheet': $('#fileSheet').click(); break;
+    case 'goImport': VIEW='mat'; render(); $('#fileSheet').click(); break;
+    case 'pickSheet': $('#fileSheet').removeAttribute('capture'); $('#fileSheet').click(); break;
+    case 'shootSheet': $('#fileSheet').setAttribute('capture','environment'); $('#fileSheet').click(); break;
     case 'parse': parseSheets(); break;
     case 'revSave': saveReviewed(false); break;
     case 'revSaveAdd': saveReviewed(true); break;
     case 'revCancel': IMPORT={files:[],urls:[],busy:false,items:null,memo:'',err:''}; render(); break;
     case 'matFilter': MAT_FILTER=t.dataset.k; render(); break;
+    case 'delSheet': { const s=S.sheets.get(t.dataset.id); if(!s) break;
+      if(await askConfirm({title:'이 단가표 사진을 지울까요?',lines:['사진에서 만든 자재는 그대로 남습니다'],ok:'네, 지웁니다',cancel:'아니요'})){
+        try{ await sb?.storage.from('plans').remove([s.path]); }catch(err){ console.warn(err); }
+        S.sheets.delete(s.id); writeRecord('sheets',s.id,null,true); render(); } break; }
     case 'addMat': { const m={id:uid(),name:'',spec:'',process:MAT_FILTER==='all'?'etc':MAT_FILTER,unit:'박스',unitPrice:0,coverage:1,loss:5,mode:'area',note:'',updated:Date.now()}; S.materials.set(m.id,m); saveMat(m); render(); document.getElementById('m-'+m.id+'-name')?.select(); break; }
     case 'delMat': { const m=S.materials.get(t.dataset.id);
       if(await askConfirm({title:`“${m.name||'이름 없는 자재'}”을(를) 단가표에서 지울까요?`,lines:['이미 만든 견적의 금액은 그대로 유지됩니다'],ok:'네, 지웁니다',cancel:'아니요'})){ deleteMat(m.id); render(); } break; }
@@ -1755,8 +1870,6 @@ document.addEventListener('click',async ev=>{
     case 'skipLogin': AUTH.skipped=true; ls.set('skipLogin','1'); render(); break;
     case 'showLogin': AUTH.skipped=false; ls.set('skipLogin',null); render(); break;
     case 'logout': if(confirm('로그아웃할까요? 올리지 못한 변경사항이 있으면 먼저 올린 뒤 이 기기의 데이터를 지웁니다.')) logout(); break;
-    case 'saveAKey': { const v=$('#set-akey').value.trim(); ls.set('anthropic_key',v||null); toast(v?'API 키를 저장했습니다':'키를 지웠습니다'); render(); break; }
-    case 'clearAKey': ls.set('anthropic_key',null); render(); toast('키를 지웠습니다'); break;
     case 'saveSb': { ls.set('sb_url',$('#set-sburl').value.trim()||null); ls.set('sb_key',$('#set-sbkey').value.trim()||null); await connectSupabase(); render(); toast(sb?'서버에 연결했습니다':'연결 정보를 확인해주세요'); break; }
     case 'exportBackup': exportBackup(); break;
     case 'importBackup': $('#fileBackup').click(); break;
@@ -1772,13 +1885,10 @@ document.addEventListener('click',async ev=>{
       S.projects.set(n.id,n); S.curPid=n.id; ls.set('curPid',n.id); saveProj(n); VIEW='sched'; SCHED_MODE='site'; ls.set('view',VIEW); render(); toast('견적의 공정으로 일정을 만들었습니다. 날짜를 고쳐주세요.'); break; }
     case 'delProj': { const p=curProj(); if(!p) break;
       const n=(p.files||[]).length;
-      if(await askConfirm({title:`“${siteName(p)}” 현장을 삭제할까요?`,
-        lines:[`일정 ${(p.tasks||[]).length}건${n?`, 사진·도면 ${n}개`:''} 모두 지워집니다`,
-               p.share?.on?'고객·작업자 공유 링크도 닫힙니다':'되돌릴 수 없습니다',
-               '자료를 남기려면 취소하고 “자료 내려받기”를 먼저 하세요'],
-        ok:'네, 삭제합니다', cancel:'아니요, 그대로 둡니다'})){
-        if(n) try{ await sb?.storage.from('plans').remove(p.files.map(f=>f.path)); }catch(err){ console.warn(err); }
-        deleteProj(p.id); S.curPid=[...S.projects.keys()][0]||null; ls.set('curPid',S.curPid); HOME_SEL=null; render(); } break; }
+      { const res=await askSiteDelete(p,n);
+        if(!res) break;
+        await doSiteDelete(p,n,res.checked);
+        S.curPid=[...S.projects.keys()][0]||null; ls.set('curPid',S.curPid); HOME_SEL=null; render(); } break; }
     case 'addTask': { const p=curProj(); const k=t.dataset.k; const P=PMAP[k];
       const last=(p.tasks||[]).map(x=>x.end).filter(Boolean).sort().pop();
       const st=last?addDays(last,1):today();
@@ -1793,21 +1903,21 @@ document.addEventListener('click',async ev=>{
       p.tasks.push({...src,id:uid(),name:src.name.replace(/ \d+차$/,'')+` ${same+1}차`,start:st,end:addDays(st,len),status:'예정'});
       saveProj(p); render(); toast('같은 작업을 뒤쪽 날짜로 하나 더 넣었습니다. 날짜를 고쳐주세요.'); break; }
     case 'sortTasks': { const p=curProj(); p.tasks.sort((a,b)=>String(a.start||'').localeCompare(String(b.start||''))); saveProj(p); render(); break; }
-    case 'openSite': HOME_SEL=t.dataset.id; selectSite(t.dataset.id); render(); window.scrollTo(0,0); break;
+    case 'openSite': HOME_SEL=t.dataset.id; selectSite(t.dataset.id); VIEW='home'; ls.set('view',VIEW); render(); window.scrollTo(0,0); break;
+    case 'moveProc': { const pi=+t.dataset.pi, d=+t.dataset.d, arr=e.processes;
+      if(pi+d<0||pi+d>=arr.length) break;
+      [arr[pi],arr[pi+d]]=[arr[pi+d],arr[pi]]; saveEst(e); render(); break; }
+    case 'pickStamp': STAMP_PICK=true; $('#filePhoto').click(); break;
+    case 'clearStamp': S.company.stamp=''; saveCo(); render(); toast('도장을 지웠습니다'); break;
     case 'linkEstToSite': { const p=curProj(); if(!p||!e) break; p.estimateId=e.id; saveProj(p); render(); toast(`“${siteName(p)}” 현장에 연결했습니다`); break; }
     case 'delSite': { ev.stopPropagation(); const p=S.projects.get(t.dataset.id); if(!p) break;
       const n=(p.files||[]).length;
-      const ok=await askConfirm({title:`“${siteName(p)}” 현장을 삭제할까요?`,
-        lines:[`일정 ${(p.tasks||[]).length}건${n?`, 사진·도면 ${n}개`:''} 모두 지워집니다`,
-               p.share?.on?'고객·작업자 공유 링크도 닫힙니다':'되돌릴 수 없습니다',
-               '자료를 남기려면 취소하고 현장 화면에서 “자료 내려받기”를 먼저 하세요'],
-        ok:'네, 삭제합니다', cancel:'아니요, 그대로 둡니다'});
-      if(!ok) break;
-      if(n) try{ await sb?.storage.from('plans').remove(p.files.map(f=>f.path)); }catch(err){ console.warn(err); }
-      deleteProj(p.id);
+      const res=await askSiteDelete(p,n);
+      if(!res) break;
+      await doSiteDelete(p,n,res.checked);
       if(S.curPid===p.id){ S.curPid=[...S.projects.keys()][0]||null; ls.set('curPid',S.curPid); }
       if(HOME_SEL===p.id) HOME_SEL=null;
-      render(); toast('현장을 삭제했습니다'); break; }
+      render(); break; }
     case 'homeBack': HOME_SEL=null; HOME_NEW=false; render(); break;
     case 'openSched': VIEW='sched'; SCHED_MODE='site'; ls.set('view',VIEW); render(); window.scrollTo(0,0); break;
     case 'openFiles': VIEW='sched'; SCHED_MODE='site'; ls.set('view',VIEW); render();
@@ -1843,17 +1953,31 @@ document.addEventListener('click',async ev=>{
     case 'close3d': document.querySelector('.modal')?.remove(); break;
   }
 });
-$('#filePhoto').addEventListener('change',ev=>{ applyPhoto(ev.target.files[0]); ev.target.value=''; });
+let STAMP_PICK=false;
+$('#filePhoto').addEventListener('change',async ev=>{
+  const f=ev.target.files[0]; ev.target.value='';
+  if(STAMP_PICK){ STAMP_PICK=false; if(f){ try{ S.company.stamp=await fileToStamp(f); saveCo(); render(); toast('도장을 넣었습니다'); }catch(err){ toast('사진을 읽지 못했습니다'); } } return; }
+  applyPhoto(f);
+});
+/* 도장: 배경을 지우지 않고 정사각형으로 줄여 저장합니다 */
+async function fileToStamp(file){
+  const img=await loadImage(file);
+  const S2=240, c=document.createElement('canvas'); c.width=S2; c.height=S2;
+  const g=c.getContext('2d'); g.fillStyle='#fff'; g.fillRect(0,0,S2,S2);
+  const s=Math.min(S2/img.width,S2/img.height), w=img.width*s, h=img.height*s;
+  g.drawImage(img,(S2-w)/2,(S2-h)/2,w,h);
+  return c.toDataURL('image/png');
+}
 $('#fileSheet').addEventListener('change',ev=>{ setSheetFiles(ev.target.files); ev.target.value=''; });
 $('#fileBackup').addEventListener('change',ev=>{ if(ev.target.files[0]) importBackup(ev.target.files[0]); ev.target.value=''; });
 let PLAN_TASK='';
 $('#filePlan').addEventListener('change',ev=>{ if(ev.target.files.length) uploadPlans(ev.target.files,curProj(),PLAN_TASK); ev.target.value=''; ev.target.removeAttribute('accept'); PLAN_TASK=''; });
 document.addEventListener('dragover',ev=>{ const dz=ev.target.closest?.('#dz'); if(dz){ ev.preventDefault(); dz.classList.add('drag'); } });
 document.addEventListener('dragleave',ev=>{ ev.target.closest?.('#dz')?.classList.remove('drag'); });
-document.addEventListener('drop',ev=>{ const dz=ev.target.closest?.('#dz'); if(dz){ ev.preventDefault(); dz.classList.remove('drag'); if(ls.get('anthropic_key')) setSheetFiles(ev.dataTransfer.files); }
+document.addEventListener('drop',ev=>{ const dz=ev.target.closest?.('#dz'); if(dz){ ev.preventDefault(); dz.classList.remove('drag'); setSheetFiles(ev.dataTransfer.files); }
   const pdz=ev.target.closest?.('#pdz'); if(pdz){ ev.preventDefault(); pdz.classList.remove('drag'); uploadPlans(ev.dataTransfer.files,curProj()); } });
 document.addEventListener('dragover',ev=>{ const pdz=ev.target.closest?.('#pdz'); if(pdz){ ev.preventDefault(); pdz.classList.add('drag'); } });
-document.addEventListener('paste',ev=>{ if(VIEW!=='mat'||!ls.get('anthropic_key')) return; const fs=[...(ev.clipboardData?.files||[])]; if(fs.length){ ev.preventDefault(); setSheetFiles(fs); } });
+document.addEventListener('paste',ev=>{ if(VIEW!=='mat') return; const fs=[...(ev.clipboardData?.files||[])]; if(fs.length){ ev.preventDefault(); setSheetFiles(fs); } });
 document.addEventListener('visibilitychange',()=>{ if(window.__viewerMode) return; if(document.visibilityState==='hidden') flushWrites(); else { scheduleSync(200); checkUpdate(false); } });
 window.addEventListener('pagehide',flushWrites);
 window.addEventListener('online',()=>scheduleSync(200));
