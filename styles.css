@@ -436,3 +436,12 @@ table.t tr.is-new > td:first-child{box-shadow:inset 3px 0 0 var(--accent,#2f6f4f
 .calc-kv dt{color:var(--muted)}
 .calc-kv dd{margin:0;text-align:right;font-variant-numeric:tabular-nums}
 .est-wide.sum-off .est-calc{order:0}
+
+/* 저장 안 한 자재 목록 알림 */
+.pending-bar{position:fixed;left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));z-index:40;
+  display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:center;
+  background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 14px;
+  box-shadow:0 -2px 18px rgba(20,30,26,.16);font-size:13px}
+@media (max-width:760px){.pending-bar{bottom:calc(66px + env(safe-area-inset-bottom))}}
+.rev-keep{background:#fffdf0;border:1px solid #e6dfae;border-radius:8px;padding:8px 10px;margin:0}
+.rev-bar{position:sticky;bottom:0;background:var(--surface);border-top:1px solid var(--line2);z-index:3;flex-wrap:wrap;gap:8px}

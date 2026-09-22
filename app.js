@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.10.1';
+const APP_VERSION = '5.11.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -637,6 +637,26 @@ let VIEW=ls.get('view','home');
 let HOME_SEL=null, HOME_NEW=false, HUB_GALLERY=false;
 let MAT_FILTER='all', VENDOR_FILTER='all';
 let IMPORT={files:[],urls:[],busy:false,items:null,memo:'',err:''};
+/* 사진에서 읽어낸 자재는 저장을 누르기 전까지 이 기기에 적어 둡니다.
+   다른 탭에 갔다 오거나 앱이 꺼졌다 켜져도 그대로 남습니다. */
+const IMPORT_KEY='importDraft';
+let IMPORT_SAVE_T=null;
+function saveImportDraft(now){
+  clearTimeout(IMPORT_SAVE_T);
+  const write=()=>{ try{
+    if(IMPORT.items&&IMPORT.items.length) ls.set(IMPORT_KEY,JSON.stringify({items:IMPORT.items,memo:IMPORT.memo||'',at:IMPORT.draftAt||Date.now()}));
+    else ls.set(IMPORT_KEY,null);
+  }catch{} };
+  now ? write() : IMPORT_SAVE_T=setTimeout(write,400);
+}
+function loadImportDraft(){
+  try{
+    const raw=ls.get(IMPORT_KEY); if(!raw) return;
+    const d=JSON.parse(raw);
+    if(d&&Array.isArray(d.items)&&d.items.length){ IMPORT.items=d.items; IMPORT.memo=d.memo||''; IMPORT.draftAt=d.at||Date.now(); }
+  }catch{}
+}
+function clearImportDraft(){ IMPORT={files:[],urls:[],busy:false,items:null,memo:'',err:''}; ls.set(IMPORT_KEY,null); }
 let AUTH={mode:'login',busy:false,err:'',skipped:ls.get('skipLogin')==='1'};
 
 function needLogin(){ return sb && !session && !AUTH.skipped; }
@@ -681,6 +701,7 @@ function render(){
   else if(VIEW==='set') app.innerHTML=renderSettings();
   else app.innerHTML=renderEst();
   if(VIEW==='est') recalc();
+  showImportPending();
   setPageMargin(VIEW==='doc' && DOC_MODE==='contract');   // 계약서를 볼 때만 종이 여백 1cm
   autoSizeAll();
   updatePill();
@@ -1066,6 +1087,15 @@ function renderCalc(e){
     </div>`:''}
   </aside>`;
 }
+/* 자재 화면 밖에서도 저장 안 한 목록이 있다는 걸 알려 줍니다 */
+function showImportPending(){
+  let bar=document.getElementById('importPending');
+  const n=(IMPORT.items||[]).length;
+  if(!n || VIEW==='mat'){ bar?.remove(); return; }
+  if(!bar){ bar=document.createElement('div'); bar.id='importPending'; bar.className='pending-bar no-print'; document.body.appendChild(bar); }
+  bar.innerHTML=`<span>사진에서 읽은 자재 <b>${n}개</b>가 아직 저장되지 않았습니다</span>
+    <button class="btn sm pri" data-act="goReview">보러 가기</button>`;
+}
 function refreshCalc(){ const o=document.getElementById('calc-out'); if(o) o.innerHTML=calcOutHtml(); }
 function renderProc(e,p,pi){ // e: 견적
   const P=PMAP[p.k]||PMAP.etc;
@@ -1239,6 +1269,8 @@ function renderImport(){
     const e=cur();
     body+=`<div class="panel" style="margin-top:12px">
       <div class="panel-h"><h3>읽어낸 자재 ${I.items.length}개</h3><span class="muted small">저장 전에 확인·수정하세요. <span class="badge warn">추정</span>은 사진에 규격이 없어 일반 시공 기준으로 잡은 값입니다.</span></div>
+      ${I.draftAt?`<div class="panel-b"><div class="row rev-keep"><span class="small">아직 자재함에 저장하지 않았습니다. 앱을 닫아도 이 목록은 남아 있습니다.
+        <span class="muted">(${new Date(I.draftAt).toLocaleString('ko-KR')} 에 읽음)</span></span></div></div>`:''}
       ${I.memo?`<div class="panel-b memo">${esc(I.memo)}</div>`:''}
       <div class="panel-b row" style="padding-block:6px">
         <label class="row small" style="gap:6px"><input type="checkbox" id="rv-all" data-act-change="revAll" ${I.items.every(x=>x.on)?'checked':''}> 전체 선택</label>
@@ -1257,7 +1289,7 @@ function renderImport(){
         <td class="r" data-l="단가(원)"><input class="f num" type="number" inputmode="numeric" id="rv-${i}-price" data-bind="rev:${i}:unitPrice" data-num value="${esc(it.unitPrice)}">${it.vatConverted?'<div><span class="badge">VAT 제외 환산</span></div>':''}</td>
         <td class="r" data-l="로스%"><input class="f num" type="number" inputmode="decimal" id="rv-${i}-loss" data-bind="rev:${i}:loss" data-num value="${esc(it.loss)}"></td>
         <td class="small muted" data-l="근거" style="max-width:240px">${esc(it.note||'')}</td></tr>`).join('')}</tbody></table></div>
-      <div class="panel-b row">
+      <div class="panel-b row rev-bar" id="revBar">
         <button class="btn pri" data-act="revSave">선택 항목 자재함에 저장</button>
         ${e?`<button class="btn" data-act="revSaveAdd">저장하고 “${esc(e.title)}” 견적에 추가</button>`:''}
         <span class="spacer"></span><button class="btn ghost" data-act="revCancel">취소</button>
@@ -1382,6 +1414,8 @@ async function parseSheets(){
     if(!items.length) throw {code:'empty'};
     IMPORT.items=items;
     IMPORT.memo='사진에서 읽은 값입니다. 공정과 단위는 확인해서 고쳐주세요.';
+    IMPORT.draftAt=Date.now();
+    saveImportDraft(true);        // 저장을 누르기 전에 꺼져도 남아 있게
     uploadSheetPhotos();          // 원본 사진은 따로 보관
   }catch(e){
     IMPORT.err = e?.code==='empty'
@@ -1412,7 +1446,7 @@ function saveReviewed(addToEst){
     S.materials.set(m.id,m); saveMat(m);
     if(e){ const p=ensureProc(e,m.process); p.lines.push(lineFromMat(m)); } });
   if(e) saveEst(e);
-  IMPORT={files:[],urls:[],busy:false,items:null,memo:'',err:''};
+  clearImportDraft();
   toast(`${sel.length}개 자재를 저장했습니다`+(e?' · 견적에 추가됨':''));
   if(e) VIEW='est';
   render();
@@ -3022,7 +3056,7 @@ document.addEventListener('input',ev=>{
       },1500);
     }
     const o=document.getElementById('o-m-'+m.id); if(o) o.innerHTML=perM2Html(matPerM2(m)); }
-  else if(kind==='rev'){ const it=IMPORT.items[+rest[0]]; it[rest[1]]=val; if(rest[1]==='coverage') it.mode=val>0?'area':'qty';
+  else if(kind==='rev'){ const it=IMPORT.items[+rest[0]]; it[rest[1]]=val; if(rest[1]==='coverage') it.mode=val>0?'area':'qty'; saveImportDraft();
     const o=document.getElementById('o-rv-'+rest[0]); if(o) o.innerHTML=perM2Html(matPerM2(it)); }
   else if(kind==='vendor'){ const v=S.vendors.get(rest[0]); if(!v) return; v[rest[1]]=val; saveVendor(v);
     if(rest[1]==='name'){ S.materials.forEach(m=>{ if(m.vendorId===v.id&&m.vendor!==val){ m.vendor=val; saveMat(m); } });
@@ -3092,9 +3126,9 @@ document.addEventListener('change',ev=>{
   if(!a) return;
   if(a==='pick'){ setCur(t.value); render(); }
   if(a==='addLine'&&t.value){ const e=cur(), p=e.processes[+t.dataset.pi], m=S.materials.get(t.value); if(m){ p.lines.push(lineFromMat(m)); saveEst(e); render(); } }
-  if(a==='revAll'){ IMPORT.items.forEach(x=>x.on=t.checked); render(); }
-  if(a==='revVendor'){ const v=t.value.trim(); IMPORT.items.forEach(x=>{ if(x.on) x.vendor=v; }); render(); }
-  if(a==='revProc'&&t.value){ IMPORT.items.forEach(x=>{ if(x.on) x.process=t.value; }); render(); }
+  if(a==='revAll'){ IMPORT.items.forEach(x=>x.on=t.checked); saveImportDraft(true); render(); }
+  if(a==='revVendor'){ const v=t.value.trim(); IMPORT.items.forEach(x=>{ if(x.on) x.vendor=v; }); saveImportDraft(true); render(); }
+  if(a==='revProc'&&t.value){ IMPORT.items.forEach(x=>{ if(x.on) x.process=t.value; }); saveImportDraft(true); render(); }
   if(a==='pickProj'){ selectSite(t.value); render(); }
   if(a==='excelPick'){ const p=curProj(); const f=(p?.excel||[]).find(x=>x.id===t.value); EXCEL_SEL=t.value; showExcel(f); }
   if(a==='autoLogin'){ ls.set('autoLogin',t.checked?'1':'0'); if(!t.checked) ls.set('autoPw',null);
@@ -3214,7 +3248,13 @@ document.addEventListener('click',async ev=>{
     case 'parse': parseSheets(); break;
     case 'revSave': saveReviewed(false); break;
     case 'revSaveAdd': saveReviewed(true); break;
-    case 'revCancel': IMPORT={files:[],urls:[],busy:false,items:null,memo:'',err:''}; render(); break;
+    case 'revCancel': {
+      const n=(IMPORT.items||[]).length;
+      if(n && !await askConfirm({title:`읽어낸 자재 ${n}개를 버릴까요?`,
+        lines:['저장하지 않은 목록이 사라집니다','올려 둔 사진은 그대로 남습니다'],
+        ok:'네, 버립니다', cancel:'아니요, 계속 씁니다'})) break;
+      clearImportDraft(); render(); break; }
+    case 'goReview': VIEW='mat'; render(); setTimeout(()=>document.getElementById('revBar')?.scrollIntoView({block:'center'}),80); break;
     case 'matFilter': MAT_FILTER=t.dataset.k; render(); break;
     case 'vendorDoc': VENDOR_DOC={id:t.dataset.id,field:t.dataset.f}; $('#filePhoto').click(); break;
     case 'vendorDocDel': { const v=S.vendors.get(t.dataset.id); const f=v?.[t.dataset.f]; if(!v||!f) break;
@@ -3556,6 +3596,7 @@ async function connectSupabase(){
   const shareToken=new URLSearchParams(location.search).get('s');
   if(shareToken){ await renderViewer(shareToken); registerSW(); return; }
   await loadLocal();
+  loadImportDraft();            // 저장 안 한 자재 목록 되살리기
   await connectSupabase();
   render();
   registerSW();
