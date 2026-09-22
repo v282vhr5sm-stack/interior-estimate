@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.2.0';
+const APP_VERSION = '5.3.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -829,6 +829,7 @@ function renderExcel(){
           <a class="btn sm" href="${esc(sel?.url||'#')}" download target="_blank" rel="noopener">원본 내려받기</a>
           <button class="btn sm ghost" data-act="printExcel">인쇄 / PDF</button>
           <button class="btn sm" data-act="saveXlsx">수정본 엑셀로 저장</button>
+          <button class="btn sm" data-act="officeView">엑셀 원본 그대로 보기</button>
           <span class="spacer"></span>
           <button class="btn ghost sm danger" data-act="delExcel" data-id="${sel?.id||''}">파일 삭제</button>
         </div>`:'<p class="muted small" style="margin:0">엑셀로 만든 견적서를 올리면 서식 그대로 볼 수 있습니다. (.xlsx)</p>'}
@@ -2114,6 +2115,27 @@ const XL_FN={SUM:a=>a.reduce((s,x)=>s+(+x||0),0),AVERAGE:a=>a.length?a.reduce((s
   ROUNDUP:(a)=>{const[v,d=0]=a;const f=Math.pow(10,d);return Math.ceil(v*f)/f;},
   ROUNDDOWN:(a)=>{const[v,d=0]=a;const f=Math.pow(10,d);return Math.floor(v*f)/f;},
   INT:a=>Math.floor(a[0]),ABS:a=>Math.abs(a[0]),IF:a=>a[0]?a[1]:a[2],PRODUCT:a=>a.reduce((s,x)=>s*(+x||0),1)};
+function colIdx(name){ let c=0; for(const ch of String(name).toUpperCase()) c=c*26+(ch.charCodeAt(0)-64); return c; }
+/* 엑셀에서 아래로 끌어 복사한 수식을 그 칸 기준으로 옮겨 씁니다 */
+function shiftFormula(f,dr,dc){
+  return String(f).replace(/(\$?)([A-Z]{1,3})(\$?)(\d+)/g,(m,ad,col,ar,row)=>{
+    const c = ad ? col : colName(Math.max(1,colIdx(col)+dc));
+    const r = ar ? row : String(Math.max(1,+row+dr));
+    return ad+c+ar+r;
+  });
+}
+function formulaOf(ws,cell,addr){
+  const v=cell.value;
+  if(!v||typeof v!=='object') return null;
+  if(v.formula) return v.formula;
+  if(v.sharedFormula){
+    const master=ws.getCell(v.sharedFormula);
+    const mf=master?.value?.formula; if(!mf) return null;
+    const a=cellRef(v.sharedFormula), b=cellRef(addr);
+    return shiftFormula(mf, b.r-a.r, b.c-a.c);
+  }
+  return null;
+}
 function colName(n){ let s=''; while(n>0){ const r=(n-1)%26; s=String.fromCharCode(65+r)+s; n=Math.floor((n-1)/26); } return s; }
 function cellNum(ws,addr){
   const c=ws.getCell(addr); const v=c.value;
@@ -2124,8 +2146,16 @@ function cellNum(ws,addr){
 }
 function evalFormula(ws,src){
   let f=String(src).replace(/^=/,'');
-  // 다른 시트 참조는 지원하지 않습니다
-  if(/!/.test(f)) throw new Error('다른 시트 참조');
+  // 다른 시트 참조: '시트명'!A1 또는 시트명!A1:B3
+  f=f.replace(/(?:'([^']+)'|([A-Za-z0-9_가-힣]+))!\$?([A-Z]{1,3})\$?(\d+)(?::\$?([A-Z]{1,3})\$?(\d+))?/g,
+    (m,q,plain,c1,r1,c2,r2)=>{
+      const other=XLS?.wb.getWorksheet(q||plain); if(!other) return '0';
+      if(!c2) return String(cellNum(other,c1.toUpperCase()+r1));
+      const a={r:+r1,c:colIdx(c1)}, b={r:+r2,c:colIdx(c2)}, out=[];
+      for(let r=Math.min(a.r,b.r);r<=Math.max(a.r,b.r);r++)
+        for(let c=Math.min(a.c,b.c);c<=Math.max(a.c,b.c);c++) out.push(cellNum(other,colName(c)+r));
+      return '['+out.join(',')+']';
+    });
   // 범위 → 값 목록
   f=f.replace(/\$?([A-Z]+)\$?(\d+):\$?([A-Z]+)\$?(\d+)/gi,(m,c1,r1,c2,r2)=>{
     const a=cellRef(c1+r1), b=cellRef(c2+r2), out=[];
@@ -2149,23 +2179,39 @@ function evalFormula(ws,src){
   });
 }
 function recalcSheet(){
-  const ws=curSheet(); if(!ws) return;
-  for(let pass=0;pass<4;pass++){
-    ws.eachRow({includeEmpty:false},row=>{
-      row.eachCell({includeEmpty:false},cell=>{
-        const v=cell.value;
-        if(v&&typeof v==='object'&&v.formula){
-          try{ const r=evalFormula(ws,v.formula); cell.value={formula:v.formula, result:r}; }
-          catch(e){ /* 계산 못 하면 엑셀이 저장해 둔 값을 그대로 씁니다 */ }
-        }
-      });
+  if(!XLS) return;
+  let ok=0, fail=0;
+  for(let pass=0;pass<5;pass++){
+    ok=0; fail=0;
+    XLS.wb.worksheets.forEach(ws=>{
+      const maxR=Math.max(1,ws.rowCount||1), maxC=Math.max(1,ws.columnCount||1);
+      for(let r=1;r<=maxR;r++) for(let c=1;c<=maxC;c++){
+        const addr=colName(c)+r, cell=ws.getCell(addr);
+        const f=formulaOf(ws,cell,addr); if(!f) continue;
+        try{ const val=evalFormula(ws,f); cell.value={formula:f, result:val}; ok++; }
+        catch(e){ fail++; }
+      }
     });
   }
+  XLS.calc={ok,fail};
 }
+let XLS_ZOOM=1;
 function paintExcel(){
   if(!XLS){ EXCEL_HTML=''; render(); return; }
   const tabs=XLS.wb.worksheets.map((ws,i)=>`<button class="chip" data-act="xlsTab" data-i="${i}" aria-pressed="${i===XLS.sel}">${esc(ws.name)}</button>`).join('');
-  EXCEL_HTML=`<div class="chips" style="margin-bottom:10px">${tabs}</div>${sheetToHtml(curSheet())}`;
+  const calc=XLS.calc?`<span class="muted small">수식 ${XLS.calc.ok}개 계산${XLS.calc.fail?` · ${XLS.calc.fail}개는 엑셀 저장값 사용`:''}</span>`:'';
+  EXCEL_HTML=`<div class="row" style="margin-bottom:10px">
+      <div class="chips">${tabs}</div>
+      <span class="spacer"></span>
+      ${calc}
+      <div class="row" style="gap:4px">
+        <button class="btn ghost sm" data-act="xlsZoom" data-z="-1" title="축소">−</button>
+        <button class="btn ghost sm" data-act="xlsZoom" data-z="0" title="100%">${Math.round(XLS_ZOOM*100)}%</button>
+        <button class="btn ghost sm" data-act="xlsZoom" data-z="1" title="확대">＋</button>
+        <button class="btn ghost sm" data-act="xlsZoom" data-z="fit" title="화면 너비에 맞추기">맞춤</button>
+      </div>
+    </div>
+    <div class="xls-zoom" style="transform:scale(${XLS_ZOOM});width:${(100/XLS_ZOOM).toFixed(2)}%">${sheetToHtml(curSheet())}</div>`;
   EXCEL_BUSY=false; render();
 }
 const argb = v => { if(!v) return ''; const s=String(v.argb||v||''); return s.length===8?'#'+s.slice(2):(s.length===6?'#'+s:''); };
@@ -2699,7 +2745,28 @@ document.addEventListener('click',async ev=>{
       if(EST_MODE==='excel'){ const p=curProj(); const f=(p?.excel||[]).slice().sort((a,b)=>(b.at||0)-(a.at||0))[0]; if(f&&!EXCEL_HTML) showExcel(f); }
       break;
     case 'pickExcel': $('#fileExcel').click(); break;
-    case 'xlsTab': { if(!XLS) break; XLS.sel=+t.dataset.i; recalcSheet(); paintExcel(); break; }
+    case 'xlsTab': { if(!XLS) break; XLS.sel=+t.dataset.i; paintExcel(); break; }
+    case 'xlsZoom': { const z=t.dataset.z;
+      if(z==='0') XLS_ZOOM=1;
+      else if(z==='fit'){
+        const stage=document.querySelector('.xls-stage'), tb=document.querySelector('table.xls');
+        if(stage&&tb){ const need=tb.scrollWidth||tb.offsetWidth; XLS_ZOOM=Math.min(1,Math.max(0.3,(stage.clientWidth-8)/need)); }
+      }
+      else XLS_ZOOM=Math.min(2.5,Math.max(0.3,XLS_ZOOM+(+z)*0.1));
+      XLS_ZOOM=Math.round(XLS_ZOOM*100)/100; paintExcel(); break; }
+    case 'officeView': { const p=curProj(); const f=(p?.excel||[]).find(x=>x.id===(t.dataset.id||EXCEL_SEL))||(p?.excel||[])[0];
+      if(!f) break;
+      if(!await askConfirm({title:'엑셀 원본 그대로 보기',
+        lines:['마이크로소프트 오피스 미리보기로 파일을 엽니다','이 방식은 파일 주소를 마이크로소프트 서버에 보내 화면을 받아옵니다','보기만 가능하고 수정은 안 됩니다'],
+        ok:'네, 열겠습니다', cancel:'아니요', danger:false})) break;
+      const box=document.createElement('div'); box.className='modal';
+      box.innerHTML=`<div class="modal-b" style="width:min(1200px,96vw);height:88vh;display:flex;flex-direction:column;gap:8px">
+        <div class="row"><b style="flex:1">${esc(f.name)}</b>
+          <a class="btn sm" href="${esc(f.url)}" target="_blank" rel="noopener" download>원본 내려받기</a>
+          <button class="btn sm" data-x="close">닫기</button></div>
+        <iframe src="https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(f.url)}" style="flex:1;border:0;border-radius:8px;background:#fff"></iframe></div>`;
+      box.addEventListener('click',ev=>{ if(ev.target.closest('[data-x]')||ev.target===box) box.remove(); });
+      document.body.appendChild(box); break; }
     case 'saveXlsx': { if(!XLS) break;
       try{ const buf=await XLS.wb.xlsx.writeBuffer();
         await shareOrDownload((XLS.rec.name||'견적서').replace(/\.xlsx$/i,'')+'_수정.xlsx',
