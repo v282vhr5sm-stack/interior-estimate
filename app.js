@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.7.0';
+const APP_VERSION = '5.7.1';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -873,7 +873,7 @@ function renderEst(){
    :sp?`<div class="sitebar warn"><span>이 견적은 아직 어느 현장에도 연결되지 않았습니다.</span><span class="spacer"></span>
       <button class="btn sm" data-act="linkEstToSite">“${esc(siteName(sp))}” 현장에 연결</button></div>`:''}
   <div class="row"><div style="flex:1;min-width:220px"><div class="eyebrow">견적 번호 ${esc(e.no)}</div><input class="f" id="estTitle" data-bind="est:title" value="${esc(e.title)}" placeholder="견적 제목 (예: 상계동 34평 리모델링)" style="font-size:20px;font-weight:700;border-color:transparent;padding-left:0;background:transparent"></div>${estPicker()}</div>
-  <div class="est-wide">
+  <div class="est-wide${SUM_OPEN?'':' sum-off'}">
     <div class="stack">
       <section class="panel"><div class="panel-b client-grid">
         <label class="fl">고객명<input class="f" id="c-name" data-bind="est:client.name" value="${esc(e.client.name)}" placeholder="홍길동"></label>
@@ -892,9 +892,11 @@ function renderEst(){
         <div class="chips">${PROCS.filter(p=>!used.has(p.k)).map(p=>`<button class="chip" data-act="addProc" data-k="${p.k}">+ ${p.n}</button>`).join('')}</div>
       </div>
     </div>
-    <aside class="panel summary est-sum">
-      <div class="panel-h"><h3>합계</h3><span class="spacer"></span><button class="btn sm" data-act="view" data-v="doc">고객용 보기 →</button></div>
-      <div class="panel-b">
+    <aside class="panel summary est-sum${SUM_OPEN?'':' slim'}">
+      <div class="panel-h"><h3>합계</h3>${SUM_OPEN?'':`<b class="v sum-peek" id="o-total"></b>`}<span class="spacer"></span>
+        ${SUM_OPEN?'<button class="btn sm" data-act="view" data-v="doc">고객용 보기 →</button>':''}
+        <button class="btn ghost sm" data-act="toggleSum">${SUM_OPEN?'숨기기':'펼치기'}</button></div>
+      ${SUM_OPEN?`<div class="panel-b">
         <div class="sum-rows">
           <div class="sum-row"><span class="muted">재료비</span><span class="v" id="o-mat"></span></div>
           <div class="sum-row"><span class="muted">재료비 부가세 10%</span><span class="v" id="o-matvat"></span></div>
@@ -908,7 +910,7 @@ function renderEst(){
         <div class="eyebrow" style="margin-top:14px">공정별 원가</div>
         <div class="mini-bars" id="o-bars"></div>
         <div class="row" style="margin-top:14px"><button class="btn sm" data-act="refreshPrices" title="자재 단가표의 최신 단가로 이 견적의 자재 단가를 바꿉니다">단가표 최신가 반영</button><button class="btn sm" data-act="goImport">단가표 사진 넣기</button></div>
-      </div>
+      </div>`:''}
     </aside>
   </div></div>`;
 }
@@ -1400,18 +1402,34 @@ function docHTML(e){
 /* ── 계약서 ───────────────────────────────────────────────
    첨부해 주신 한글 계약서 양식을 그대로 옮긴 것입니다.
    빈칸만 현장·견적 내용으로 채워집니다. */
-let DOC_MODE = 'quote';                 // quote = 견적서, contract = 계약서
+let DOC_MODE = 'quote';
+let SUM_OPEN = ls.get('sumOpen') !== '0';   // 견적 화면 오른쪽 합계를 펼쳐 둘지                 // quote = 견적서, contract = 계약서
 const PAYKEYS = [
-  {k:'deposit',  label:'계약금'},
-  {k:'mid1',     label:'중도금 1차'},
-  {k:'mid2',     label:'중도금 2차'},
-  {k:'mid3',     label:'중도금 3차'},
-  {k:'balance',  label:'잔금'},
+  {k:'deposit',  label:'계약금',     pct:10},
+  {k:'mid1',     label:'중도금 1차', pct:40},
+  {k:'mid2',     label:'중도금 2차', pct:40},
+  {k:'mid3',     label:'중도금 3차', pct:0},
+  {k:'balance',  label:'잔금',       pct:10},
 ];
+/* 공사대금을 계약금 10% · 중도금 40%+40% · 잔금 10%로 나눕니다.
+   앞 금액은 만 원 단위로 맞추고, 잔금이 나머지를 받아 합이 딱 맞습니다. */
+function splitPay(total){
+  const t=Math.max(0,Math.round(num(total))), out={};
+  let used=0;
+  PAYKEYS.forEach(({k,pct})=>{ if(k==='balance') return;
+    const v=pct?Math.round(t*pct/100/10000)*10000:0; out[k]=v; used+=v; });
+  out.balance=Math.max(0,t-used);
+  return out;
+}
 function ctData(e){
   const co=S.company||{}, p=S.projects.get(e.pid)||{}, c=calcEst(e);
   const x=e.contract||{};
-  const pay={}; PAYKEYS.forEach(({k})=>{ pay[k]={amount:x.pay?.[k]?.amount??'', date:x.pay?.[k]?.date??''}; });
+  const total = x.amount===''||x.amount===undefined ? c.total : num(x.amount);
+  const auto = splitPay(total);
+  const pay={}; PAYKEYS.forEach(({k})=>{
+    const a=x.pay?.[k]?.amount;
+    pay[k]={amount: (a===''||a===undefined) ? auto[k] : num(a), date:x.pay?.[k]?.date??''};
+  });
   return {
     site:   x.site   ?? (e.client.address||''),
     start:  x.start  ?? (p.startedAt||''),
@@ -1457,7 +1475,7 @@ function contractHTML(e){
     <div class="ct-sub">공사 주요 내용</div>
     <table>
       <tr><td class="n">1</td><td class="k">시공장소</td><td>${blank(d.site,20)}</td></tr>
-      <tr><td class="n">2</td><td class="k">공시기간</td><td>
+      <tr><td class="n">2</td><td class="k">공사기간</td><td>
         <div class="amt"><span class="w">(착공예정일)　${ymdKo(d.start)||'　　년　　월　　일'}</span>
         <span class="w">(준공예정일)　${ymdKo(d.end)||'　　년　　월　　일'}</span></div></td></tr>
       <tr><td class="n">3</td><td class="k">공사대금</td><td>
@@ -1509,8 +1527,8 @@ function renderContractForm(e){
   const t=(k,l,ph='')=>`<label class="fl">${l}<input class="f" id="ct-${k}" data-bind="est:contract.${k}" value="${esc(d[k]||'')}" placeholder="${esc(ph)}"></label>`;
   const dt=(k,l)=>`<label class="fl">${l}<input class="f" type="date" id="ct-${k}" data-bind="est:contract.${k}" value="${esc(d[k]||'')}"></label>`;
   const money=(k,l)=>`<label class="fl">${l}<input class="f num" type="number" inputmode="numeric" step="10000" id="ct-${k}" data-bind="est:contract.${k}" data-num value="${esc(d[k]??'')}"></label>`;
-  const payRow=({k,label})=>`<div class="client-grid">
-    <label class="fl">${label} 금액(원)<input class="f num" type="number" inputmode="numeric" step="10000" id="ct-${k}-a" data-bind="est:contract.pay.${k}.amount" data-num value="${esc(d.pay[k].amount??'')}"></label>
+  const payRow=({k,label,pct})=>`<div class="client-grid">
+    <label class="fl">${label} 금액(원)${pct?` · ${pct}%`:''}<input class="f num" type="number" inputmode="numeric" step="10000" id="ct-${k}-a" data-bind="est:contract.pay.${k}.amount" data-num value="${esc(d.pay[k].amount??'')}"></label>
     <label class="fl">${label} 지급일<input class="f" type="date" id="ct-${k}-d" data-bind="est:contract.pay.${k}.date" value="${esc(d.pay[k].date||'')}"></label>
   </div>`;
   const sum=PAYKEYS.reduce((a,{k})=>a+num(d.pay[k].amount),0);
@@ -1522,6 +1540,9 @@ function renderContractForm(e){
       <button class="btn pri" data-act="download">${isTouch()?'보내기':'파일로 저장'}</button>
     </div>
     <div class="client-grid" style="margin-bottom:10px">
+      ${t('clBiz','고객 상호','예: 미성빌딩')}
+      ${t('clName','고객명(대표자명)')}
+      ${t('clPhone','고객 연락처')}
       ${t('site','시공장소','현장 주소')}
       ${money('amount','공사대금(원)')}
       ${dt('start','착공예정일')}
@@ -1529,12 +1550,14 @@ function renderContractForm(e){
       ${t('vat','부가세 표기')}
       ${dt('signDate','계약일자')}
     </div>
-    <details ${sum?'':'open'}><summary>대금 지급 일정 ${sum?`· 합계 ${won(sum)}원${sum!==num(d.amount)?' (공사대금과 '+won(Math.abs(sum-num(d.amount)))+'원 차이)':''}`:''}</summary>
-      <div style="padding-top:8px">${PAYKEYS.map(payRow).join('')}
+    <details open><summary>대금 지급 일정 · 합계 ${won(sum)}원${sum!==num(d.amount)?` <span class="warn-t">(공사대금과 ${won(Math.abs(sum-num(d.amount)))}원 차이)</span>`:''}</summary>
+      <div style="padding-top:8px">
+      <div class="row" style="margin-bottom:8px"><span class="muted small">공사대금을 계약금 10% · 중도금 40% + 40% · 잔금 10%로 나눠 적었습니다. 금액과 날짜는 직접 고치면 됩니다.</span>
+        <span class="spacer"></span><button class="btn sm" data-act="ctSplit">10 · 40 · 40 · 10으로 다시 나누기</button></div>
+      ${PAYKEYS.map(payRow).join('')}
       <div class="client-grid">${t('bankName','입금 은행')}${t('bankNo','계좌번호')}${t('bankHolder','예금주')}</div></div></details>
-    <details><summary>계약 당사자</summary>
+    <details><summary>시공자(우리 업체) 표기</summary>
       <div class="client-grid" style="padding-top:8px">
-        ${t('clBiz','고객 상호')}${t('clPhone','고객 연락처')}${t('clName','고객명(대표자명)')}
         ${t('coBiz','시공자 상호')}${t('coAddr','시공자 주소')}${t('coPhone','시공자 연락처')}${t('coName','시공자 대표자명')}
       </div></details>
   </div></section>`;
@@ -2974,6 +2997,12 @@ document.addEventListener('click',async ev=>{
     case 'matPhoto': photoTarget={kind:'mat',id:t.dataset.id}; $('#filePhoto').click(); break;
     case 'linePhoto': photoTarget={kind:'line',pi:+t.dataset.pi,li:+t.dataset.li}; $('#filePhoto').click(); break;
     case 'docMode': DOC_MODE = t.dataset.m==='contract'?'contract':'quote'; render(); break;
+    case 'ctSplit': { const e=cur(); if(!e) break;
+      const d=ctData(e), auto=splitPay(d.amount);
+      e.contract=e.contract||{}; e.contract.pay=e.contract.pay||{};
+      PAYKEYS.forEach(({k})=>{ e.contract.pay[k]={...(e.contract.pay[k]||{}), amount:auto[k]}; });
+      saveEst(e); render(); toast('공사대금을 다시 나눴습니다'); break; }
+    case 'toggleSum': SUM_OPEN=!SUM_OPEN; ls.set('sumOpen',SUM_OPEN?null:'0'); render(); break;
     case 'print': flushWrites(); window.print(); break;
     case 'download': downloadDoc(); break;
     case 'syncNow': if(!sb||!session){ VIEW='set'; render(); } else sync(); break;

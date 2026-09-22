@@ -353,15 +353,23 @@ body.dragging-row{user-select:none}
 .est-wide{display:flex;flex-direction:column;gap:14px}
 .est-wide .est-sum{position:static;order:2}
 @media (min-width:1500px){
-  .est-wide{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:18px;align-items:start}
-  .est-wide > .stack{order:1}
-  .est-wide .est-sum{order:2;position:sticky;top:70px;box-shadow:var(--shadow)}
+  .est-wide:not(.sum-off){display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:18px;align-items:start}
+  .est-wide:not(.sum-off) > .stack{order:1}
+  .est-wide:not(.sum-off) .est-sum{order:2;position:sticky;top:70px;box-shadow:var(--shadow)}
 }
-@media (min-width:1100px) and (max-width:1499px){
-  .est-wide .est-sum{position:sticky;bottom:12px;z-index:5;box-shadow:0 -2px 18px rgba(20,30,26,.12)}
-  .est-wide .est-sum .panel-b{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px 18px;align-items:start}
-  .est-wide .est-sum .mini-bars{grid-column:1/-1}
+@media (min-width:1000px) and (max-width:1499px){
+  .est-wide:not(.sum-off){display:grid;grid-template-columns:minmax(0,1fr) 252px;gap:14px;align-items:start}
+  .est-wide:not(.sum-off) > .stack{order:1}
+  .est-wide:not(.sum-off) .est-sum{order:2;position:sticky;top:70px;box-shadow:var(--shadow)}
+  .est-wide:not(.sum-off) .est-sum .panel-b{padding:12px}
+  .est-wide:not(.sum-off) .est-sum .sum-row{font-size:12.5px}
 }
+/* 합계를 접으면 견적 표가 창을 다 쓰고, 합계는 위에 얇게 붙어 있습니다 */
+.est-wide.sum-off > .stack{order:1}
+.est-wide.sum-off .est-sum{order:0;position:sticky;top:70px;z-index:6;box-shadow:var(--shadow)}
+.est-sum.slim .panel-h{padding-top:10px;padding-bottom:10px}
+.est-sum .sum-peek{font-size:17px;font-weight:700;margin-left:10px}
+.warn-t{color:#b45309}
 textarea.f.grow{resize:none;overflow:hidden;min-height:32px;line-height:1.35}
 table.t td textarea.f.grow{min-width:110px;max-width:none;width:100%}
 table.t td.c-name{min-width:170px;max-width:230px;white-space:normal}
