@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.11.0';
+const APP_VERSION = '5.11.1';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -1220,10 +1220,12 @@ function renderMat(){
     <div><h2>자재 단가표</h2><p class="muted" style="margin:4px 0 0">거래명세서·단가표·카톡 캡처를 올리면 자재명·단위·단가를 뽑아 표로 정리합니다.</p></div>
     ${renderImport()}
     ${S.sheets.size?`<section class="panel">
-      <div class="panel-h"><h3>가져온 단가표 사진 ${S.sheets.size}</h3><span class="muted small">원본은 그대로 보관됩니다</span></div>
+      <div class="panel-h"><h3>가져온 단가표 사진 ${S.sheets.size}</h3><span class="muted small">원본은 그대로 보관됩니다</span>
+        <span class="spacer"></span><button class="btn sm" data-act="reReadAll">모두 다시 읽기</button></div>
       <div class="panel-b"><div class="files">${[...S.sheets.values()].sort((a,b)=>b.at-a.at).map(s=>`<figure class="file">
         <a href="${esc(s.url)}" target="_blank" rel="noopener"><img src="${esc(s.url)}" alt="단가표" loading="lazy"></a>
         <figcaption><span class="muted small">${new Date(s.at).toLocaleDateString('ko-KR')}</span>
+          <button class="btn sm" data-act="reReadSheet" data-id="${s.id}">다시 읽기</button>
           <button class="btn ghost sm danger" data-act="delSheet" data-id="${s.id}">삭제</button></figcaption></figure>`).join('')}</div></div>
     </section>`:''}
     <section class="panel">
@@ -1263,7 +1265,7 @@ function renderMat(){
 function renderImport(){
   const I=IMPORT;
   let body='';
-  if(I.busy) body=`<div class="status"><span class="spin"></span> 사진에서 글자를 읽고 있습니다 <b id="ocr-prog">${Math.round((I.prog||0)*100)}%</b> · 처음 한 번은 한글 인식 파일을 받느라 조금 더 걸립니다.</div>`;
+  if(I.busy) body=`<div class="status"><span class="spin"></span> <span id="ocr-msg">사진에서 글자를 읽고 있습니다 <b id="ocr-prog">${Math.round((I.prog||0)*100)}%</b></span> · 처음 한 번은 한글 인식 파일을 받느라 조금 더 걸립니다. 화면을 그대로 두세요.</div>`;
   else if(I.err) body=`<div class="status err">${esc(I.err)}</div>`;
   if(I.items && !I.busy){
     const e=cur();
@@ -1404,7 +1406,10 @@ async function parseSheets(){
   try{
     let items=[];
     for(const f of IMPORT.files){
-      const txt=await ocrText(f,p=>{ IMPORT.prog=p; const el=document.getElementById('ocr-prog'); if(el) el.textContent=Math.round(p*100)+'%'; });
+      const txt=await ocrText(f,p=>{ IMPORT.prog=p;
+        const el=document.getElementById('ocr-prog'); if(el) el.textContent=Math.round(p*100)+'%';
+        if(p>=1){ const m=document.getElementById('ocr-msg'); if(m) m.textContent='읽은 내용을 정리하고 있습니다'; }   // 100%에서 멈춘 것처럼 보이지 않게
+      });
       items=items.concat(rowsFromText(txt));
     }
     // 같은 이름은 하나로
@@ -1416,12 +1421,38 @@ async function parseSheets(){
     IMPORT.memo='사진에서 읽은 값입니다. 공정과 단위는 확인해서 고쳐주세요.';
     IMPORT.draftAt=Date.now();
     saveImportDraft(true);        // 저장을 누르기 전에 꺼져도 남아 있게
-    uploadSheetPhotos();          // 원본 사진은 따로 보관
+    if(!IMPORT.reread) uploadSheetPhotos();   // 원본 사진은 따로 보관 (다시 읽기면 이미 있습니다)
   }catch(e){
     IMPORT.err = e?.code==='empty'
       ? '사진에서 금액이 있는 줄을 찾지 못했습니다. 밝은 곳에서 글자가 크게 나오도록 다시 찍어주세요.'
       : '사진을 읽지 못했습니다: '+(e?.message||e);
   }finally{ IMPORT.busy=false; render(); }
+}
+/* 이미 올려 둔 단가표 사진에서 다시 읽습니다 (사진을 다시 찍을 필요 없이) */
+async function reReadSheets(ids){
+  const list=[...S.sheets.values()].filter(s=>ids.includes(s.id)).sort((a,b)=>a.at-b.at);
+  if(!list.length){ toast('읽을 사진이 없습니다'); return; }
+  if(IMPORT.items&&IMPORT.items.length){
+    if(!await askConfirm({title:'지금 읽어 둔 자재 목록을 덮어쓸까요?',
+      lines:[`저장하지 않은 ${IMPORT.items.length}개가 사라집니다`,'사진에서 처음부터 다시 읽습니다'],
+      ok:'네, 다시 읽습니다', cancel:'아니요'})) return;
+  }
+  IMPORT.urls.forEach(u=>URL.revokeObjectURL(u));
+  IMPORT={files:[],urls:[],busy:true,items:null,memo:'',err:'',reread:true};
+  VIEW='mat'; render();
+  try{
+    const files=[];
+    for(const s of list){
+      const r=await fetch(s.url);
+      if(!r.ok) throw new Error('사진을 내려받지 못했습니다 ('+r.status+')');
+      const b=await r.blob();
+      files.push(new File([b], s.name||'sheet.jpg', {type:b.type||'image/jpeg'}));
+    }
+    IMPORT.files=files; IMPORT.urls=files.map(f=>URL.createObjectURL(f)); IMPORT.busy=false;
+    await parseSheets();
+  }catch(e){
+    IMPORT.busy=false; IMPORT.err='사진을 다시 읽지 못했습니다: '+(e?.message||e); render();
+  }
 }
 /* 원본 단가표 사진 보관 (로그인 상태에서만) */
 async function uploadSheetPhotos(){
@@ -3246,6 +3277,8 @@ document.addEventListener('click',async ev=>{
     case 'pickSheet': $('#fileSheet').removeAttribute('capture'); $('#fileSheet').click(); break;
     case 'shootSheet': $('#fileSheet').setAttribute('capture','environment'); $('#fileSheet').click(); break;
     case 'parse': parseSheets(); break;
+    case 'reReadSheet': await reReadSheets([t.dataset.id]); break;
+    case 'reReadAll': await reReadSheets([...S.sheets.keys()]); break;
     case 'revSave': saveReviewed(false); break;
     case 'revSaveAdd': saveReviewed(true); break;
     case 'revCancel': {
