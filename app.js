@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.0.1';
+const APP_VERSION = '5.1.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -788,12 +788,48 @@ function estPicker(){
   </div>`;
 }
 
+let EST_MODE=ls.get('estMode','form');     // form = 직접 작성, excel = 엑셀 파일 보기
+let EXCEL_SEL=null, EXCEL_HTML='', EXCEL_BUSY=false, EXCEL_ERR='';
+function estModeBar(){
+  return `<div class="chips" style="margin-bottom:2px">
+    <button class="chip" data-act="estMode" data-m="form" aria-pressed="${EST_MODE==='form'}">견적 만들기</button>
+    <button class="chip" data-act="estMode" data-m="excel" aria-pressed="${EST_MODE==='excel'}">견적서 엑셀 파일</button>
+  </div>`;
+}
+function renderExcel(){
+  const p=curProj();
+  if(!p) return `${estModeBar()}<div class="panel"><div class="empty">먼저 현장을 고르거나 만들어주세요.</div></div>`;
+  const files=(p.excel||[]).slice().sort((a,b)=>(b.at||0)-(a.at||0));
+  const sel=files.find(f=>f.id===EXCEL_SEL)||files[0];
+  return `<div class="stack">${estModeBar()}
+    <section class="panel">
+      <div class="panel-h"><h3>${esc(siteName(p))} · 엑셀 견적서</h3><span class="spacer"></span>
+        <button class="btn pri" data-act="pickExcel">엑셀 파일 올리기</button></div>
+      <div class="panel-b">
+        ${files.length?`<div class="row" style="gap:8px">
+          <select class="f" id="excelSel" data-act-change="excelPick" style="width:auto;max-width:320px">
+            ${files.map(f=>`<option value="${f.id}" ${sel&&sel.id===f.id?'selected':''}>${esc(f.name)} · ${new Date(f.at).toLocaleDateString('ko-KR')}</option>`).join('')}
+          </select>
+          <a class="btn sm" href="${esc(sel?.url||'#')}" download target="_blank" rel="noopener">원본 내려받기</a>
+          <button class="btn sm ghost" data-act="printExcel">인쇄 / PDF</button>
+          <span class="spacer"></span>
+          <button class="btn ghost sm danger" data-act="delExcel" data-id="${sel?.id||''}">파일 삭제</button>
+        </div>`:'<p class="muted small" style="margin:0">엑셀로 만든 견적서를 올리면 서식 그대로 볼 수 있습니다. (.xlsx)</p>'}
+        ${EXCEL_ERR?`<div class="status err" style="margin-top:10px">${esc(EXCEL_ERR)}</div>`:''}
+        ${EXCEL_BUSY?'<div class="status" style="margin-top:10px"><span class="spin"></span> 파일을 여는 중입니다…</div>':''}
+      </div>
+    </section>
+    ${EXCEL_HTML?`<section class="panel"><div class="panel-b xls-stage" id="xlsStage">${EXCEL_HTML}</div></section>`:''}
+  </div>`;
+}
 function renderEst(){
+  if(EST_MODE==='excel') return renderExcel();
   const e=cur();
   if(!e) return `<div class="panel"><div class="empty"><h2 style="margin-bottom:6px">아직 견적이 없습니다</h2><p>새 견적을 만들거나, 예시 견적으로 구조를 먼저 살펴보세요.</p><div class="row" style="justify-content:center;margin-top:12px"><button class="btn pri" data-act="newEst">+ 새 견적</button><button class="btn" data-act="seed">예시 데이터 넣기</button></div></div></div>`;
   const used=new Set(e.processes.map(p=>p.k));
   const sp=curProj(), owner=[...S.projects.values()].find(x=>x.estimateId===e.id);
   return `<div class="stack">
+  ${estModeBar()}
   ${owner&&sp&&owner.id!==sp.id?`<div class="sitebar warn">
       <span>지금 고른 현장은 <b>${esc(siteName(sp))}</b>인데, 이 견적은 <b>${esc(siteName(owner))}</b> 현장 것입니다.</span><span class="spacer"></span>
       ${sp.estimateId&&S.estimates.has(sp.estimateId)
@@ -2004,6 +2040,99 @@ async function view3d(i){
 }
 function loadScript(src){ return new Promise((res,rej)=>{ const s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=()=>rej(new Error('불러오지 못함: '+src)); document.head.appendChild(s); }); }
 
+/* ---------- 엑셀 견적서 ---------- */
+async function uploadExcel(file){
+  const p=curProj(); if(!p){ toast('현장을 먼저 고르세요.'); return; }
+  if(!sb||!session){ toast('로그인한 상태에서만 파일을 올릴 수 있습니다.'); return; }
+  try{
+    EXCEL_BUSY=true; EXCEL_ERR=''; render();
+    const path=`${session.user.id}/excel/${uid()}.xlsx`;
+    const {error}=await sb.storage.from('plans').upload(path,file,{contentType:file.type||'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+    if(error) throw error;
+    const {data}=sb.storage.from('plans').getPublicUrl(path);
+    p.excel=p.excel||[];
+    const rec={id:uid(),name:file.name,url:data.publicUrl,path,at:Date.now()};
+    p.excel.push(rec); saveProj(p); EXCEL_SEL=rec.id;
+    await showExcel(rec);
+  }catch(e){ EXCEL_ERR='파일을 올리지 못했습니다: '+(e.message||e); EXCEL_BUSY=false; render(); }
+}
+async function showExcel(rec){
+  if(!rec){ EXCEL_HTML=''; render(); return; }
+  EXCEL_BUSY=true; EXCEL_ERR=''; EXCEL_HTML=''; render();
+  try{
+    if(!window.ExcelJS) await loadScript('https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js');
+    const res=await fetch(rec.url); if(!res.ok) throw new Error('파일을 불러오지 못했습니다 ('+res.status+')');
+    const buf=await res.arrayBuffer();
+    const wb=new ExcelJS.Workbook(); await wb.xlsx.load(buf);
+    EXCEL_HTML=wb.worksheets.map(ws=>sheetToHtml(ws)).join('');
+  }catch(e){ EXCEL_ERR='엑셀을 여는 중 문제가 생겼습니다: '+(e.message||e); }
+  EXCEL_BUSY=false; render();
+}
+const argb = v => { if(!v) return ''; const s=String(v.argb||v||''); return s.length===8?'#'+s.slice(2):(s.length===6?'#'+s:''); };
+function borderCss(b){
+  if(!b) return '';
+  const one=(side,def)=>{ if(!def||!def.style) return ''; const w=/thick|double|medium/.test(def.style)?2:1;
+    const st=/dash/.test(def.style)?'dashed':/dot/.test(def.style)?'dotted':/double/.test(def.style)?'double':'solid';
+    return `border-${side}:${w}px ${st} ${argb(def.color)||'#999'};`; };
+  return one('top',b.top)+one('bottom',b.bottom)+one('left',b.left)+one('right',b.right);
+}
+/* 엑셀 시트를 서식 그대로 표로 옮깁니다 */
+function sheetToHtml(ws){
+  const merges=[];
+  const mm=ws.model?.merges||[];
+  mm.forEach(m=>{ const [a,b]=String(m).split(':'); if(!b) return;
+    const pa=cellRef(a), pb=cellRef(b); merges.push({r1:pa.r,c1:pa.c,r2:pb.r,c2:pb.c}); });
+  const skip=new Set();
+  merges.forEach(m=>{ for(let r=m.r1;r<=m.r2;r++) for(let c=m.c1;c<=m.c2;c++) if(!(r===m.r1&&c===m.c1)) skip.add(r+':'+c); });
+  const maxC=ws.columnCount||1, maxR=ws.rowCount||1;
+  const cols=[]; for(let c=1;c<=maxC;c++){ const w=ws.getColumn(c).width; cols.push(`<col style="width:${Math.round((w||8.43)*7.5)}px">`); }
+  let out=`<div class="xls-sheet"><div class="xls-name">${esc(ws.name)}</div><table class="xls"><colgroup>${cols.join('')}</colgroup><tbody>`;
+  for(let r=1;r<=maxR;r++){
+    const row=ws.getRow(r);
+    const h=row.height?`style="height:${Math.round(row.height*1.34)}px"`:'';
+    out+=`<tr ${h}>`;
+    for(let c=1;c<=maxC;c++){
+      if(skip.has(r+':'+c)) continue;
+      const cell=row.getCell(c);
+      const mg=merges.find(m=>m.r1===r&&m.c1===c);
+      const span=mg?` colspan="${mg.c2-mg.c1+1}" rowspan="${mg.r2-mg.r1+1}"`:'';
+      const f=cell.font||{}, al=cell.alignment||{}, fill=cell.fill;
+      const bg=fill&&fill.type==='pattern'&&fill.fgColor?argb(fill.fgColor):'';
+      const style=[
+        f.bold?'font-weight:700':'',
+        f.italic?'font-style:italic':'',
+        f.size?`font-size:${Math.round(f.size*1.05)}px`:'',
+        f.color&&argb(f.color)?`color:${argb(f.color)}`:'',
+        f.name?`font-family:'${String(f.name).replace(/'/g,'')}',sans-serif`:'',
+        bg?`background:${bg}`:'',
+        al.horizontal?`text-align:${al.horizontal==='centerContinuous'?'center':al.horizontal}`:'',
+        al.vertical?`vertical-align:${al.vertical==='middle'?'middle':al.vertical}`:'',
+        al.wrapText?'white-space:pre-wrap':'white-space:nowrap',
+      ].filter(Boolean).join(';');
+      let text=cell.text ?? '';
+      const raw=(cell.value&&typeof cell.value==='object'&&'result' in cell.value)?cell.value.result:cell.value;
+      if(typeof raw==='number'){
+        const fmt=cell.numFmt||'';
+        if(/%/.test(fmt)) text=(raw*100).toLocaleString('ko-KR',{maximumFractionDigits:2})+'%';
+        else if(/[#0]/.test(fmt)){
+          const dec=((fmt.split('.')[1]||'').match(/0/g)||[]).length;
+          text=raw.toLocaleString('ko-KR',{minimumFractionDigits:dec,maximumFractionDigits:dec});
+          if(fmt.includes('₩')||fmt.includes('\W')) text='₩'+text;
+        }
+      } else if(raw instanceof Date){ text=raw.toLocaleDateString('ko-KR'); }
+      if(cell.value && typeof cell.value==='object' && cell.value.richText) text=cell.value.richText.map(t=>t.text).join('');
+      out+=`<td${span} style="${style};${borderCss(cell.border)}">${esc(text)}</td>`;
+    }
+    out+='</tr>';
+  }
+  return out+'</tbody></table></div>';
+}
+function cellRef(ref){
+  const m=String(ref).replace(/\$/g,'').match(/^([A-Z]+)(\d+)$/i); if(!m) return {r:1,c:1};
+  let c=0; for(const ch of m[1].toUpperCase()) c=c*26+(ch.charCodeAt(0)-64);
+  return {r:+m[2], c};
+}
+
 /* ---------- 업체 ---------- */
 function renderVendors(){
   const list=[...S.vendors.values()].sort((a,b)=>String(a.name).localeCompare(String(b.name),'ko'));
@@ -2312,6 +2441,7 @@ document.addEventListener('change',ev=>{
   if(a==='revVendor'){ const v=t.value.trim(); IMPORT.items.forEach(x=>{ if(x.on) x.vendor=v; }); render(); }
   if(a==='revProc'&&t.value){ IMPORT.items.forEach(x=>{ if(x.on) x.process=t.value; }); render(); }
   if(a==='pickProj'){ selectSite(t.value); render(); }
+  if(a==='excelPick'){ const p=curProj(); const f=(p?.excel||[]).find(x=>x.id===t.value); EXCEL_SEL=t.value; showExcel(f); }
   if(a==='autoLogin'){ ls.set('autoLogin',t.checked?'1':'0'); if(!t.checked) ls.set('autoPw',null); toast(t.checked?'다음 로그인 때부터 자동으로 들어갑니다':'자동 로그인을 껐습니다'); render(); }
   if(a==='shareOn'){ toggleShare(curProj(),t.checked); }
   if(a==='shareMemo'){ const p=curProj(); p.share={...(p.share||{}),showMemo:t.checked}; saveProj(p); publishShare(p); }
@@ -2462,6 +2592,16 @@ document.addEventListener('click',async ev=>{
     case 'showLogin': AUTH.skipped=false; ls.set('skipLogin',null); render(); break;
     case 'logout': if(confirm('로그아웃할까요? 올리지 못한 변경사항이 있으면 먼저 올린 뒤 이 기기의 데이터를 지웁니다.')) logout(); break;
     case 'saveSb': { ls.set('sb_url',$('#set-sburl').value.trim()||null); ls.set('sb_key',$('#set-sbkey').value.trim()||null); await connectSupabase(); render(); toast(sb?'서버에 연결했습니다':'연결 정보를 확인해주세요'); break; }
+    case 'estMode': EST_MODE=t.dataset.m; ls.set('estMode',EST_MODE); VIEW='est'; ls.set('view',VIEW); render();
+      if(EST_MODE==='excel'){ const p=curProj(); const f=(p?.excel||[]).slice().sort((a,b)=>(b.at||0)-(a.at||0))[0]; if(f&&!EXCEL_HTML) showExcel(f); }
+      break;
+    case 'pickExcel': $('#fileExcel').click(); break;
+    case 'printExcel': { const st=document.getElementById('xlsStage'); if(!st){ toast('먼저 파일을 고르세요.'); break; }
+      document.body.classList.add('printing-xls'); setTimeout(()=>{ window.print(); setTimeout(()=>document.body.classList.remove('printing-xls'),600); },80); break; }
+    case 'delExcel': { const p=curProj(); const f=(p?.excel||[]).find(x=>x.id===t.dataset.id); if(!f) break;
+      if(await askConfirm({title:`“${f.name}”을(를) 지울까요?`,lines:['이 현장에서 사라집니다'],ok:'네, 지웁니다',cancel:'아니요'})){
+        try{ await sb?.storage.from('plans').remove([f.path]); }catch(err){ console.warn(err); }
+        p.excel=(p.excel||[]).filter(x=>x.id!==f.id); saveProj(p); EXCEL_HTML=''; EXCEL_SEL=null; render(); } break; }
     case 'openTrash': { const box=document.getElementById('trashBox'); if(!box) break;
       const rows=await trashList();
       const label={estimates:'견적',projects:'현장',materials:'자재',vendors:'업체',sheets:'단가표 사진'};
@@ -2588,6 +2728,7 @@ async function fileToStamp(file){
 }
 $('#fileSheet').addEventListener('change',ev=>{ setSheetFiles(ev.target.files); ev.target.value=''; });
 $('#fileBackup').addEventListener('change',ev=>{ if(ev.target.files[0]) importBackup(ev.target.files[0]); ev.target.value=''; });
+$('#fileExcel').addEventListener('change',ev=>{ if(ev.target.files[0]) uploadExcel(ev.target.files[0]); ev.target.value=''; });
 let PLAN_TASK='';
 $('#filePlan').addEventListener('change',ev=>{ if(ev.target.files.length) uploadPlans(ev.target.files,curProj(),PLAN_TASK); ev.target.value=''; ev.target.removeAttribute('accept'); PLAN_TASK=''; });
 document.addEventListener('dragover',ev=>{ const dz=ev.target.closest?.('#dz'); if(dz){ ev.preventDefault(); dz.classList.add('drag'); } });
