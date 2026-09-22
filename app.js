@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.6.0';
+const APP_VERSION = '5.7.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -1304,7 +1304,36 @@ const DOC_CSS = `
 #doc .d-notes{white-space:pre-wrap;font-size:12px;border:1px solid var(--d-line);padding:10px 12px;background:#fcfcfb}
 #doc .d-sign{display:flex;justify-content:space-between;gap:20px;margin-top:30px;font-size:12px;flex-wrap:wrap}
 #doc .d-sign .s{flex:1;min-width:200px;border-top:1px solid var(--d-ink);padding-top:6px}
-#doc .d-foot{margin-top:28px;text-align:center;color:var(--d-mut);font-size:11px}`;
+#doc .d-foot{margin-top:28px;text-align:center;color:var(--d-mut);font-size:11px}
+#doc.ct{font-size:12px;line-height:1.5}
+#doc.ct h1{font-size:27px;letter-spacing:.32em;padding-left:.32em;margin:0 0 18px}
+#doc.ct .ct-sub{font-weight:700;font-size:13.5px;margin:0 0 6px}
+#doc.ct table{border-collapse:collapse;width:100%}
+#doc.ct table td,#doc.ct table th{border:1px solid #000;padding:6px 8px;vertical-align:middle;background:none}
+#doc.ct .n{width:26px;text-align:center;font-weight:700}
+#doc.ct .k{width:104px;text-align:center;font-weight:700;background:var(--d-soft)}
+#doc.ct .k .sm{display:block;font-weight:400;font-size:10.5px;color:var(--d-mut)}
+#doc.ct .pay-cell{padding:0}
+#doc.ct table.pay{border:0}
+#doc.ct table.pay td{border:0;border-top:1px solid #000}
+#doc.ct table.pay tr:first-child td{border-top:0}
+#doc.ct table.pay td.pk{width:52px;text-align:center;font-weight:700;border-right:1px solid #000}
+#doc.ct table.pay td.pk2{width:52px;text-align:center;border-right:1px solid #000}
+#doc.ct table.pay td.ph{text-align:center;font-weight:700;background:var(--d-soft)}
+#doc.ct .amt{display:flex;flex-wrap:wrap;gap:4px 18px;align-items:baseline}
+#doc.ct .amt .w{min-width:210px}
+#doc.ct .amt .f{min-width:150px}
+#doc.ct .terms{font-size:11.5px;line-height:1.75}
+#doc.ct .terms p{margin:0 0 5px}
+#doc.ct .terms .lead{margin-bottom:9px}
+#doc.ct .ct-close{margin:16px 0 22px;font-size:12px;line-height:1.8}
+#doc.ct .ct-date{text-align:center;font-size:14px;letter-spacing:.06em;margin:22px 0 20px}
+#doc.ct table.sign td.sk{width:96px;text-align:center;font-weight:700;background:var(--d-soft)}
+#doc.ct table.sign td.sp{width:74px;text-align:center;font-weight:700;background:var(--d-soft)}
+#doc.ct .stamp-in{height:36px;vertical-align:middle;margin-left:6px}
+#doc.ct .blank{color:#9aa0a0}
+.doc-modes{display:flex;gap:8px;margin-bottom:4px}
+.doc-modes .btn[aria-pressed="true"]{background:var(--pri,#2f6f4f);color:#fff;border-color:transparent}`;
 (()=>{ const st=document.createElement('style'); st.textContent=DOC_CSS; document.head.appendChild(st); })();
 
 function krDate(s){ const d=new Date(s||today()); return isNaN(d)?'':`${d.getFullYear()}년 ${d.getMonth()+1}월 ${d.getDate()}일`; }
@@ -1368,13 +1397,159 @@ function docHTML(e){
     <div class="d-foot">본 견적서의 유효기간은 ${exp}까지입니다. 본 견적서는 ${dt} 기준이며 자재 단가 변동 및 현장 실측에 따라 조정될 수 있습니다.</div>
   </article>`;
 }
+/* ── 계약서 ───────────────────────────────────────────────
+   첨부해 주신 한글 계약서 양식을 그대로 옮긴 것입니다.
+   빈칸만 현장·견적 내용으로 채워집니다. */
+let DOC_MODE = 'quote';                 // quote = 견적서, contract = 계약서
+const PAYKEYS = [
+  {k:'deposit',  label:'계약금'},
+  {k:'mid1',     label:'중도금 1차'},
+  {k:'mid2',     label:'중도금 2차'},
+  {k:'mid3',     label:'중도금 3차'},
+  {k:'balance',  label:'잔금'},
+];
+function ctData(e){
+  const co=S.company||{}, p=S.projects.get(e.pid)||{}, c=calcEst(e);
+  const x=e.contract||{};
+  const pay={}; PAYKEYS.forEach(({k})=>{ pay[k]={amount:x.pay?.[k]?.amount??'', date:x.pay?.[k]?.date??''}; });
+  return {
+    site:   x.site   ?? (e.client.address||''),
+    start:  x.start  ?? (p.startedAt||''),
+    end:    x.end    ?? (p.endedAt||''),
+    amount: x.amount===''||x.amount===undefined ? c.total : num(x.amount),
+    vat:    x.vat    ?? '부가세 VAT 포함',
+    pay,
+    bankName:   x.bankName   ?? (co.bankName||''),
+    bankNo:     x.bankNo     ?? (co.bankNo||''),
+    bankHolder: x.bankHolder ?? (co.bankHolder||''),
+    signDate:   x.signDate   ?? (e.date||today()),
+    clBiz:   x.clBiz   ?? '',
+    clPhone: x.clPhone ?? (e.client.phone||''),
+    clName:  x.clName  ?? (e.client.name||''),
+    coBiz:   x.coBiz   ?? (co.name||''),
+    coAddr:  x.coAddr  ?? (co.address||''),
+    coPhone: x.coPhone ?? (co.phone||''),
+    coName:  x.coName  ?? [co.name,co.ceo].filter(Boolean).join(' '),
+  };
+}
+/* 2025-03-14 → 25년 03월 14일 */
+function ymdKo(s){
+  const m=String(s||'').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? `${m[1].slice(2)}년 ${m[2]}월 ${m[3]}일` : '';
+}
+function ymdKoFull(s){
+  const m=String(s||'').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? `${m[1]}년      ${m[2]}월      ${m[3]}일` : '';
+}
+function blank(t,w){ return t ? esc(t) : `<span class="blank">${'　'.repeat(w||6)}</span>`; }
+function ctAmountCell(v,date){
+  const n=num(v);
+  return `<div class="amt">
+    <span class="w">금 ${n?esc(krWords(n)):'　　　　　'} 원정</span>
+    <span class="f">(￦ ${n?won(n):'　　　　　'} )</span>
+    ${date!==undefined?`<span>지급일( ${ymdKo(date)||'　　　　　'} )</span>`:''}
+  </div>`;
+}
+function contractHTML(e){
+  const d=ctData(e), co=S.company||{};
+  return `<article id="doc" class="ct">
+    <h1>인테리어 공사 계약서</h1>
+    <div class="ct-sub">공사 주요 내용</div>
+    <table>
+      <tr><td class="n">1</td><td class="k">시공장소</td><td>${blank(d.site,20)}</td></tr>
+      <tr><td class="n">2</td><td class="k">공시기간</td><td>
+        <div class="amt"><span class="w">(착공예정일)　${ymdKo(d.start)||'　　년　　월　　일'}</span>
+        <span class="w">(준공예정일)　${ymdKo(d.end)||'　　년　　월　　일'}</span></div></td></tr>
+      <tr><td class="n">3</td><td class="k">공사대금</td><td>
+        <div class="amt"><span class="w">금 ${d.amount?esc(krWords(d.amount)):'　　　　　'} 원정</span>
+        <span class="f">(￦ ${d.amount?won(d.amount):'　　　　　'} )</span>
+        <span>${esc(d.vat)}</span></div></td></tr>
+      <tr><td class="n">4</td><td class="k">대금지급방법<span class="sm">(공란없이 기재)</span></td>
+        <td class="pay-cell"><table class="pay">
+          <tr><td class="ph" colspan="2">구 분</td><td class="ph">내용</td></tr>
+          <tr><td class="pk" colspan="2">계약금</td><td>${ctAmountCell(d.pay.deposit.amount,d.pay.deposit.date)}</td></tr>
+          <tr><td class="pk" rowspan="3">중<br>도<br>금</td><td class="pk2">1차</td><td>${ctAmountCell(d.pay.mid1.amount,d.pay.mid1.date)}</td></tr>
+          <tr><td class="pk2">2차</td><td>${ctAmountCell(d.pay.mid2.amount,d.pay.mid2.date)}</td></tr>
+          <tr><td class="pk2">3차</td><td>${ctAmountCell(d.pay.mid3.amount,d.pay.mid3.date)}</td></tr>
+          <tr><td class="pk" colspan="2">잔금</td><td>${ctAmountCell(d.pay.balance.amount,d.pay.balance.date)}</td></tr>
+          <tr><td class="pk" colspan="2">입금처</td><td>은행 : ${blank(d.bankName,5)}　　계좌번호 : ${blank(d.bankNo,9)}　　예금주 : ${blank(d.bankHolder,5)}</td></tr>
+        </table></td></tr>
+      <tr><td class="n">5</td><td class="k">하자보수 (A/S)</td><td class="terms">
+        <p>*A/S기간은 준공후 1년으로 하되 “계약고객”의 실수에 의한 것은 실비 처리 한다.</p>
+        <p>(소모성품목)은 A/S기간에서 제외된다.</p></td></tr>
+      <tr><td class="n">6</td><td class="k">특약사항<span class="sm">(계약약관)</span></td><td class="terms">
+        <p class="lead">계약고객(이하 “갑”이라칭함) 은 인테리어시 공사(이하“을”이라칭함)와 표시된 인테리어시공사를 통해 공급되는 모든 인테리어 상품류(이하“상품”이라 칭함)를 매매함에 있어 다음과 같이 계약을 체결한다.</p>
+        <p>*인테리어,건축 모든공사는 설계도면도 및 상호 협의 된 사항대로 시공하여야 한다.</p>
+        <p>*공사 진행 중 “갑”은 임의로 설계내용을 변경할 수 없으며, 변경을 원할 시는 “을”과의 협의에 의한다.</p>
+        <p>*“갑”의 요구에 의한 추가공사에 따른 비용에 관한 책임은 “갑”에게 있다.</p>
+        <p>*대금 결제의 지연으로 인한 공사중단 및 어떠한 문제에도 “갑”은 “을”에게 책임을 물을 수 없다.</p>
+        <p>*현장 상황에 따라 발생하는 공과잡비에 대해 “을”이 “갑”에게 통보할 경우 “갑”에게 청구 할 수 있다.</p>
+        <p>*본계약서 이외의 별도의 이면 내용은 인정하지 않는다.</p>
+        <p>*계약내역 중 품목 내역을 기재하지 못할 경우 첨부된 견적서로 품목 내역을 대신한다.</p>
+        <p>*전면 계약서의 변경 또는 수정은 “갑”과 “을”의 상호 협의하에 할 수 있다.</p>
+        <p>*본계약에 포함되어 지지 않는 사항 및 계약에 관한 이의가 있을 경우 상호 간의 협의를 통해 결정토록한다.</p>
+        <p>*계약체결후 “갑”이 “을”의 책임없는 사유로 인하여 계약을 해지하는 경우, “을”은 “갑”에게 계약금 반환의무를 지지 않는다.</p>
+        <p>*“을”이 사전에 “갑”과 협의 없이 공사 일정에 맞춰 공사를 진행하지 않고 고의적으로 지연, 중지하는 경우 “갑”은 계약해지를 할 수 있다.</p></td></tr>
+    </table>
+    <p class="ct-close">“갑”과 “을”은 신의성실에 입각하여 상기 계약을 성실히 이행하며, 본계약을 증명하기 위해 계약서 2부를 작성, “갑”과 “을”이 각 1부씩을 보관한다.</p>
+    <div class="ct-date">${ymdKoFull(d.signDate)||'　　　　년　　　　월　　　　일'}</div>
+    <table class="sign">
+      <tr><td class="sk" rowspan="3">고객<br>(발주자)</td><td class="sp">상　　호</td><td>${blank(d.clBiz,10)}</td></tr>
+      <tr><td class="sp">연  락  처</td><td>${blank(d.clPhone,10)}</td></tr>
+      <tr><td class="sp">고객명<br>(대표자명)</td><td>${blank(d.clName,8)}　　　　(인) 또는 서명</td></tr>
+      <tr><td class="sk" rowspan="4">시공자<br>(수급인)</td><td class="sp">상　　호</td><td>${blank(d.coBiz,10)}</td></tr>
+      <tr><td class="sp">주　　소</td><td>${blank(d.coAddr,16)}</td></tr>
+      <tr><td class="sp">연  락  처</td><td>${blank(d.coPhone,10)}</td></tr>
+      <tr><td class="sp">대 표 자 명</td><td>${blank(d.coName,10)}　　　　(인) 또는 서명${co.stamp?`<img src="${esc(co.stamp)}" alt="(인)" class="stamp-in">`:''}</td></tr>
+    </table>
+  </article>`;
+}
+function renderContractForm(e){
+  const d=ctData(e);
+  const t=(k,l,ph='')=>`<label class="fl">${l}<input class="f" id="ct-${k}" data-bind="est:contract.${k}" value="${esc(d[k]||'')}" placeholder="${esc(ph)}"></label>`;
+  const dt=(k,l)=>`<label class="fl">${l}<input class="f" type="date" id="ct-${k}" data-bind="est:contract.${k}" value="${esc(d[k]||'')}"></label>`;
+  const money=(k,l)=>`<label class="fl">${l}<input class="f num" type="number" inputmode="numeric" step="10000" id="ct-${k}" data-bind="est:contract.${k}" data-num value="${esc(d[k]??'')}"></label>`;
+  const payRow=({k,label})=>`<div class="client-grid">
+    <label class="fl">${label} 금액(원)<input class="f num" type="number" inputmode="numeric" step="10000" id="ct-${k}-a" data-bind="est:contract.pay.${k}.amount" data-num value="${esc(d.pay[k].amount??'')}"></label>
+    <label class="fl">${label} 지급일<input class="f" type="date" id="ct-${k}-d" data-bind="est:contract.pay.${k}.date" value="${esc(d.pay[k].date||'')}"></label>
+  </div>`;
+  const sum=PAYKEYS.reduce((a,{k})=>a+num(d.pay[k].amount),0);
+  return `<section class="panel no-print"><div class="panel-b">
+    <div class="doc-tools">
+      <span class="muted small">빈칸만 채우면 됩니다. 양식·문구는 첨부해 주신 계약서 그대로입니다.</span>
+      <span class="spacer"></span>
+      <button class="btn" data-act="print">인쇄 / PDF</button>
+      <button class="btn pri" data-act="download">${isTouch()?'보내기':'파일로 저장'}</button>
+    </div>
+    <div class="client-grid" style="margin-bottom:10px">
+      ${t('site','시공장소','현장 주소')}
+      ${money('amount','공사대금(원)')}
+      ${dt('start','착공예정일')}
+      ${dt('end','준공예정일')}
+      ${t('vat','부가세 표기')}
+      ${dt('signDate','계약일자')}
+    </div>
+    <details ${sum?'':'open'}><summary>대금 지급 일정 ${sum?`· 합계 ${won(sum)}원${sum!==num(d.amount)?' (공사대금과 '+won(Math.abs(sum-num(d.amount)))+'원 차이)':''}`:''}</summary>
+      <div style="padding-top:8px">${PAYKEYS.map(payRow).join('')}
+      <div class="client-grid">${t('bankName','입금 은행')}${t('bankNo','계좌번호')}${t('bankHolder','예금주')}</div></div></details>
+    <details><summary>계약 당사자</summary>
+      <div class="client-grid" style="padding-top:8px">
+        ${t('clBiz','고객 상호')}${t('clPhone','고객 연락처')}${t('clName','고객명(대표자명)')}
+        ${t('coBiz','시공자 상호')}${t('coAddr','시공자 주소')}${t('coPhone','시공자 연락처')}${t('coName','시공자 대표자명')}
+      </div></details>
+  </div></section>`;
+}
 function renderDocView(){
   const e=cur();
   if(!e) return `<div class="panel"><div class="empty">먼저 견적을 만들어주세요. <button class="btn" data-act="view" data-v="est">견적 작성으로</button></div></div>`;
   const co=S.company||{};
   const f=(k,l,ph='')=>`<label class="fl">${l}<input class="f" ${k==='phone'?'type="tel"':''} id="co-${k}" data-bind="co:${k}" value="${esc(co[k]||'')}" placeholder="${ph}"></label>`;
   return `<div class="stack">
-    <div class="row no-print"><h2 style="flex:1">고객용 견적서</h2>${estPicker()}</div>
+    <div class="row no-print"><h2 style="flex:1">고객용 ${DOC_MODE==='contract'?'계약서':'견적서'}</h2>${estPicker()}</div>
+    <div class="doc-modes no-print">
+      <button class="btn" data-act="docMode" data-m="quote" aria-pressed="${DOC_MODE!=='contract'}">견적서</button>
+      <button class="btn" data-act="docMode" data-m="contract" aria-pressed="${DOC_MODE==='contract'}">계약서</button>
+    </div>
     <details class="co panel no-print" ${co.name?'':'open'}><summary>우리 업체 정보 ${co.name?'· '+esc(co.name):'(견적서 발신란에 들어갑니다)'}</summary>
       <div class="panel-b co-grid">${f('name','상호','○○인테리어')}${f('ceo','대표자')}${f('bizNo','사업자등록번호','000-00-00000')}${f('phone','연락처')}${f('email','이메일')}${f('address','주소')}${f('bankName','입금 은행','국민은행')}${f('bankNo','계좌번호','000000-00-000000')}${f('bankHolder','예금주','홍길동')}
       <label class="fl">대표 도장 <span class="muted">(견적서 (인) 자리에 찍힙니다)</span>
@@ -1382,6 +1557,7 @@ function renderDocView(){
           <button class="btn sm" data-act="pickStamp">${co.stamp?'바꾸기':'도장 사진 넣기'}</button>
           ${co.stamp?'<button class="btn ghost sm danger" data-act="clearStamp">지우기</button>':''}</div></label>
       </div></details>
+    ${DOC_MODE==='contract' ? renderContractForm(e) : `
     <section class="panel no-print"><div class="panel-b">
       <div class="doc-tools">
         <label><input type="checkbox" id="d-img" data-bind="est:showImages" ${e.showImages!==false?'checked':''}> 자재 사진 표시</label>
@@ -1397,17 +1573,18 @@ function renderDocView(){
       </div>
       <label class="fl">비고 및 계약 조건<textarea class="f" id="d-notes" rows="3" data-bind="est:notes">${esc(e.notes)}</textarea></label>
       <p class="small muted" style="margin:8px 0 0">고객용에는 단가·원가·마진이 나오지 않습니다. 공정 금액은 재료비(부가세 10% 포함)와 노무비에 이윤 ${esc(e.margin)}%를 더해 천 원 단위로 반올림한 값입니다.</p>
-    </div></section>
-    <div class="doc-stage" id="docStage">${docHTML(e)}</div>
+    </div></section>`}
+    <div class="doc-stage" id="docStage">${DOC_MODE==='contract'?contractHTML(e):docHTML(e)}</div>
   </div>`;
 }
-function refreshDoc(){ const st=document.getElementById('docStage'); const e=cur(); if(st&&e) st.innerHTML=docHTML(e); }
+function refreshDoc(){ const st=document.getElementById('docStage'); const e=cur(); if(st&&e) st.innerHTML=DOC_MODE==='contract'?contractHTML(e):docHTML(e); }
 async function downloadDoc(){
   const e=cur(); if(!e) return;
-  const html=`<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>견적서 ${esc(e.client.name||'')} ${esc(e.no)}</title>
+  const ct=DOC_MODE==='contract';
+  const html=`<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${ct?'계약서':'견적서'} ${esc(e.client.name||'')} ${esc(e.no)}</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;600;700&family=Nanum+Myeongjo:wght@800&display=swap">
-<style>body{margin:0;background:#e9ebe9;padding:24px 0;overflow-x:auto}@media print{body{background:#fff;padding:0}#doc{box-shadow:none!important;padding:0!important}}@page{size:A4;margin:12mm}${DOC_CSS}</style></head><body>${docHTML(e)}</body></html>`;
-  const fname=`견적서_${(e.client.name||'고객').replace(/[\\/:*?"<>|]/g,'')}_${e.no}.html`;
+<style>body{margin:0;background:#e9ebe9;padding:24px 0;overflow-x:auto}@media print{body{background:#fff;padding:0}#doc{box-shadow:none!important;padding:0!important}}@page{size:A4;margin:12mm}${DOC_CSS}</style></head><body>${ct?contractHTML(e):docHTML(e)}</body></html>`;
+  const fname=`${ct?'계약서':'견적서'}_${(e.client.name||'고객').replace(/[\\/:*?"<>|]/g,'')}_${e.no}.html`;
   await shareOrDownload(fname,new Blob([html],{type:'text/html'}));
 }
 
@@ -2796,6 +2973,7 @@ document.addEventListener('click',async ev=>{
       if(await askConfirm({title:`“${m.name||'이름 없는 자재'}”을(를) 단가표에서 지울까요?`,lines:['이미 만든 견적의 금액은 그대로 유지됩니다'],ok:'네, 지웁니다',cancel:'아니요'})){ deleteMat(m.id); render(); } break; }
     case 'matPhoto': photoTarget={kind:'mat',id:t.dataset.id}; $('#filePhoto').click(); break;
     case 'linePhoto': photoTarget={kind:'line',pi:+t.dataset.pi,li:+t.dataset.li}; $('#filePhoto').click(); break;
+    case 'docMode': DOC_MODE = t.dataset.m==='contract'?'contract':'quote'; render(); break;
     case 'print': flushWrites(); window.print(); break;
     case 'download': downloadDoc(); break;
     case 'syncNow': if(!sb||!session){ VIEW='set'; render(); } else sync(); break;
