@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.8.2';
+const APP_VERSION = '5.8.3';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -1336,7 +1336,10 @@ const DOC_CSS = `
 #doc.ct table.sign td.sk{width:8em;text-align:center;font-weight:700;background:var(--d-soft)}
 #doc.ct table.sign td.sp{width:6.2em;text-align:center;font-weight:700;background:var(--d-soft)}
 #doc.ct table.sign{margin-bottom:0}
-#doc.ct .stamp-in{height:2.6em;vertical-align:middle;margin-left:.5em}
+/* 도장은 (인) 글자 위에 겹쳐 찍힙니다 */
+#doc.ct .ins{position:relative;display:inline-block}
+#doc.ct .ins .stamp-in{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  height:2.9em;width:auto;max-width:none;mix-blend-mode:multiply;pointer-events:none}
 #doc.ct .blank{color:#9aa0a0}
 .doc-modes{display:flex;gap:8px;margin-bottom:4px}
 .doc-modes .btn[aria-pressed="true"]{background:var(--pri,#2f6f4f);color:#fff;border-color:transparent}`;
@@ -1522,7 +1525,7 @@ function contractHTML(e){
       <tr><td class="sk" rowspan="4">시공자<br>(수급인)</td><td class="sp">상　　호</td><td>${blank(d.coBiz,10)}</td></tr>
       <tr><td class="sp">주　　소</td><td>${blank(d.coAddr,16)}</td></tr>
       <tr><td class="sp">연  락  처</td><td>${blank(d.coPhone,10)}</td></tr>
-      <tr><td class="sp">대 표 자 명</td><td>${blank(d.coName,10)}　　　　(인) 또는 서명${co.stamp?`<img src="${esc(co.stamp)}" alt="(인)" class="stamp-in">`:''}</td></tr>
+      <tr><td class="sp">대 표 자 명</td><td>${blank(d.coName,10)}　　　　<span class="ins">(인)${co.stamp?`<img src="${esc(co.stamp)}" alt="도장" class="stamp-in">`:''}</span> 또는 서명</td></tr>
     </table>
   </article>`;
 }
