@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.1.0';
+const APP_VERSION = '5.2.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -756,6 +756,21 @@ document.addEventListener('click',ev=>{
   ev.preventDefault(); openLightbox(items,idx);
 },true);
 /* 칸을 누르면 이미 있는 값이 통째로 선택돼, 지우지 않고 바로 덮어쓸 수 있습니다 */
+/* 엑셀 셀을 고치면 저장하고 수식을 다시 계산합니다 */
+document.addEventListener('focusout',ev=>{
+  const td=ev.target.closest?.('td[data-addr][contenteditable]'); if(!td) return;
+  const addr=td.dataset.addr, text=td.textContent.trim();
+  if(td.dataset.before===text) return;
+  saveEdit(addr,text);
+},true);
+document.addEventListener('focusin',ev=>{
+  const td=ev.target.closest?.('td[data-addr][contenteditable]'); if(td) td.dataset.before=td.textContent.trim();
+},true);
+document.addEventListener('keydown',ev=>{
+  const td=ev.target.closest?.('td[data-addr][contenteditable]'); if(!td) return;
+  if(ev.key==='Enter'){ ev.preventDefault(); td.blur(); }
+  if(ev.key==='Escape'){ td.textContent=td.dataset.before||''; td.blur(); }
+});
 document.addEventListener('focusin',ev=>{
   const t=ev.target;
   if(t.tagName!=='INPUT'||!t.value) return;
@@ -806,12 +821,14 @@ function renderExcel(){
       <div class="panel-h"><h3>${esc(siteName(p))} · 엑셀 견적서</h3><span class="spacer"></span>
         <button class="btn pri" data-act="pickExcel">엑셀 파일 올리기</button></div>
       <div class="panel-b">
-        ${files.length?`<div class="row" style="gap:8px">
+        ${files.length?`<p class="muted small" style="margin:0 0 8px">셀을 눌러 값을 고칠 수 있습니다. 수식 칸(연한 초록)은 자동으로 다시 계산됩니다.</p>
+        <div class="row" style="gap:8px">
           <select class="f" id="excelSel" data-act-change="excelPick" style="width:auto;max-width:320px">
             ${files.map(f=>`<option value="${f.id}" ${sel&&sel.id===f.id?'selected':''}>${esc(f.name)} · ${new Date(f.at).toLocaleDateString('ko-KR')}</option>`).join('')}
           </select>
           <a class="btn sm" href="${esc(sel?.url||'#')}" download target="_blank" rel="noopener">원본 내려받기</a>
           <button class="btn sm ghost" data-act="printExcel">인쇄 / PDF</button>
+          <button class="btn sm" data-act="saveXlsx">수정본 엑셀로 저장</button>
           <span class="spacer"></span>
           <button class="btn ghost sm danger" data-act="delExcel" data-id="${sel?.id||''}">파일 삭제</button>
         </div>`:'<p class="muted small" style="margin:0">엑셀로 만든 견적서를 올리면 서식 그대로 볼 수 있습니다. (.xlsx)</p>'}
@@ -2056,16 +2073,99 @@ async function uploadExcel(file){
     await showExcel(rec);
   }catch(e){ EXCEL_ERR='파일을 올리지 못했습니다: '+(e.message||e); EXCEL_BUSY=false; render(); }
 }
+let XLS=null;      // {rec, wb, sel, edits}
 async function showExcel(rec){
-  if(!rec){ EXCEL_HTML=''; render(); return; }
+  if(!rec){ EXCEL_HTML=''; XLS=null; render(); return; }
   EXCEL_BUSY=true; EXCEL_ERR=''; EXCEL_HTML=''; render();
   try{
     if(!window.ExcelJS) await loadScript('https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js');
     const res=await fetch(rec.url); if(!res.ok) throw new Error('파일을 불러오지 못했습니다 ('+res.status+')');
-    const buf=await res.arrayBuffer();
-    const wb=new ExcelJS.Workbook(); await wb.xlsx.load(buf);
-    EXCEL_HTML=wb.worksheets.map(ws=>sheetToHtml(ws)).join('');
-  }catch(e){ EXCEL_ERR='엑셀을 여는 중 문제가 생겼습니다: '+(e.message||e); }
+    const wb=new ExcelJS.Workbook(); await wb.xlsx.load(await res.arrayBuffer());
+    const p=curProj();
+    const edits=(p?.excelEdits&&p.excelEdits[rec.id])||{};
+    XLS={rec, wb, sel:0, edits};
+    applyEdits();          // 저장해 둔 수정값 반영
+    recalcSheet();
+    paintExcel();
+  }catch(e){ EXCEL_ERR='엑셀을 여는 중 문제가 생겼습니다: '+(e.message||e); EXCEL_BUSY=false; render(); }
+}
+function curSheet(){ return XLS?.wb.worksheets[XLS.sel]; }
+function applyEdits(){
+  if(!XLS) return;
+  XLS.wb.worksheets.forEach(ws=>{
+    const m=XLS.edits[ws.name]; if(!m) return;
+    Object.entries(m).forEach(([addr,v])=>{ const c=ws.getCell(addr); c.value = (v!==''&&!isNaN(num(v))&&/^-?[\d.,]+$/.test(String(v))) ? num(v) : v; });
+  });
+}
+function saveEdit(addr,text){
+  const ws=curSheet(); if(!ws||!XLS) return;
+  const p=curProj(); if(!p) return;
+  const val = text!=='' && /^-?[\d.,]+$/.test(text) ? num(text) : text;
+  ws.getCell(addr).value = val;
+  XLS.edits[ws.name]=XLS.edits[ws.name]||{};
+  XLS.edits[ws.name][addr]=text;
+  p.excelEdits=p.excelEdits||{}; p.excelEdits[XLS.rec.id]=XLS.edits; saveProj(p);
+  recalcSheet(); paintExcel();
+}
+/* ── 수식 계산 (자주 쓰는 함수만) ───────────────────────────────── */
+const XL_FN={SUM:a=>a.reduce((s,x)=>s+(+x||0),0),AVERAGE:a=>a.length?a.reduce((s,x)=>s+(+x||0),0)/a.length:0,
+  MIN:a=>Math.min(...a.map(Number)),MAX:a=>Math.max(...a.map(Number)),COUNT:a=>a.filter(x=>x!==''&&!isNaN(+x)).length,
+  COUNTA:a=>a.filter(x=>x!==''&&x!=null).length,ROUND:(a)=>{const[v,d=0]=a;const f=Math.pow(10,d);return Math.round(v*f)/f;},
+  ROUNDUP:(a)=>{const[v,d=0]=a;const f=Math.pow(10,d);return Math.ceil(v*f)/f;},
+  ROUNDDOWN:(a)=>{const[v,d=0]=a;const f=Math.pow(10,d);return Math.floor(v*f)/f;},
+  INT:a=>Math.floor(a[0]),ABS:a=>Math.abs(a[0]),IF:a=>a[0]?a[1]:a[2],PRODUCT:a=>a.reduce((s,x)=>s*(+x||0),1)};
+function colName(n){ let s=''; while(n>0){ const r=(n-1)%26; s=String.fromCharCode(65+r)+s; n=Math.floor((n-1)/26); } return s; }
+function cellNum(ws,addr){
+  const c=ws.getCell(addr); const v=c.value;
+  if(v==null) return 0;
+  if(typeof v==='number') return v;
+  if(typeof v==='object'){ if('result' in v) return typeof v.result==='number'?v.result:(num(v.result)||0); if(v.richText) return num(v.richText.map(t=>t.text).join('')); }
+  return num(v)||0;
+}
+function evalFormula(ws,src){
+  let f=String(src).replace(/^=/,'');
+  // 다른 시트 참조는 지원하지 않습니다
+  if(/!/.test(f)) throw new Error('다른 시트 참조');
+  // 범위 → 값 목록
+  f=f.replace(/\$?([A-Z]+)\$?(\d+):\$?([A-Z]+)\$?(\d+)/gi,(m,c1,r1,c2,r2)=>{
+    const a=cellRef(c1+r1), b=cellRef(c2+r2), out=[];
+    for(let r=Math.min(a.r,b.r);r<=Math.max(a.r,b.r);r++)
+      for(let c=Math.min(a.c,b.c);c<=Math.max(a.c,b.c);c++) out.push(cellNum(ws,colName(c)+r));
+    return '['+out.join(',')+']';
+  });
+  // 단일 셀 → 값
+  f=f.replace(/\$?([A-Z]{1,3})\$?(\d+)/gi,(m,c,r)=>String(cellNum(ws,c.toUpperCase()+r)));
+  // 함수 이름 → 계산기
+  f=f.replace(/([A-Z][A-Z0-9.]*)\s*\(/gi,(m,name)=>{
+    const key=name.toUpperCase();
+    if(!XL_FN[key]) throw new Error('지원하지 않는 함수 '+name);
+    return `__fn("${key}",`;
+  });
+  f=f.replace(/\^/g,'**').replace(/<>/g,'!==').replace(/([^<>!=])=([^=])/g,'$1==$2').replace(/&/g,'+');
+  const fn=new Function('__fn', 'return ('+f+')');
+  return fn((name,...args)=>{
+    const flat=args.flat(Infinity);
+    return XL_FN[name](name==='IF'||name==='ROUND'||name==='ROUNDUP'||name==='ROUNDDOWN'?args.flat(1):flat);
+  });
+}
+function recalcSheet(){
+  const ws=curSheet(); if(!ws) return;
+  for(let pass=0;pass<4;pass++){
+    ws.eachRow({includeEmpty:false},row=>{
+      row.eachCell({includeEmpty:false},cell=>{
+        const v=cell.value;
+        if(v&&typeof v==='object'&&v.formula){
+          try{ const r=evalFormula(ws,v.formula); cell.value={formula:v.formula, result:r}; }
+          catch(e){ /* 계산 못 하면 엑셀이 저장해 둔 값을 그대로 씁니다 */ }
+        }
+      });
+    });
+  }
+}
+function paintExcel(){
+  if(!XLS){ EXCEL_HTML=''; render(); return; }
+  const tabs=XLS.wb.worksheets.map((ws,i)=>`<button class="chip" data-act="xlsTab" data-i="${i}" aria-pressed="${i===XLS.sel}">${esc(ws.name)}</button>`).join('');
+  EXCEL_HTML=`<div class="chips" style="margin-bottom:10px">${tabs}</div>${sheetToHtml(curSheet())}`;
   EXCEL_BUSY=false; render();
 }
 const argb = v => { if(!v) return ''; const s=String(v.argb||v||''); return s.length===8?'#'+s.slice(2):(s.length===6?'#'+s:''); };
@@ -2076,21 +2176,21 @@ function borderCss(b){
     return `border-${side}:${w}px ${st} ${argb(def.color)||'#999'};`; };
   return one('top',b.top)+one('bottom',b.bottom)+one('left',b.left)+one('right',b.right);
 }
-/* 엑셀 시트를 서식 그대로 표로 옮깁니다 */
+/* 엑셀 시트를 서식 그대로 표로 옮깁니다. 값 칸은 눌러서 고칠 수 있고, 수식 칸은 다시 계산됩니다. */
 function sheetToHtml(ws){
+  if(!ws) return '';
   const merges=[];
-  const mm=ws.model?.merges||[];
-  mm.forEach(m=>{ const [a,b]=String(m).split(':'); if(!b) return;
+  (ws.model?.merges||[]).forEach(m=>{ const [a,b]=String(m).split(':'); if(!b) return;
     const pa=cellRef(a), pb=cellRef(b); merges.push({r1:pa.r,c1:pa.c,r2:pb.r,c2:pb.c}); });
   const skip=new Set();
   merges.forEach(m=>{ for(let r=m.r1;r<=m.r2;r++) for(let c=m.c1;c<=m.c2;c++) if(!(r===m.r1&&c===m.c1)) skip.add(r+':'+c); });
-  const maxC=ws.columnCount||1, maxR=ws.rowCount||1;
+  const maxC=Math.max(1,ws.columnCount||1), maxR=Math.max(1,ws.rowCount||1);
   const cols=[]; for(let c=1;c<=maxC;c++){ const w=ws.getColumn(c).width; cols.push(`<col style="width:${Math.round((w||8.43)*7.5)}px">`); }
-  let out=`<div class="xls-sheet"><div class="xls-name">${esc(ws.name)}</div><table class="xls"><colgroup>${cols.join('')}</colgroup><tbody>`;
+  let out=`<div class="xls-sheet"><table class="xls"><colgroup>${cols.join('')}</colgroup><tbody>`;
   for(let r=1;r<=maxR;r++){
     const row=ws.getRow(r);
-    const h=row.height?`style="height:${Math.round(row.height*1.34)}px"`:'';
-    out+=`<tr ${h}>`;
+    const h=row.height?` style="height:${Math.round(row.height*1.34)}px"`:'';
+    out+=`<tr${h}>`;
     for(let c=1;c<=maxC;c++){
       if(skip.has(r+':'+c)) continue;
       const cell=row.getCell(c);
@@ -2109,19 +2209,22 @@ function sheetToHtml(ws){
         al.vertical?`vertical-align:${al.vertical==='middle'?'middle':al.vertical}`:'',
         al.wrapText?'white-space:pre-wrap':'white-space:nowrap',
       ].filter(Boolean).join(';');
+      const v=cell.value;
       let text=cell.text ?? '';
-      const raw=(cell.value&&typeof cell.value==='object'&&'result' in cell.value)?cell.value.result:cell.value;
+      if(v && typeof v==='object' && v.richText) text=v.richText.map(t=>t.text).join('');
+      const raw=(v&&typeof v==='object'&&'result' in v)?v.result:v;
       if(typeof raw==='number'){
         const fmt=cell.numFmt||'';
         if(/%/.test(fmt)) text=(raw*100).toLocaleString('ko-KR',{maximumFractionDigits:2})+'%';
         else if(/[#0]/.test(fmt)){
           const dec=((fmt.split('.')[1]||'').match(/0/g)||[]).length;
           text=raw.toLocaleString('ko-KR',{minimumFractionDigits:dec,maximumFractionDigits:dec});
-          if(fmt.includes('₩')||fmt.includes('\W')) text='₩'+text;
-        }
+          if(fmt.includes('₩')||fmt.includes('\\W')) text='₩'+text;
+        } else text=String(raw);
       } else if(raw instanceof Date){ text=raw.toLocaleDateString('ko-KR'); }
-      if(cell.value && typeof cell.value==='object' && cell.value.richText) text=cell.value.richText.map(t=>t.text).join('');
-      out+=`<td${span} style="${style};${borderCss(cell.border)}">${esc(text)}</td>`;
+      const addr=colName(c)+r;
+      const isF=v&&typeof v==='object'&&v.formula;
+      out+=`<td${span} data-addr="${addr}" style="${style};${borderCss(cell.border)}"${isF?` class="xls-f" title="=${esc(v.formula)}"`:' contenteditable="true"'}>${esc(text)}</td>`;
     }
     out+='</tr>';
   }
@@ -2596,6 +2699,12 @@ document.addEventListener('click',async ev=>{
       if(EST_MODE==='excel'){ const p=curProj(); const f=(p?.excel||[]).slice().sort((a,b)=>(b.at||0)-(a.at||0))[0]; if(f&&!EXCEL_HTML) showExcel(f); }
       break;
     case 'pickExcel': $('#fileExcel').click(); break;
+    case 'xlsTab': { if(!XLS) break; XLS.sel=+t.dataset.i; recalcSheet(); paintExcel(); break; }
+    case 'saveXlsx': { if(!XLS) break;
+      try{ const buf=await XLS.wb.xlsx.writeBuffer();
+        await shareOrDownload((XLS.rec.name||'견적서').replace(/\.xlsx$/i,'')+'_수정.xlsx',
+          new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
+      }catch(e){ toast('내려받지 못했습니다: '+(e.message||e)); } break; }
     case 'printExcel': { const st=document.getElementById('xlsStage'); if(!st){ toast('먼저 파일을 고르세요.'); break; }
       document.body.classList.add('printing-xls'); setTimeout(()=>{ window.print(); setTimeout(()=>document.body.classList.remove('printing-xls'),600); },80); break; }
     case 'delExcel': { const p=curProj(); const f=(p?.excel||[]).find(x=>x.id===t.dataset.id); if(!f) break;
