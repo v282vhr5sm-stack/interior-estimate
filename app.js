@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.12.0';
+const APP_VERSION = '5.12.1';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -450,6 +450,17 @@ async function updatePill(){
 /* ---------- calculation ---------- */
 const UNITS = ['㎡','평','식','인','롤','박스','장','포','통','말','개','m','kg','대','매','세트'];
 const CUSTOM_UNIT = new Set();          // 직접 입력으로 열어둔 자재
+const CUSTOM_UNIT_REV = new Set();      // 사진에서 읽은 줄 중 직접 입력으로 열어둔 것
+/* 사진에서 읽은 줄의 단위 고르기 */
+function revUnitCell(it,i){
+  const custom = CUSTOM_UNIT_REV.has(i) || (it.unit && !UNITS.includes(it.unit));
+  return `<select class="f" id="rv-${i}-unitsel" data-revunit="${i}">
+      <option value="" ${!custom&&!it.unit?'selected':''}>— 고르기 —</option>
+      ${UNITS.map(u=>`<option value="${u}" ${!custom&&it.unit===u?'selected':''}>${u}</option>`).join('')}
+      <option value="__custom" ${custom?'selected':''}>직접 입력</option>
+    </select>
+    ${custom?`<input class="f" id="rv-${i}-unit" data-bind="rev:${i}:unit" value="${esc(it.unit||'')}" placeholder="단위" style="margin-top:4px">`:''}`;
+}
 /* 업체 칸: 등록된 업체를 고르거나 직접 적습니다 */
 function vendorCell(m){
   const custom = !m.vendorId;
@@ -1280,6 +1291,8 @@ function renderImport(){
         <label class="row small" style="gap:6px">업체 한 번에 지정 <input class="f" id="rv-vendor-all" data-act-change="revVendor" placeholder="예: OO자재" style="width:140px"></label>
         <label class="row small" style="gap:6px">공정 한 번에 지정
           <select class="f" id="rv-proc-all" data-act-change="revProc" style="width:120px"><option value="">선택</option>${PROCS.map(p=>`<option value="${p.k}">${p.n}</option>`).join('')}</select></label>
+        <label class="row small" style="gap:6px">단위 한 번에 지정
+          <select class="f" id="rv-unit-all" data-act-change="revUnitAll" style="width:100px"><option value="">선택</option>${UNITS.map(u=>`<option value="${u}">${u}</option>`).join('')}</select></label>
       </div>
       <div class="tbl-wrap"><table class="t resp"><thead><tr><th></th><th class="w-name">품명 · 규격</th><th>업체</th><th>공정</th><th>단위</th><th class="r">단가</th><th></th></tr></thead>
       <tbody>${I.items.map((it,i)=>`<tr>
@@ -1287,7 +1300,7 @@ function renderImport(){
         <td class="c-name"><input class="f" id="rv-${i}-name" data-bind="rev:${i}:name" value="${esc(it.name)}" style="font-weight:500"><input class="f small" id="rv-${i}-spec" data-bind="rev:${i}:spec" value="${esc(it.spec)}" style="margin-top:3px"></td>
         <td data-l="업체"><input class="f" id="rv-${i}-vendor" data-bind="rev:${i}:vendor" value="${esc(it.vendor||'')}" placeholder="거래처" ></td>
         <td data-l="공정"><select class="f" id="rv-${i}-proc" data-bind="rev:${i}:process" >${PROCS.map(p=>`<option value="${p.k}" ${p.k===it.process?'selected':''}>${p.n}</option>`).join('')}</select></td>
-        <td data-l="단위"><input class="f" id="rv-${i}-unit" data-bind="rev:${i}:unit" value="${esc(it.unit)}" placeholder="개·장·박스"></td>
+        <td data-l="단위">${revUnitCell(it,i)}</td>
         <td class="r" data-l="단가(원)"><input class="f num" type="number" inputmode="numeric" id="rv-${i}-price" data-bind="rev:${i}:unitPrice" data-num value="${esc(it.unitPrice)}">${it.vatConverted?'<div><span class="badge">VAT 제외 환산</span></div>':''}</td>
         <td><button class="btn ghost sm danger" data-act="revDel" data-i="${i}" aria-label="${esc(it.name||'이 줄')} 지우기" title="이 줄 지우기">✕</button></td></tr>`).join('')}</tbody></table></div>
       <div class="panel-b row rev-bar" id="revBar">
@@ -3153,6 +3166,14 @@ function handleSelectChange(t){
 document.addEventListener('change',ev=>{
   const t=ev.target, a=t.dataset?.actChange;
   if(t.dataset?.calcmat!==undefined){ CALC.mid=t.value; CALC.loss=''; render(); return; }
+  if(t.dataset?.revunit!==undefined){          // 사진에서 읽은 줄의 단위 고르기
+    const i=+t.dataset.revunit, it=IMPORT.items?.[i]; if(!it) return;
+    if(t.value==='__custom'){ CUSTOM_UNIT_REV.add(i); it.unit=''; }
+    else { CUSTOM_UNIT_REV.delete(i); it.unit=t.value; }
+    saveImportDraft(true); render();
+    if(t.value==='__custom') setTimeout(()=>document.getElementById('rv-'+i+'-unit')?.focus(),60);
+    return;
+  }
   if(t.dataset?.unitsel||t.dataset?.vendorpick!==undefined||t.dataset?.matvendor||t.dataset?.procvendor!==undefined||t.dataset?.lineunit||t.dataset?.linevendor||t.dataset?.linemat){ handleSelectChange(t); return; }
   if(!a) return;
   if(a==='pick'){ setCur(t.value); render(); }
@@ -3160,6 +3181,7 @@ document.addEventListener('change',ev=>{
   if(a==='revAll'){ IMPORT.items.forEach(x=>x.on=t.checked); saveImportDraft(true); render(); }
   if(a==='revVendor'){ const v=t.value.trim(); IMPORT.items.forEach(x=>{ if(x.on) x.vendor=v; }); saveImportDraft(true); render(); }
   if(a==='revProc'&&t.value){ IMPORT.items.forEach(x=>{ if(x.on) x.process=t.value; }); saveImportDraft(true); render(); }
+  if(a==='revUnitAll'&&t.value){ IMPORT.items.forEach((x,i)=>{ if(x.on){ x.unit=t.value; CUSTOM_UNIT_REV.delete(i); } }); saveImportDraft(true); render(); }
   if(a==='pickProj'){ selectSite(t.value); render(); }
   if(a==='excelPick'){ const p=curProj(); const f=(p?.excel||[]).find(x=>x.id===t.value); EXCEL_SEL=t.value; showExcel(f); }
   if(a==='autoLogin'){ ls.set('autoLogin',t.checked?'1':'0'); if(!t.checked) ls.set('autoPw',null);
@@ -3281,6 +3303,8 @@ document.addEventListener('click',async ev=>{
     case 'reReadAll': await reReadSheets([...S.sheets.keys()]); break;
     case 'revDel': { const i=+t.dataset.i; if(!IMPORT.items?.[i]) break;
       IMPORT.items.splice(i,1);
+      { const keep=[...CUSTOM_UNIT_REV].filter(n=>n!==i).map(n=>n>i?n-1:n);
+        CUSTOM_UNIT_REV.clear(); keep.forEach(n=>CUSTOM_UNIT_REV.add(n)); }
       if(!IMPORT.items.length){ clearImportDraft(); toast('읽어낸 목록을 모두 지웠습니다'); }
       else saveImportDraft(true);
       render(); break; }
