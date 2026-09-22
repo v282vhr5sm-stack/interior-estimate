@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.14.0';
+const APP_VERSION = '5.14.1';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -2036,10 +2036,23 @@ function renderHome(){
 let GAL_FOLDER = '';                       // 열어 둔 폴더 (빈 값이면 폴더 목록)
 const folderOf = (p,id) => (p.folders||[]).find(f=>f.id===id);
 const filesInFolder = (p,id) => (p.files||[]).filter(f=>fileKind(f)==='img' && (f.folderId||'')===id);
+/* 폴더의 공정 — 예전에 일정 작업으로 골라 둔 것도 공정으로 읽어줍니다 */
+function folderProc(p,fd){
+  if(fd.proc) return fd.proc;
+  const t=(p.tasks||[]).find(x=>x.id===fd.taskId);
+  return t?.proc || '';
+}
+const folderProcName = (p,fd) => { const k=folderProc(p,fd); return k ? (PMAP[k]||PMAP.etc).n : ''; };
+/* 이 현장 견적에 들어간 공정을 먼저 보여줍니다 */
+function procsForSite(p){
+  const e=p.estimateId && S.estimates.get(p.estimateId);
+  const used=new Set((e?.processes||[]).map(x=>x.k));
+  (p.tasks||[]).forEach(t=>{ if(t.proc) used.add(t.proc); });
+  return { mine:PROCS.filter(x=>used.has(x.k)), rest:PROCS.filter(x=>!used.has(x.k)) };
+}
 function folderTitle(p,fd){
   if(fd.name && fd.name.trim()) return fd.name.trim();
-  const t=(p.tasks||[]).find(x=>x.id===fd.taskId);
-  return [fd.date?dstr(fd.date):'', t?t.name:''].filter(Boolean).join(' · ') || '이름 없는 폴더';
+  return [fd.date?dstr(fd.date):'', folderProcName(p,fd)].filter(Boolean).join(' · ') || '이름 없는 폴더';
 }
 function newFolder(p){
   const fd={id:uid(),name:'',date:today(),taskId:'',memo:'',at:Date.now()};
@@ -2061,9 +2074,13 @@ function renderFolder(p,fd){
       <div class="client-grid">
         <label class="fl">폴더 이름<input class="f" id="fd-name" data-bind="folder:${fd.id}:name" value="${esc(fd.name||'')}" placeholder="${esc(folderTitle(p,fd))}"></label>
         <label class="fl">날짜<input class="f" type="date" id="fd-date" data-bind="folder:${fd.id}:date" value="${esc(fd.date||'')}"></label>
-        <label class="fl">공정<select class="f" id="fd-task" data-bind="folder:${fd.id}:taskId">
+        <label class="fl">공정<select class="f" id="fd-proc" data-bind="folder:${fd.id}:proc">
           <option value="">공정 미지정</option>
-          ${(p.tasks||[]).map(t=>`<option value="${t.id}" ${fd.taskId===t.id?'selected':''}>${esc(t.name)}</option>`).join('')}
+          ${(()=>{ const {mine,rest}=procsForSite(p), cur=folderProc(p,fd);
+            const op=x=>`<option value="${x.k}" ${cur===x.k?'selected':''}>${esc(x.n)}</option>`;
+            return (mine.length?`<optgroup label="이 현장 공정">${mine.map(op).join('')}</optgroup>`:'')
+                 + (rest.length?`<optgroup label="그 밖의 공정">${rest.map(op).join('')}</optgroup>`:'');
+          })()}
         </select></label>
       </div>
       <label class="fl" style="margin-top:10px">그날 작업 메모
@@ -2097,11 +2114,12 @@ function renderGallery(p){
   const folders=[...(p.folders||[])].sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))||(b.at||0)-(a.at||0));
   const card=fd=>{
     const list=filesInFolder(p,fd.id);
-    const t=(p.tasks||[]).find(x=>x.id===fd.taskId);
+    const named=!!(fd.name||'').trim();          // 이름을 적었으면 아래에 날짜·공정을 따로 보여줍니다
+    const sub=(named?[fd.date?dstr(fd.date):'', folderProcName(p,fd)]:[]).concat(`사진 ${list.length}장`);
     return `<button class="folder" data-act="openFolder" data-id="${fd.id}">
       <span class="folder-th">${list[0]?`<img src="${esc(list[0].url)}" alt="" loading="lazy">`:'<span class="folder-i">🗂</span>'}</span>
       <b>${esc(folderTitle(p,fd))}</b>
-      <span class="muted small">${[fd.date?dstr(fd.date):'', t?t.name:'', `사진 ${list.length}장`].filter(Boolean).join(' · ')}</span>
+      <span class="muted small">${sub.filter(Boolean).join(' · ')}</span>
       ${fd.memo?`<span class="folder-memo">${esc(fd.memo)}</span>`:''}
     </button>`;
   };
@@ -3650,7 +3668,8 @@ document.addEventListener('click',async ev=>{
     case 'openFolder': GAL_FOLDER=t.dataset.id; render(); window.scrollTo(0,0); break;
     case 'folderBack': GAL_FOLDER=''; render(); window.scrollTo(0,0); break;
     case 'folderPhoto': { const p=curProj(); const fd=folderOf(p,t.dataset.id); if(!fd) break;
-      PLAN_FOLDER=fd.id; PLAN_TASK=fd.taskId||'';
+      PLAN_FOLDER=fd.id;
+      { const k=folderProc(p,fd); PLAN_TASK = fd.taskId || (k ? ((p.tasks||[]).find(t=>t.proc===k)?.id||'') : ''); }
       $('#filePlan').setAttribute('accept','image/*'); $('#filePlan').click(); break; }
     case 'delFolder': { const p=curProj(); const fd=folderOf(p,t.dataset.id); if(!fd) break;
       const n=filesInFolder(p,fd.id).length;
