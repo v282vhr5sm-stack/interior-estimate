@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.12.1';
+const APP_VERSION = '5.12.2';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -1152,8 +1152,11 @@ function renderLine(p,pi,l,li){
   const id=`p${pi}l${li}`;
   const m=l.mid&&S.materials.get(l.mid);
   const customUnit=!UNITS.includes(l.unit||'');
-  const vend=[...S.vendors.values()].sort((a,b)=>String(a.name).localeCompare(String(b.name),'ko'));
   const vid=l.vendorId||m?.vendorId||'';
+  /* 이 공정에 등록된 업체만 보여줍니다 (전체 공정 업체 포함).
+     이미 골라 둔 업체가 목록에 없으면 그것만 살려 둡니다. */
+  const vend=vendorsFor(p.k);
+  if(vid && !vend.some(v=>v.id===vid)){ const cur=S.vendors.get(vid); if(cur) vend.unshift(cur); }
   const pool=[...S.materials.values()].filter(x=>(!vid||x.vendorId===vid));
   const here=pool.filter(x=>x.process===p.k).sort((a,b)=>String(a.name).localeCompare(String(b.name),'ko'));
   const there=pool.filter(x=>x.process!==p.k).sort((a,b)=>String(a.name).localeCompare(String(b.name),'ko'));
