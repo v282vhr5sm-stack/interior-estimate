@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '4.9.0';
+const APP_VERSION = '5.0.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -236,7 +236,7 @@ const idb = {
 };
 
 /* ---------- app state ---------- */
-const S = { materials:new Map(), estimates:new Map(), projects:new Map(), sheets:new Map(), vendors:new Map(), company:{}, curId:null, curPid:null };
+const S = { settings:{}, materials:new Map(), estimates:new Map(), projects:new Map(), sheets:new Map(), vendors:new Map(), company:{}, curId:null, curPid:null };
 const cur = () => S.estimates.get(S.curId);
 const curProj = () => S.projects.get(S.curPid);
 /* 현장 이름이 바뀌면 그 현장 견적 제목도 같이 바꿉니다 (직접 다른 제목을 적어둔 경우는 그대로) */
@@ -262,6 +262,7 @@ function applyRecord(col,id,data){
   else if(col==='sheets'){ if(data) S.sheets.set(id,{...data,id}); else S.sheets.delete(id); }
   else if(col==='vendors'){ if(data) S.vendors.set(id,{...data,id}); else S.vendors.delete(id); }
   else if(col==='settings' && id==='company'){ S.company=data||{}; }
+  else if(col==='settings'){ S.settings=S.settings||{}; if(data) S.settings[id]=data; else delete S.settings[id]; }
 }
 async function loadLocal(){
   const ok = await idb.open();
@@ -273,6 +274,11 @@ async function loadLocal(){
   migrateVendors();
   migrateLinesV2();
   ensureTempProcess();
+  S.estimates.forEach(e=>applyTempArea(e,true));
+  if(!tempTpl().length){
+    const src=[...S.estimates.values()].map(e=>(e.processes||[]).find(p=>p.k==='temp')).find(p=>p&&(p.lines||[]).length);
+    if(src) saveTempTpl(src.lines);
+  }
   S.curPid = ls.get('curPid');
   if(!S.projects.has(S.curPid)) S.curPid=[...S.projects.values()].sort((a,b)=>(b.updated||0)-(a.updated||0))[0]?.id||null;
 }
@@ -463,12 +469,37 @@ function calcEst(e){
   return {procs,mat,matVat,labor,cost,gross,supply:total,vat:0,total,profit:total-cost,margin};
 }
 /* ---------- model helpers ---------- */
+/* 가설공사 기본 양식 (설정에 저장) */
+const tempTpl = () => (S.settings?.tempTpl?.lines)||[];
+function saveTempTpl(lines){
+  S.settings=S.settings||{};
+  S.settings.tempTpl={lines:(lines||[]).map(l=>({...l,id:undefined,qty:num(l.qty),memo:l.memo||''}))};
+  queueWrite('settings','tempTpl',()=>S.settings.tempTpl,0);
+}
+/* 견적 면적(㎡)을 가설공사에 그대로 적용합니다 */
+function estAreaM2(e){
+  const {val,unit}=sizeOf(e.client||{});
+  const v=num(val); if(!v) return 0;
+  return unit==='py' ? Math.round(v*PY*10)/10 : v;
+}
+function applyTempArea(e,save){
+  const p=(e.processes||[]).find(x=>x.k==='temp'); if(!p) return false;
+  const a=estAreaM2(e); if(!a) return false;
+  const before=JSON.stringify([p.area,(p.lines||[]).map(l=>l.qty)]);
+  p.area=a; p.areaText=String(a);
+  (p.lines||[]).forEach(l=>{ if(l.autoQty!==false && (l.unit==='㎡'||l.unit==='평')){
+    l.qty = l.unit==='평' ? Math.round(a/PY*10)/10 : a; } });
+  const changed=JSON.stringify([p.area,(p.lines||[]).map(l=>l.qty)])!==before;
+  if(changed&&save) saveEst(e);
+  return changed;
+}
 function newEstimate(){
   const n=S.estimates.size+1;
   return {id:uid(),no:today().replace(/-/g,'')+'-'+String(n).padStart(2,'0'),title:'',
     client:{name:'',phone:'',address:'',size:''},date:today(),validDays:30,margin:20,discount:0,vat:true,
     showLinePrice:false,showImages:true,notes:'· 본 견적은 현장 실측 후 변동될 수 있습니다.\n· 계약금 10% / 중도금 40% / 잔금 50%\n· 공사 기간 중 추가 요청 사항은 별도 협의합니다.',
-    processes:[{id:uid(),k:'temp',area:0,laborPerM2:0,laborLump:0,lines:[]}],updated:Date.now()};
+    processes:[{id:uid(),k:'temp',area:0,laborPerM2:0,laborLump:0,
+      lines:tempTpl().map(l=>({...l,id:uid()}))}],updated:Date.now()};
 }
 /* 견적에 직접 적은 자재를 단가표에 저장하고, 단가표를 고치면 견적도 따라오게 합니다 */
 function syncLineToMaterial(e,p,l){
@@ -845,6 +876,7 @@ function renderProc(e,p,pi){ // e: 견적
           <span class="unitf"><input class="f num" inputmode="decimal" id="p${pi}-area" data-area="${pi}" value="${esc(p.areaText ?? (p.area||''))}" placeholder="84 또는 26평">
             <i id="o-p${pi}-unit">${areaHint(p.areaText ?? p.area)}</i></span>
         </div></div>
+      ${p.k==='temp'?`<button class="btn ghost sm" data-act="saveTempTpl" data-pi="${pi}" title="지금 내용을 새 견적의 기본 가설공사로 저장">기본값으로 저장</button>`:''}
       <div class="proc-sum"><div class="small muted">원가 소계 · <span id="o-p${pi}-m2"></span></div><b id="o-p${pi}-cost"></b></div>
       <div class="row" style="gap:2px;flex-wrap:nowrap">
         <button class="btn ghost sm" data-act="moveProc" data-pi="${pi}" data-d="-1" title="위로" ${pi===0?'disabled':''}>▲</button>
@@ -2165,7 +2197,10 @@ document.addEventListener('input',ev=>{
     if(t.dataset.size==='val') e.client.sizeVal=t.value.replace(/[^\d.]/g,'');
     else e.client.sizeUnit=t.value;
     e.client.size=sizeText(e.client);       // 견적서에 찍히는 문구
-    saveEst(e);
+    applyTempArea(e); saveEst(e);
+    if(VIEW==='est'){ const tp=(e.processes||[]).findIndex(x=>x.k==='temp');
+      if(tp>=0){ const ar=document.getElementById(`p${tp}-area`); if(ar) ar.value=e.processes[tp].area||'';
+        (e.processes[tp].lines||[]).forEach((l,li)=>{ const q=document.getElementById(`p${tp}l${li}-qty`); if(q&&document.activeElement!==q) q.value=l.qty; }); recalc(); } }
     const el=document.getElementById('o-size-conv'); if(el) el.textContent=sizeConv(e.client);
     return;
   }
@@ -2186,7 +2221,7 @@ document.addEventListener('input',ev=>{
     if(VIEW==='doc') refreshDoc(); else { recalc(); if(rest[0]==='title'){ const o=document.querySelector(`#estSel option[value="${e.id}"]`); if(o) o.textContent=`${e.title} · ${e.client.name||''}`; } } }
   else if(kind==='proc'){ const e=cur(); e.processes[+rest[0]][rest[1]]=val; saveEst(e); recalc(); }
   else if(kind==='line'){ const e=cur(), p=e.processes[+rest[0]], l=p.lines[+rest[1]];
-    l[rest[2]]=val; saveEst(e); recalc();
+    l[rest[2]]=val; if(rest[2]==='qty') l.autoQty=false; saveEst(e); recalc();
     clearTimeout(LINE_SYNC[l.mid||('n'+rest[0]+'_'+rest[1])]);
     LINE_SYNC[l.mid||('n'+rest[0]+'_'+rest[1])]=setTimeout(()=>syncLineToMaterial(e,p,l),1200); }
   else if(kind==='mat'){ const m=S.materials.get(rest[0]); if(!m) return; m[rest[1]]=val;
@@ -2478,6 +2513,11 @@ document.addEventListener('click',async ev=>{
       saveProj(p); render(); toast('같은 작업을 뒤쪽 날짜로 하나 더 넣었습니다. 날짜를 고쳐주세요.'); break; }
     case 'sortTasks': { const p=curProj(); p.tasks.sort((a,b)=>String(a.start||'').localeCompare(String(b.start||''))); saveProj(p); render(); break; }
     case 'openSite': HUB_GALLERY=false; HOME_SEL=t.dataset.id; selectSite(t.dataset.id); VIEW='home'; ls.set('view',VIEW); render(); window.scrollTo(0,0); break;
+    case 'saveTempTpl': { const p=e.processes[+t.dataset.pi];
+      if(await askConfirm({title:'지금 가설공사 내용을 기본값으로 저장할까요?',
+        lines:[`품목 ${(p.lines||[]).length}개`,'앞으로 새로 만드는 견적에 이 내용이 그대로 들어갑니다'],
+        ok:'네, 저장합니다', cancel:'아니요', danger:false})){
+        saveTempTpl(p.lines); toast('가설공사 기본값을 저장했습니다'); } break; }
     case 'moveProc': { const pi=+t.dataset.pi, d=+t.dataset.d, arr=e.processes;
       if(pi+d<0||pi+d>=arr.length) break;
       [arr[pi],arr[pi+d]]=[arr[pi+d],arr[pi]]; saveEst(e); render(); break; }
