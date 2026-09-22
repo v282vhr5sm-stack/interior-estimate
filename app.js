@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.5.0';
+const APP_VERSION = '5.6.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -764,7 +764,9 @@ document.addEventListener('focusout',ev=>{
   saveEdit(addr,text);
 },true);
 document.addEventListener('focusin',ev=>{
-  const td=ev.target.closest?.('td[data-addr][contenteditable]'); if(td) td.dataset.before=td.textContent.trim();
+  const td=ev.target.closest?.('td[data-addr][contenteditable]'); if(!td) return;
+  if(td.dataset.f){ td.textContent=td.dataset.f; }        // 수식 칸은 수식을 보여줍니다
+  td.dataset.before=td.textContent.trim();
 },true);
 document.addEventListener('keydown',ev=>{
   if((ev.ctrlKey||ev.metaKey)&&ev.key.toLowerCase()==='z'&&XLS&&document.getElementById('xlsStage')){ ev.preventDefault(); undoExcel(); return; }
@@ -2107,8 +2109,15 @@ function applyEdits(){
   if(!XLS) return;
   XLS.wb.worksheets.forEach(ws=>{
     const m=XLS.edits[ws.name]; if(!m) return;
-    Object.entries(m).forEach(([addr,v])=>{ const c=ws.getCell(addr); c.value = (v!==''&&!isNaN(num(v))&&/^-?[\d.,]+$/.test(String(v))) ? num(v) : v; });
+    Object.entries(m).forEach(([addr,v])=>setCellText(ws,addr,v));
   });
+}
+/* 적은 내용이 =로 시작하면 수식으로, 숫자면 숫자로 넣습니다 */
+function setCellText(ws,addr,text){
+  const t=String(text??'').trim();
+  if(t.startsWith('=')) ws.getCell(addr).value={formula:t.slice(1)};
+  else if(t!=='' && /^-?[\d.,]+$/.test(t)) ws.getCell(addr).value=num(t);
+  else ws.getCell(addr).value = t===''?null:t;
 }
 function saveEdit(addr,text,noUndo){
   const ws=curSheet(); if(!ws||!XLS) return;
@@ -2117,8 +2126,7 @@ function saveEdit(addr,text,noUndo){
   if(!(addr in XLS.orig[ws.name])) XLS.orig[ws.name][addr]=ws.getCell(addr).value;   // 처음 상태 보관
   const prev = XLS.edits[ws.name]?.[addr];
   if(!noUndo){ XLS.undo=XLS.undo||[]; XLS.undo.push({sheet:ws.name,addr,prev}); if(XLS.undo.length>100) XLS.undo.shift(); }
-  const val = text!=='' && /^-?[\d.,]+$/.test(text) ? num(text) : text;
-  ws.getCell(addr).value = val;
+  setCellText(ws,addr,text);
   XLS.edits[ws.name]=XLS.edits[ws.name]||{};
   XLS.edits[ws.name][addr]=text;
   p.excelEdits=p.excelEdits||{}; p.excelEdits[XLS.rec.id]=XLS.edits; saveProj(p);
@@ -2133,11 +2141,7 @@ function undoExcel(){
     const orig=XLS.orig?.[sheet]?.[addr];
     ws.getCell(addr).value = orig===undefined?null:orig;
     if(XLS.edits[sheet]) delete XLS.edits[sheet][addr];
-  } else {
-    const val = prev!=='' && /^-?[\d.,]+$/.test(prev) ? num(prev) : prev;
-    ws.getCell(addr).value = val;
-    XLS.edits[sheet][addr]=prev;
-  }
+  } else { setCellText(ws,addr,prev); XLS.edits[sheet][addr]=prev; }
   const p=curProj(); if(p){ p.excelEdits=p.excelEdits||{}; p.excelEdits[XLS.rec.id]=XLS.edits; saveProj(p); }
   recalcSheet();
   if(XLS.wb.worksheets[XLS.sel]?.name!==sheet){ XLS.sel=XLS.wb.worksheets.findIndex(w=>w.name===sheet); paintExcel(); }
@@ -2282,7 +2286,11 @@ function refreshCells(){
   const ws=curSheet(); if(!ws) return;
   document.querySelectorAll('#xlsStage td[data-addr]').forEach(td=>{
     if(td===document.activeElement) return;
-    const txt=cellDisplay(ws.getCell(td.dataset.addr));
+    const addr=td.dataset.addr, cell=ws.getCell(addr);
+    const fml=formulaOf(ws,cell,addr);
+    if(fml){ td.classList.add('xls-f'); td.dataset.f='='+fml; td.title='='+fml+' — 누르면 수식을 고칠 수 있습니다'; }
+    else { td.classList.remove('xls-f'); delete td.dataset.f; td.removeAttribute('title'); }
+    const txt=cellDisplay(cell);
     if(td.textContent!==txt) td.textContent=txt;
   });
   const u=document.getElementById('xlsUndoBtn');
@@ -2323,8 +2331,8 @@ function sheetToHtml(ws){
       const v=cell.value;
       const text=cellDisplay(cell);
       const addr=colName(c)+r;
-      const isF=v&&typeof v==='object'&&v.formula;
-      out+=`<td${span} data-addr="${addr}" style="${style};${borderCss(cell.border)}"${isF?` class="xls-f" title="=${esc(v.formula)}"`:' contenteditable="true"'}>${esc(text)}</td>`;
+      const fml=formulaOf(ws,cell,addr);
+      out+=`<td${span} data-addr="${addr}" style="${style};${borderCss(cell.border)}" contenteditable="true"${fml?` class="xls-f" data-f="=${esc(fml)}" title="=${esc(fml)} — 누르면 수식을 고칠 수 있습니다"`:''}>${esc(text)}</td>`;
     }
     out+='</tr>';
   }

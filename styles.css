@@ -386,3 +386,5 @@ table.xls td[contenteditable]:focus{outline:2px solid var(--accent);outline-offs
 table.xls td.xls-f{background:#f2fbf6}
 
 .xls-zoom{transform-origin:top left}
+
+table.xls td.xls-f:focus{background:#fffbe6;font-family:ui-monospace,Menlo,Consolas,monospace}
