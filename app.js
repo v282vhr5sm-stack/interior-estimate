@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.9.0';
+const APP_VERSION = '5.9.1';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -613,9 +613,35 @@ let IMPORT={files:[],urls:[],busy:false,items:null,memo:'',err:''};
 let AUTH={mode:'login',busy:false,err:'',skipped:ls.get('skipLogin')==='1'};
 
 function needLogin(){ return sb && !session && !AUTH.skipped; }
+/* 화면을 다시 그려도 보던 자리와 쓰던 칸이 그대로 있게 합니다.
+   (단위를 바꾸거나 업체를 고를 때 화면이 위로 튀지 않게) */
+let LAST_VIEW=null;
+const SIDE_BOXES='.tbl-wrap,.xls-stage,.doc-stage,.pv-stage';
+function keepPlace(){
+  const a=document.activeElement, app=$('#app');
+  const inApp = !!(a && app && app.contains(a));
+  let sel=null;
+  if(inApp && /INPUT|TEXTAREA/.test(a.tagName)){
+    try{ sel={start:a.selectionStart, end:a.selectionEnd}; }catch{}   // 날짜·숫자 칸은 못 읽는 경우가 있습니다
+  }
+  return { x:window.scrollX, y:window.scrollY,
+    id: inApp && a.id ? a.id : '', sel,
+    side: [...document.querySelectorAll(SIDE_BOXES)].map(el=>[el.scrollLeft,el.scrollTop]) };
+}
+function restorePlace(k){
+  window.scrollTo(k.x,k.y);
+  const boxes=document.querySelectorAll(SIDE_BOXES);
+  k.side.forEach(([l,t],i)=>{ const el=boxes[i]; if(el){ el.scrollLeft=l; el.scrollTop=t; } });
+  if(!k.id) return;
+  const el=document.getElementById(k.id); if(!el) return;
+  el.focus({preventScroll:true});
+  if(k.sel){ try{ el.setSelectionRange(k.sel.start,k.sel.end); }catch{} }
+}
 function render(){
   const tabs=$('#tabs');
   if(needLogin()){ tabs.hidden=true; $('#app').innerHTML=renderAuth(); updatePill(); return; }
+  const same = LAST_VIEW===VIEW;             // 같은 화면을 다시 그릴 때만 자리를 지킵니다
+  const keep = same ? keepPlace() : null;
   tabs.hidden=false;
   ['home','est','sched','doc','mat','vend','set'].forEach(v=>$('#tab-'+v).setAttribute('aria-selected',String(v===VIEW)));
   const app=$('#app');
@@ -630,6 +656,8 @@ function render(){
   setPageMargin(VIEW==='doc' && DOC_MODE==='contract');   // 계약서를 볼 때만 종이 여백 1cm
   autoSizeAll();
   updatePill();
+  LAST_VIEW=VIEW;
+  if(keep) restorePlace(keep);
 }
 let renderDeferred=false;
 function safeRender(){
@@ -3095,7 +3123,9 @@ document.addEventListener('click',async ev=>{
       if(await askConfirm({title:'이 단가표 사진을 지울까요?',lines:['사진에서 만든 자재는 그대로 남습니다'],ok:'네, 지웁니다',cancel:'아니요'})){
         try{ await sb?.storage.from('plans').remove([s.path]); }catch(err){ console.warn(err); }
         S.sheets.delete(s.id); writeRecord('sheets',s.id,null,true); render(); } break; }
-    case 'addMat': { const m={id:uid(),name:'',spec:'',process:MAT_FILTER==='all'?'etc':MAT_FILTER,unit:'㎡',unitPrice:0,laborPrice:0,coverage:1,loss:0,mode:'area',note:'',updated:Date.now()}; S.materials.set(m.id,m); saveMat(m); render(); document.getElementById('m-'+m.id+'-name')?.select(); break; }
+    case 'addMat': { const m={id:uid(),name:'',spec:'',process:MAT_FILTER==='all'?'etc':MAT_FILTER,unit:'㎡',unitPrice:0,laborPrice:0,coverage:1,loss:0,mode:'area',note:'',updated:Date.now()}; S.materials.set(m.id,m); saveMat(m); render();
+      const el=document.getElementById('m-'+m.id+'-name');
+      el?.scrollIntoView({block:'center'}); el?.select(); break; }
     case 'delMat': { const m=S.materials.get(t.dataset.id);
       if(await askConfirm({title:`“${m.name||'이름 없는 자재'}”을(를) 단가표에서 지울까요?`,lines:['이미 만든 견적의 금액은 그대로 유지됩니다'],ok:'네, 지웁니다',cancel:'아니요'})){ deleteMat(m.id); render(); } break; }
     case 'matPhoto': photoTarget={kind:'mat',id:t.dataset.id}; $('#filePhoto').click(); break;
