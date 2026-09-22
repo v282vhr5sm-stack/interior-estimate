@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.3.0';
+const APP_VERSION = '5.4.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -767,8 +767,20 @@ document.addEventListener('focusin',ev=>{
   const td=ev.target.closest?.('td[data-addr][contenteditable]'); if(td) td.dataset.before=td.textContent.trim();
 },true);
 document.addEventListener('keydown',ev=>{
+  if((ev.ctrlKey||ev.metaKey)&&ev.key.toLowerCase()==='z'&&XLS&&document.getElementById('xlsStage')){ ev.preventDefault(); undoExcel(); return; }
   const td=ev.target.closest?.('td[data-addr][contenteditable]'); if(!td) return;
-  if(ev.key==='Enter'){ ev.preventDefault(); td.blur(); }
+  if(ev.key==='Enter'){
+    ev.preventDefault();
+    const text=td.textContent.trim(), addr=td.dataset.addr;
+    if(td.dataset.before!==text) saveEdit(addr,text);
+    td.dataset.before=td.textContent.trim();
+    // 같은 자리에 머무르고, 아래 칸이 있으면 그 칸으로만 커서를 옮깁니다
+    const m=addr.match(/^([A-Z]+)(\d+)$/);
+    const next=m?document.querySelector(`#xlsStage td[data-addr="${m[1]}${+m[2]+1}"][contenteditable]`):null;
+    if(next){ next.focus(); const r=document.createRange(); r.selectNodeContents(next); const s=getSelection(); s.removeAllRanges(); s.addRange(r); }
+    else td.blur();
+    return;
+  }
   if(ev.key==='Escape'){ td.textContent=td.dataset.before||''; td.blur(); }
 });
 document.addEventListener('focusin',ev=>{
@@ -2098,15 +2110,39 @@ function applyEdits(){
     Object.entries(m).forEach(([addr,v])=>{ const c=ws.getCell(addr); c.value = (v!==''&&!isNaN(num(v))&&/^-?[\d.,]+$/.test(String(v))) ? num(v) : v; });
   });
 }
-function saveEdit(addr,text){
+function saveEdit(addr,text,noUndo){
   const ws=curSheet(); if(!ws||!XLS) return;
   const p=curProj(); if(!p) return;
+  XLS.orig=XLS.orig||{}; XLS.orig[ws.name]=XLS.orig[ws.name]||{};
+  if(!(addr in XLS.orig[ws.name])) XLS.orig[ws.name][addr]=ws.getCell(addr).value;   // 처음 상태 보관
+  const prev = XLS.edits[ws.name]?.[addr];
+  if(!noUndo){ XLS.undo=XLS.undo||[]; XLS.undo.push({sheet:ws.name,addr,prev}); if(XLS.undo.length>100) XLS.undo.shift(); }
   const val = text!=='' && /^-?[\d.,]+$/.test(text) ? num(text) : text;
   ws.getCell(addr).value = val;
   XLS.edits[ws.name]=XLS.edits[ws.name]||{};
   XLS.edits[ws.name][addr]=text;
   p.excelEdits=p.excelEdits||{}; p.excelEdits[XLS.rec.id]=XLS.edits; saveProj(p);
-  recalcSheet(); paintExcel();
+  recalcSheet(); refreshCells();          // 화면을 다시 그리지 않습니다
+}
+/* 수정 되돌리기 */
+function undoExcel(){
+  if(!XLS||!(XLS.undo||[]).length){ toast('되돌릴 수정이 없습니다'); return; }
+  const {sheet,addr,prev}=XLS.undo.pop();
+  const ws=XLS.wb.getWorksheet(sheet); if(!ws) return;
+  if(prev===undefined){
+    const orig=XLS.orig?.[sheet]?.[addr];
+    ws.getCell(addr).value = orig===undefined?null:orig;
+    if(XLS.edits[sheet]) delete XLS.edits[sheet][addr];
+  } else {
+    const val = prev!=='' && /^-?[\d.,]+$/.test(prev) ? num(prev) : prev;
+    ws.getCell(addr).value = val;
+    XLS.edits[sheet][addr]=prev;
+  }
+  const p=curProj(); if(p){ p.excelEdits=p.excelEdits||{}; p.excelEdits[XLS.rec.id]=XLS.edits; saveProj(p); }
+  recalcSheet();
+  if(XLS.wb.worksheets[XLS.sel]?.name!==sheet){ XLS.sel=XLS.wb.worksheets.findIndex(w=>w.name===sheet); paintExcel(); }
+  else refreshCells();
+  toast('되돌렸습니다');
 }
 /* ── 수식 계산 (자주 쓰는 함수만) ───────────────────────────────── */
 const XL_FN={SUM:a=>a.reduce((s,x)=>s+(+x||0),0),AVERAGE:a=>a.length?a.reduce((s,x)=>s+(+x||0),0)/a.length:0,
@@ -2210,6 +2246,7 @@ function paintExcel(){
         <button class="btn ghost sm" data-act="xlsZoom" data-z="1" title="확대">＋</button>
         <button class="btn ghost sm" data-act="xlsZoom" data-z="fit" title="화면 너비에 맞추기">맞춤</button>
       </div>
+      <button class="btn sm" id="xlsUndoBtn" data-act="xlsUndo" ${(XLS.undo||[]).length?'':'hidden'}>되돌리기${(XLS.undo||[]).length>1?' ('+XLS.undo.length+')':''}</button>
     </div>
     <div class="xls-zoom" style="transform:scale(${XLS_ZOOM});width:${(100/XLS_ZOOM).toFixed(2)}%">${sheetToHtml(curSheet())}</div>`;
   EXCEL_BUSY=false; render();
@@ -2223,6 +2260,34 @@ function borderCss(b){
   return one('top',b.top)+one('bottom',b.bottom)+one('left',b.left)+one('right',b.right);
 }
 /* 엑셀 시트를 서식 그대로 표로 옮깁니다. 값 칸은 눌러서 고칠 수 있고, 수식 칸은 다시 계산됩니다. */
+/* 셀에 보여줄 글자 (엑셀 숫자 서식 반영) */
+function cellDisplay(cell){
+  const v=cell.value;
+  let text=cell.text ?? '';
+  if(v && typeof v==='object' && v.richText) text=v.richText.map(t=>t.text).join('');
+  const raw=(v&&typeof v==='object'&&'result' in v)?v.result:v;
+  if(typeof raw==='number'){
+    const fmt=cell.numFmt||'';
+    if(/%/.test(fmt)) text=(raw*100).toLocaleString('ko-KR',{maximumFractionDigits:2})+'%';
+    else if(/[#0]/.test(fmt)){
+      const dec=((fmt.split('.')[1]||'').match(/0/g)||[]).length;
+      text=raw.toLocaleString('ko-KR',{minimumFractionDigits:dec,maximumFractionDigits:dec});
+      if(fmt.includes('₩')||fmt.includes('\\W')) text='₩'+text;
+    } else text=String(raw);
+  } else if(raw instanceof Date){ text=raw.toLocaleDateString('ko-KR'); }
+  return text;
+}
+/* 화면을 다시 그리지 않고 값만 갱신 (커서·스크롤 그대로) */
+function refreshCells(){
+  const ws=curSheet(); if(!ws) return;
+  document.querySelectorAll('#xlsStage td[data-addr]').forEach(td=>{
+    if(td===document.activeElement) return;
+    const txt=cellDisplay(ws.getCell(td.dataset.addr));
+    if(td.textContent!==txt) td.textContent=txt;
+  });
+  const u=document.getElementById('xlsUndoBtn');
+  if(u){ const n=(XLS?.undo||[]).length; u.hidden=!n; u.textContent=`되돌리기${n>1?' ('+n+')':''}`; }
+}
 function sheetToHtml(ws){
   if(!ws) return '';
   const merges=[];
@@ -2256,18 +2321,7 @@ function sheetToHtml(ws){
         al.wrapText?'white-space:pre-wrap':'white-space:nowrap',
       ].filter(Boolean).join(';');
       const v=cell.value;
-      let text=cell.text ?? '';
-      if(v && typeof v==='object' && v.richText) text=v.richText.map(t=>t.text).join('');
-      const raw=(v&&typeof v==='object'&&'result' in v)?v.result:v;
-      if(typeof raw==='number'){
-        const fmt=cell.numFmt||'';
-        if(/%/.test(fmt)) text=(raw*100).toLocaleString('ko-KR',{maximumFractionDigits:2})+'%';
-        else if(/[#0]/.test(fmt)){
-          const dec=((fmt.split('.')[1]||'').match(/0/g)||[]).length;
-          text=raw.toLocaleString('ko-KR',{minimumFractionDigits:dec,maximumFractionDigits:dec});
-          if(fmt.includes('₩')||fmt.includes('\\W')) text='₩'+text;
-        } else text=String(raw);
-      } else if(raw instanceof Date){ text=raw.toLocaleDateString('ko-KR'); }
+      const text=cellDisplay(cell);
       const addr=colName(c)+r;
       const isF=v&&typeof v==='object'&&v.formula;
       out+=`<td${span} data-addr="${addr}" style="${style};${borderCss(cell.border)}"${isF?` class="xls-f" title="=${esc(v.formula)}"`:' contenteditable="true"'}>${esc(text)}</td>`;
@@ -2746,6 +2800,7 @@ document.addEventListener('click',async ev=>{
       break;
     case 'pickExcel': $('#fileExcel').click(); break;
     case 'xlsTab': { if(!XLS) break; XLS.sel=+t.dataset.i; paintExcel(); break; }
+    case 'xlsUndo': undoExcel(); break;
     case 'xlsZoom': { const z=t.dataset.z;
       if(z==='0') XLS_ZOOM=1;
       else if(z==='fit'){
