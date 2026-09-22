@@ -400,13 +400,13 @@ table.xls td.xls-f:focus{background:#fffbe6;font-family:ui-monospace,Menlo,Conso
 /* 계약서를 A4 한 장에 맞춰 인쇄 */
 #doc.ct-fit{width:718px;max-width:none;padding:0;margin:0;box-shadow:none}
 @media print{
-  #doc.ct{width:var(--ct-w,718px)!important;padding:0!important;zoom:var(--ct-zoom,1)}
+  #doc.ct{width:718px!important;padding:0!important;break-inside:avoid;break-after:avoid}
 }
 /* 인쇄 미리보기 */
 .modal.pv .pv-b{width:min(1100px,96vw);max-height:92vh;display:flex;flex-direction:column;gap:10px}
 .pv-stage{flex:1;min-height:0;overflow:auto;background:#e9ebe9;border-radius:8px;padding:8px;display:flex;justify-content:center}
 .pv-fit{transform-origin:top left;flex:none}
-.a4-sheet{width:718px;min-height:1040px;background:#fff;box-shadow:0 2px 14px rgba(0,0,0,.18);overflow:hidden;
-  background-image:repeating-linear-gradient(to bottom,transparent 0,transparent 1038px,#c8ccc9 1038px,#c8ccc9 1040px)}
-.a4-sheet.one{height:1040px;min-height:0;background-image:none}
+.a4-sheet{width:718px;min-height:1047px;background:#fff;box-shadow:0 2px 14px rgba(0,0,0,.18);overflow:hidden;
+  background-image:repeating-linear-gradient(to bottom,transparent 0,transparent 1045px,#c8ccc9 1045px,#c8ccc9 1047px)}
+.a4-sheet.one{height:1047px;min-height:0;background-image:none}
 .a4-sheet #doc{box-shadow:none}

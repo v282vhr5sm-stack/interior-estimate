@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.8.1';
+const APP_VERSION = '5.8.2';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -1308,32 +1308,35 @@ const DOC_CSS = `
 #doc .d-sign{display:flex;justify-content:space-between;gap:20px;margin-top:30px;font-size:12px;flex-wrap:wrap}
 #doc .d-sign .s{flex:1;min-width:200px;border-top:1px solid var(--d-ink);padding-top:6px}
 #doc .d-foot{margin-top:28px;text-align:center;color:var(--d-mut);font-size:11px}
-#doc.ct{font-size:12px;line-height:1.5}
-#doc.ct h1{font-size:27px;letter-spacing:.32em;padding-left:.32em;margin:0 0 18px}
-#doc.ct .ct-sub{font-weight:700;font-size:13.5px;margin:0 0 6px}
-#doc.ct table{border-collapse:collapse;width:100%}
-#doc.ct table td,#doc.ct table th{border:1px solid #000;padding:6px 8px;vertical-align:middle;background:none}
-#doc.ct .n{width:26px;text-align:center;font-weight:700}
-#doc.ct .k{width:104px;text-align:center;font-weight:700;background:var(--d-soft)}
-#doc.ct .k .sm{display:block;font-weight:400;font-size:10.5px;color:var(--d-mut)}
+#doc.ct{font-size:var(--ct-fs,12px);line-height:1.5}
+#doc.ct h1{font-size:2.25em;letter-spacing:.32em;padding-left:.32em;margin:0 0 1.4em}
+#doc.ct .ct-sub{font-weight:700;font-size:1.13em;margin:0 0 .45em}
+#doc.ct table{border-collapse:collapse;width:100%;font-size:1em}
+#doc.ct table td,#doc.ct table th{border:1px solid #000;padding:.5em .67em;vertical-align:middle;background:none}
+#doc.ct .n{width:2.2em;text-align:center;font-weight:700}
+#doc.ct .k{width:8.7em;text-align:center;font-weight:700;background:var(--d-soft)}
+#doc.ct .k .sm{display:block;font-weight:400;font-size:.88em;color:var(--d-mut)}
 #doc.ct .pay-cell{padding:0}
 #doc.ct table.pay{border:0}
 #doc.ct table.pay td{border:0;border-top:1px solid #000}
 #doc.ct table.pay tr:first-child td{border-top:0}
-#doc.ct table.pay td.pk{width:52px;text-align:center;font-weight:700;border-right:1px solid #000}
-#doc.ct table.pay td.pk2{width:52px;text-align:center;border-right:1px solid #000}
+#doc.ct table.pay td.pk{width:4.4em;text-align:center;font-weight:700;border-right:1px solid #000}
+#doc.ct table.pay td.pk2{width:4.4em;text-align:center;border-right:1px solid #000}
 #doc.ct table.pay td.ph{text-align:center;font-weight:700;background:var(--d-soft)}
-#doc.ct .amt{display:flex;flex-wrap:wrap;gap:4px 18px;align-items:baseline}
-#doc.ct .amt .w{min-width:210px}
-#doc.ct .amt .f{min-width:150px}
-#doc.ct .terms{font-size:11.5px;line-height:1.75}
-#doc.ct .terms p{margin:0 0 5px}
-#doc.ct .terms .lead{margin-bottom:9px}
-#doc.ct .ct-close{margin:16px 0 22px;font-size:12px;line-height:1.8}
-#doc.ct .ct-date{text-align:center;font-size:14px;letter-spacing:.06em;margin:22px 0 20px}
-#doc.ct table.sign td.sk{width:96px;text-align:center;font-weight:700;background:var(--d-soft)}
-#doc.ct table.sign td.sp{width:74px;text-align:center;font-weight:700;background:var(--d-soft)}
-#doc.ct .stamp-in{height:36px;vertical-align:middle;margin-left:6px}
+#doc.ct .amt{display:flex;flex-wrap:wrap;gap:.33em 1.5em;align-items:baseline}
+#doc.ct .amt .w{min-width:17.5em}
+#doc.ct .amt .f{min-width:12.5em}
+#doc.ct .terms{font-size:.96em;line-height:1.72}
+#doc.ct .terms p{margin:0 0 .42em}
+#doc.ct .terms .lead{margin-bottom:.75em}
+#doc.ct .ct-close{margin:1.3em 0 1.6em;font-size:1em;line-height:1.8}
+#doc.ct .ct-date{text-align:center;font-size:1.17em;letter-spacing:.06em;margin:1.5em 0 1.4em}
+/* 날짜 아래 서명표는 조금 더 촘촘하게 */
+#doc.ct table.sign td{padding:.42em .67em}
+#doc.ct table.sign td.sk{width:8em;text-align:center;font-weight:700;background:var(--d-soft)}
+#doc.ct table.sign td.sp{width:6.2em;text-align:center;font-weight:700;background:var(--d-soft)}
+#doc.ct table.sign{margin-bottom:0}
+#doc.ct .stamp-in{height:2.6em;vertical-align:middle;margin-left:.5em}
 #doc.ct .blank{color:#9aa0a0}
 .doc-modes{display:flex;gap:8px;margin-bottom:4px}
 .doc-modes .btn[aria-pressed="true"]{background:var(--pri,#2f6f4f);color:#fff;border-color:transparent}`;
@@ -1523,35 +1526,11 @@ function contractHTML(e){
     </table>
   </article>`;
 }
-/* A4(210×297mm)에서 12mm 여백을 뺀 자리 — 96dpi 기준 픽셀 */
-const A4W = 718, A4H = 1040;   // A4에서 사면 1cm 여백을 뺀 자리 (96dpi 기준 픽셀)
-let CT_ZOOM = 1, CT_W = A4W;
-/* 계약서를 A4 한 장에 담을 배율을 재 둡니다.
-   넓게 펴 두고 줄이면 종이 폭을 다 쓰면서 글씨도 덜 작아집니다. */
-function fitContract(html){
-  const box=document.createElement('div');
-  box.style.cssText='position:fixed;left:-10000px;top:0;visibility:hidden;pointer-events:none';
-  box.innerHTML=html;
-  const el=box.querySelector('article');
-  if(!el){ CT_ZOOM=1; CT_W=A4W; return 1; }
-  el.classList.add('ct-fit');
-  document.body.appendChild(box);
-  let z=1, w=A4W;
-  for(let i=0;i<6;i++){
-    box.style.width=w+'px'; el.style.width=w+'px';
-    const h=el.scrollHeight||1;
-    const nz=Math.min(1, A4H/h);
-    const done=Math.abs(nz-z)<0.004;
-    z=nz; w=Math.round(A4W/z);
-    if(done) break;
-  }
-  box.remove();
-  z=Math.floor(z*100)/100;                    // 살짝 여유를 둡니다
-  CT_ZOOM=z; CT_W=Math.round(A4W/z);
-  document.documentElement.style.setProperty('--ct-zoom', z);
-  document.documentElement.style.setProperty('--ct-w', CT_W+'px');
-  return z;
-}
+/* 계약서 인쇄 자리 — A4에서 사면 1cm 여백을 뺀 크기 (96dpi 기준 픽셀) */
+const A4W = 718;              // A4 210mm − 여백 20mm
+const A4H = 1020;             // A4 297mm − 여백 20mm에서 넉넉히 더 뺀 높이
+const CT_FS_MAX = 12;
+let CT_FS = CT_FS_MAX;
 /* 계약서를 인쇄할 때만 종이 여백을 사면 1cm로 바꿉니다 */
 function setPageMargin(ct){
   let st=document.getElementById('ctPage');
@@ -1559,13 +1538,36 @@ function setPageMargin(ct){
   if(!st){ st=document.createElement('style'); st.id='ctPage'; document.head.appendChild(st); }
   st.textContent='@media print{@page{size:A4;margin:10mm}}';
 }
+/* 계약서가 A4 한 장에 들어가는 글자 크기를 찾습니다.
+   배율(zoom)은 인쇄할 때 쪽 나눔에 반영되지 않아서 글자 크기를 직접 줄입니다. */
+function fitContract(html){
+  const box=document.createElement('div');
+  box.style.cssText='position:fixed;left:-10000px;top:0;width:'+A4W+'px;visibility:hidden;pointer-events:none';
+  box.innerHTML=html;
+  const el=box.querySelector('article');
+  if(!el){ CT_FS=CT_FS_MAX; return CT_FS; }
+  el.classList.add('ct-fit');
+  document.body.appendChild(box);
+  const heightAt=f=>{ el.style.fontSize=f+'px'; return el.scrollHeight; };
+  let fs=CT_FS_MAX, h=heightAt(fs);
+  if(h>A4H){
+    fs=Math.max(7, Math.floor(CT_FS_MAX*A4H/h*20)/20);   // 0.05px 단위로 어림잡고
+    while(fs>7 && heightAt(fs)>A4H) fs=Math.round((fs-0.1)*20)/20;   // 들어갈 때까지 줄입니다
+    while(fs<CT_FS_MAX && heightAt(Math.round((fs+0.05)*20)/20)<=A4H) fs=Math.round((fs+0.05)*20)/20;  // 너무 줄었으면 조금 되돌립니다
+    heightAt(fs);
+  }
+  box.remove();
+  CT_FS=fs;
+  document.documentElement.style.setProperty('--ct-fs', fs+'px');
+  return fs;
+}
 function prepPrint(){
   const e=cur(); if(!e) return '';
   const ct = DOC_MODE==='contract';
   const html = ct ? contractHTML(e) : docHTML(e);
   setPageMargin(ct);
   if(ct) fitContract(html);
-  else { CT_ZOOM=1; CT_W=A4W; document.documentElement.style.setProperty('--ct-zoom',1); }
+  else document.documentElement.style.removeProperty('--ct-fs');
   return html;
 }
 /* 인쇄하기 전에 나오는 모습 그대로 보여줍니다 */
@@ -1575,7 +1577,7 @@ function showPrintPreview(){
   const html = prepPrint();
   const box=document.createElement('div'); box.className='modal pv';
   box.innerHTML=`<div class="modal-b pv-b">
-    <div class="row"><b style="flex:1">인쇄 미리보기 · A4${ct?` 한 장 (${Math.round(CT_ZOOM*100)}%로 맞춤)`:''}</b>
+    <div class="row"><b style="flex:1">인쇄 미리보기 · A4${ct?` 한 장 (글자 ${Math.round(CT_FS/CT_FS_MAX*100)}%로 맞춤)`:''}</b>
       <button class="btn pri sm" data-x="print">인쇄 / PDF</button>
       <button class="btn sm" data-x="close">닫기</button></div>
     <div class="pv-stage"><div class="pv-fit"><div class="a4-sheet${ct?' one':''}">${html}</div></div></div>
@@ -1583,7 +1585,7 @@ function showPrintPreview(){
   </div>`;
   const sheet=()=>box.querySelector('.a4-sheet');
   box.querySelector('.a4-sheet article')?.classList.add('ct-fit');
-  if(ct){ const a=box.querySelector('.a4-sheet article'); a.style.zoom=CT_ZOOM; a.style.width=CT_W+'px'; }
+  if(ct){ const a=box.querySelector('.a4-sheet article'); a.style.fontSize=CT_FS+'px'; }
   const fit=()=>{ const st=box.querySelector('.pv-stage'), f=box.querySelector('.pv-fit'), s=sheet();
     if(!st||!f||!s) return;
     const k=Math.min(1,(st.clientWidth-16)/A4W,(st.clientHeight-16)/s.offsetHeight);
@@ -1685,11 +1687,11 @@ function refreshDoc(){ const st=document.getElementById('docStage'); const e=cur
 async function downloadDoc(){
   const e=cur(); if(!e) return;
   const ct=DOC_MODE==='contract';
-  const z=ct?fitContract(contractHTML(e)):1;
+  const fsz=ct?fitContract(contractHTML(e)):CT_FS_MAX;
   const html=`<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${ct?'계약서':'견적서'} ${esc(e.client.name||'')} ${esc(e.no)}</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;600;700&family=Nanum+Myeongjo:wght@800&display=swap">
 <style>body{margin:0;background:#e9ebe9;padding:24px 0;overflow-x:auto}@media print{body{background:#fff;padding:0}#doc{box-shadow:none!important;padding:0!important}}@page{size:A4;margin:${ct?'10mm':'12mm'}}${DOC_CSS}
-@media print{#doc.ct{width:${CT_W}px!important;padding:0!important;zoom:${z}}}</style></head><body>${ct?contractHTML(e):docHTML(e)}</body></html>`;
+#doc.ct{--ct-fs:${fsz}px}@media print{#doc.ct{width:718px!important;padding:0!important}}</style></head><body>${ct?contractHTML(e):docHTML(e)}</body></html>`;
   const fname=`${ct?'계약서':'견적서'}_${(e.client.name||'고객').replace(/[\\/:*?"<>|]/g,'')}_${e.no}.html`;
   await shareOrDownload(fname,new Blob([html],{type:'text/html'}));
 }
