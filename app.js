@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.8.0';
+const APP_VERSION = '5.8.1';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -627,6 +627,7 @@ function render(){
   else if(VIEW==='set') app.innerHTML=renderSettings();
   else app.innerHTML=renderEst();
   if(VIEW==='est') recalc();
+  setPageMargin(VIEW==='doc' && DOC_MODE==='contract');   // 계약서를 볼 때만 종이 여백 1cm
   autoSizeAll();
   updatePill();
 }
@@ -1523,7 +1524,7 @@ function contractHTML(e){
   </article>`;
 }
 /* A4(210×297mm)에서 12mm 여백을 뺀 자리 — 96dpi 기준 픽셀 */
-const A4W = 703, A4H = 1000;
+const A4W = 718, A4H = 1040;   // A4에서 사면 1cm 여백을 뺀 자리 (96dpi 기준 픽셀)
 let CT_ZOOM = 1, CT_W = A4W;
 /* 계약서를 A4 한 장에 담을 배율을 재 둡니다.
    넓게 펴 두고 줄이면 종이 폭을 다 쓰면서 글씨도 덜 작아집니다. */
@@ -1551,11 +1552,20 @@ function fitContract(html){
   document.documentElement.style.setProperty('--ct-w', CT_W+'px');
   return z;
 }
+/* 계약서를 인쇄할 때만 종이 여백을 사면 1cm로 바꿉니다 */
+function setPageMargin(ct){
+  let st=document.getElementById('ctPage');
+  if(!ct){ st?.remove(); return; }
+  if(!st){ st=document.createElement('style'); st.id='ctPage'; document.head.appendChild(st); }
+  st.textContent='@media print{@page{size:A4;margin:10mm}}';
+}
 function prepPrint(){
   const e=cur(); if(!e) return '';
-  const html = DOC_MODE==='contract' ? contractHTML(e) : docHTML(e);
-  if(DOC_MODE==='contract') fitContract(html);
-  else { CT_ZOOM=1; document.documentElement.style.setProperty('--ct-zoom',1); }
+  const ct = DOC_MODE==='contract';
+  const html = ct ? contractHTML(e) : docHTML(e);
+  setPageMargin(ct);
+  if(ct) fitContract(html);
+  else { CT_ZOOM=1; CT_W=A4W; document.documentElement.style.setProperty('--ct-zoom',1); }
   return html;
 }
 /* 인쇄하기 전에 나오는 모습 그대로 보여줍니다 */
@@ -1678,7 +1688,7 @@ async function downloadDoc(){
   const z=ct?fitContract(contractHTML(e)):1;
   const html=`<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${ct?'계약서':'견적서'} ${esc(e.client.name||'')} ${esc(e.no)}</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;600;700&family=Nanum+Myeongjo:wght@800&display=swap">
-<style>body{margin:0;background:#e9ebe9;padding:24px 0;overflow-x:auto}@media print{body{background:#fff;padding:0}#doc{box-shadow:none!important;padding:0!important}}@page{size:A4;margin:12mm}${DOC_CSS}
+<style>body{margin:0;background:#e9ebe9;padding:24px 0;overflow-x:auto}@media print{body{background:#fff;padding:0}#doc{box-shadow:none!important;padding:0!important}}@page{size:A4;margin:${ct?'10mm':'12mm'}}${DOC_CSS}
 @media print{#doc.ct{width:${CT_W}px!important;padding:0!important;zoom:${z}}}</style></head><body>${ct?contractHTML(e):docHTML(e)}</body></html>`;
   const fname=`${ct?'계약서':'견적서'}_${(e.client.name||'고객').replace(/[\\/:*?"<>|]/g,'')}_${e.no}.html`;
   await shareOrDownload(fname,new Blob([html],{type:'text/html'}));
