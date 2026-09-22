@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.9.4';
+const APP_VERSION = '5.10.1';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -930,7 +930,7 @@ function renderEst(){
    :sp?`<div class="sitebar warn"><span>이 견적은 아직 어느 현장에도 연결되지 않았습니다.</span><span class="spacer"></span>
       <button class="btn sm" data-act="linkEstToSite">“${esc(siteName(sp))}” 현장에 연결</button></div>`:''}
   <div class="row"><div style="flex:1;min-width:220px"><div class="eyebrow">견적 번호 ${esc(e.no)}</div><input class="f" id="estTitle" data-bind="est:title" value="${esc(e.title)}" placeholder="견적 제목 (예: 상계동 34평 리모델링)" style="font-size:20px;font-weight:700;border-color:transparent;padding-left:0;background:transparent"></div>${estPicker()}</div>
-  <div class="est-wide${SUM_OPEN?'':' sum-off'}">
+  <div class="est-wide${(SUM_OPEN||CALC_OPEN)?'':' sum-off'}">
     <div class="stack">
       <section class="panel"><div class="panel-b client-grid">
         <label class="fl">고객명<input class="f" id="c-name" data-bind="est:client.name" value="${esc(e.client.name)}" placeholder="홍길동"></label>
@@ -951,6 +951,7 @@ function renderEst(){
         <div class="chips">${PROCS.filter(p=>!used.has(p.k)).map(p=>`<button class="chip" data-act="addProc" data-k="${p.k}">+ ${p.n}</button>`).join('')}</div>
       </div>
     </div>
+    <div class="est-side">
     <aside class="panel summary est-sum${SUM_OPEN?'':' slim'}">
       <div class="panel-h"><h3>합계</h3>${SUM_OPEN?'':`<b class="v sum-peek" id="o-total"></b>`}<span class="spacer"></span>
         ${SUM_OPEN?'<button class="btn sm" data-act="view" data-v="doc">고객용 보기 →</button>':''}
@@ -971,6 +972,8 @@ function renderEst(){
         <div class="row" style="margin-top:14px"><button class="btn sm" data-act="refreshPrices" title="자재 단가표의 최신 단가로 이 견적의 자재 단가를 바꿉니다">단가표 최신가 반영</button><button class="btn sm" data-act="goImport">단가표 사진 넣기</button></div>
       </div>`:''}
     </aside>
+      ${renderCalc(e)}
+    </div>
   </div></div>`;
 }
 
@@ -999,6 +1002,71 @@ function setProcClosed(e,p,close){
   close ? PROC_CLOSED.add(k) : PROC_CLOSED.delete(k);
   ls.set('procClosed', JSON.stringify([...PROC_CLOSED]));
 }
+/* ── 자재 계산하기 ──────────────────────────────────
+   자재를 고르고 면적을 넣으면 몇 개를 사야 하는지와 금액을 냅니다. */
+let CALC_OPEN = ls.get('calcOpen')==='1';
+const CALC = { mid:'', area:'', loss:'' };
+function calcMat(){
+  const m=S.materials.get(CALC.mid); if(!m) return null;
+  const a=parseArea(CALC.area); if(!(a.m2>0)) return {m,a,need:0};
+  const loss = CALC.loss===''? num(m.loss) : num(CALC.loss);
+  const need = a.m2*(1+loss/100);                       // 로스를 더한 필요 면적
+  const cov = num(m.coverage);
+  const unit = m.unit||'㎡';
+  let qty, whole;
+  if(m.mode!=='qty' && cov>0){ qty=Math.ceil(need/cov); whole=true; }   // 박스·롤처럼 낱개로 사는 자재
+  else if(/평/.test(unit)){ qty=Math.round(need/PY*10)/10; whole=false; }
+  else { qty=Math.round(need*10)/10; whole=false; }
+  const mat=qty*num(m.unitPrice), labor=qty*num(m.laborPrice||0);
+  return {m,a,loss,need,cov,unit,qty,whole,mat,labor,total:mat+labor};
+}
+function calcOutHtml(){
+  const c=calcMat();
+  if(!c) return '<p class="muted small" style="margin:0">자재를 먼저 고르세요.</p>';
+  if(!c.need) return '<p class="muted small" style="margin:0">면적을 넣으면 필요한 수량이 나옵니다.</p>';
+  const q = c.whole ? won(c.qty) : (Math.round(c.qty*10)/10).toLocaleString('ko-KR');
+  return `<div class="calc-out">
+    <div class="calc-need">필요량 <b>${(Math.round(c.need*10)/10).toLocaleString('ko-KR')}㎡</b>
+      <span class="muted">(로스 ${c.loss}% 포함)</span></div>
+    <div class="calc-qty"><b>${q}${esc(c.unit)}</b>${c.whole?'<span class="muted small"> · 낱개 올림</span>':''}</div>
+    <dl class="calc-kv">
+      <dt>재료비</dt><dd>${won(c.mat)}원</dd>
+      ${c.labor?`<dt>노무비</dt><dd>${won(c.labor)}원</dd><dt>합계</dt><dd><b>${won(c.total)}원</b></dd>`:''}
+    </dl>
+    <button class="btn sm pri" data-act="calcToLine">견적에 줄로 넣기</button>
+  </div>`;
+}
+function renderCalc(e){
+  const mats=[...S.materials.values()].sort((a,b)=>
+    PROCS.findIndex(p=>p.k===a.process)-PROCS.findIndex(p=>p.k===b.process)||String(a.name).localeCompare(b.name,'ko'));
+  const m=S.materials.get(CALC.mid);
+  const a=parseArea(CALC.area);
+  return `<aside class="panel summary est-calc${CALC_OPEN?'':' slim'}">
+    <div class="panel-h"><h3>자재 계산하기</h3><span class="spacer"></span>
+      <button class="btn ghost sm" data-act="toggleCalc">${CALC_OPEN?'숨기기':'펼치기'}</button></div>
+    ${CALC_OPEN?`<div class="panel-b">
+      <label class="fl">자재
+        <select class="f" id="calc-mat" data-calcmat>
+          <option value="">— 자재를 고르세요 —</option>
+          ${mats.map(x=>`<option value="${x.id}" ${x.id===CALC.mid?'selected':''}>${esc((PMAP[x.process]||PMAP.etc).n)} · ${esc(x.name||'이름 없음')}${x.spec?' '+esc(x.spec):''}</option>`).join('')}
+        </select></label>
+      ${m?`<p class="muted small" style="margin:6px 0 0">${num(m.coverage)>0&&m.mode!=='qty'
+          ? `${esc(m.unit||'개')} 하나로 ${num(m.coverage)}㎡` : '면적이 아니라 수량으로 파는 자재입니다'}
+        · 단가 ${won(m.unitPrice)}원${num(m.laborPrice)?` · 노무비 ${won(m.laborPrice)}원`:''}</p>`:''}
+      <div class="client-grid" style="margin-top:8px">
+        <label class="fl">면적 <span class="muted small">${a.m2>0?`= ${a.typed==='평'?r1(a.m2)+'㎡':a.py+'평'}`:'㎡ 또는 평'}</span>
+          <input class="f" id="calc-area" data-calcfield="area" value="${esc(CALC.area)}" placeholder="${esc(estAreaM2(e)?r1(estAreaM2(e))+'':'84 또는 26평')}"></label>
+        <label class="fl">로스 %
+          <input class="f num" type="number" inputmode="decimal" id="calc-loss" data-calcfield="loss" value="${esc(CALC.loss)}" placeholder="${m?num(m.loss):0}"></label>
+      </div>
+      <div class="row" style="margin:6px 0 10px">
+        <button class="btn ghost sm" data-act="calcUseSite">현장 면적 넣기</button>
+      </div>
+      <div id="calc-out">${calcOutHtml()}</div>
+    </div>`:''}
+  </aside>`;
+}
+function refreshCalc(){ const o=document.getElementById('calc-out'); if(o) o.innerHTML=calcOutHtml(); }
 function renderProc(e,p,pi){ // e: 견적
   const P=PMAP[p.k]||PMAP.etc;
   const vf=LINE_VENDOR[pi]||'';
@@ -2796,7 +2864,9 @@ function renderSettings(){
     <section class="panel"><div class="panel-h"><h3>계정 · 동기화</h3></div><div class="panel-b">
       ${!sb?`<p class="muted small" style="margin:0">서버가 연결되지 않아 이 기기에만 저장되고 있습니다. 아래 “서버 연결”을 먼저 채워주세요.</p>`
         : session?`<dl class="kv"><dt>로그인</dt><dd>${esc(session.user.email)}</dd><dt>마지막 동기화</dt><dd>${lastSyncAt?lastSyncAt.toLocaleString('ko-KR'):'—'}</dd>${syncErr?`<dt>오류</dt><dd style="color:var(--bad)">${esc(syncErr)}</dd>`:''}</dl>
-          <label class="row" style="gap:8px;font-size:13px"><input type="checkbox" id="set-auto" ${ls.get('autoLogin')!=='0'&&ls.get('autoPw')?'checked':''} data-act-change="autoLogin"> 이 기기에서 자동 로그인 ${ls.get('autoPw')?'':'<span class="muted small">(다음 로그인 때 켜집니다)</span>'}</label>
+          <label class="row" style="gap:8px;font-size:13px"><input type="checkbox" id="set-auto" ${ls.get('autoLogin')!=='0'?'checked':''} data-act-change="autoLogin"> 이 기기에서 자동 로그인
+            ${ls.get('autoLogin')==='0'?'' : ls.get('autoPw')?'<span class="muted small">(켜져 있습니다)</span>'
+              :'<span class="muted small">(다음에 로그인할 때부터 적용됩니다)</span>'}</label>
           <div class="row"><button class="btn" data-act="syncNow">지금 동기화</button><button class="btn ghost danger" data-act="logout">로그아웃</button></div>
           <p class="muted small" style="margin:0">로그아웃하면 이 기기의 데이터는 지워지고, 다시 로그인하면 클라우드에서 받아옵니다.</p>`
         : `<p class="muted small" style="margin:0">로그인하지 않아 이 기기에만 저장되고 있습니다. 로그인하면 지금 데이터가 계정으로 올라갑니다.</p><div><button class="btn pri" data-act="showLogin">로그인</button></div>`}
@@ -2901,6 +2971,9 @@ document.addEventListener('input',ev=>{
       const atEnd=pos>=before.length; t.value=f;
       try{ const c=atEnd?f.length:Math.min(pos+(f.length-before.length),f.length); t.setSelectionRange(c,c); }catch{}
     }
+  }
+  if(t.dataset?.calcfield){                 // 자재 계산기: 적는 대로 결과만 고쳐 그립니다
+    CALC[t.dataset.calcfield]=t.value; refreshCalc(); return;
   }
   if(t.dataset?.size){                      // 면적: 숫자 칸 + 단위 선택
     const e=cur(); if(!e) return;
@@ -3014,6 +3087,7 @@ function handleSelectChange(t){
 }
 document.addEventListener('change',ev=>{
   const t=ev.target, a=t.dataset?.actChange;
+  if(t.dataset?.calcmat!==undefined){ CALC.mid=t.value; CALC.loss=''; render(); return; }
   if(t.dataset?.unitsel||t.dataset?.vendorpick!==undefined||t.dataset?.matvendor||t.dataset?.procvendor!==undefined||t.dataset?.lineunit||t.dataset?.linevendor||t.dataset?.linemat){ handleSelectChange(t); return; }
   if(!a) return;
   if(a==='pick'){ setCur(t.value); render(); }
@@ -3023,7 +3097,8 @@ document.addEventListener('change',ev=>{
   if(a==='revProc'&&t.value){ IMPORT.items.forEach(x=>{ if(x.on) x.process=t.value; }); render(); }
   if(a==='pickProj'){ selectSite(t.value); render(); }
   if(a==='excelPick'){ const p=curProj(); const f=(p?.excel||[]).find(x=>x.id===t.value); EXCEL_SEL=t.value; showExcel(f); }
-  if(a==='autoLogin'){ ls.set('autoLogin',t.checked?'1':'0'); if(!t.checked) ls.set('autoPw',null); toast(t.checked?'다음 로그인 때부터 자동으로 들어갑니다':'자동 로그인을 껐습니다'); render(); }
+  if(a==='autoLogin'){ ls.set('autoLogin',t.checked?'1':'0'); if(!t.checked) ls.set('autoPw',null);
+    toast(!t.checked?'자동 로그인을 껐습니다' : ls.get('autoPw')?'이 기기에서 자동으로 로그인합니다':'다음에 로그인할 때부터 자동으로 들어갑니다'); render(); }
   if(a==='shareOn'){ toggleShare(curProj(),t.checked); }
   if(a==='shareMemo'){ const p=curProj(); p.share={...(p.share||{}),showMemo:t.checked}; saveProj(p); publishShare(p); }
 });
@@ -3176,6 +3251,16 @@ document.addEventListener('click',async ev=>{
       PAYKEYS.forEach(({k})=>{ e.contract.pay[k]={...(e.contract.pay[k]||{}), amount:auto[k]}; });
       saveEst(e); render(); toast('공사대금을 다시 나눴습니다'); break; }
     case 'toggleSum': SUM_OPEN=!SUM_OPEN; ls.set('sumOpen',SUM_OPEN?null:'0'); render(); break;
+    case 'toggleCalc': CALC_OPEN=!CALC_OPEN; ls.set('calcOpen',CALC_OPEN?'1':null); render(); break;
+    case 'calcUseSite': { const e=cur(); const m2=estAreaM2(e); if(!m2){ toast('현장 면적이 아직 없습니다'); break; }
+      CALC.area=String(r1(m2)); render(); break; }
+    case 'calcToLine': { const e=cur(); const c=calcMat();
+      if(!e||!c||!c.qty){ toast('자재와 면적을 먼저 넣어주세요'); break; }
+      const p=ensureProc(e,c.m.process);
+      const l=lineFromMat(c.m); l.qty=c.qty; l.autoQty=false;
+      l.memo=`${r1(c.a.m2)}㎡ · 로스 ${c.loss}%`;
+      p.lines.push(l); saveEst(e); render();
+      toast(`${(PMAP[c.m.process]||PMAP.etc).n}에 줄을 넣었습니다`); break; }
     case 'toggleProc': { const e=cur(), p=e?.processes[+t.dataset.pi]; if(!p) break;
       setProcClosed(e,p,!isProcClosed(e,p)); render(); break; }
     case 'toggleAllProcs': { const e=cur(); if(!e) break;

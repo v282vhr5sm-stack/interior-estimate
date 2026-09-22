@@ -1,6 +1,6 @@
 // 앱 파일(index.html, app.js, styles.css 등)을 고쳐서 다시 올릴 때는 이 숫자를 꼭 올리세요.
 // 그래야 아이폰·아이패드·노트북에 "새 버전이 있습니다" 알림이 뜨고 새 버전이 적용됩니다.
-const VERSION = 67;
+const VERSION = 69;
 const CACHE = 'estimate-v' + VERSION;
 const SHELL = [
   './', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest',

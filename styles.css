@@ -351,22 +351,25 @@ body.dragging-row{user-select:none}
 
 /* 견적 표 넓게 */
 .est-wide{display:flex;flex-direction:column;gap:14px}
-.est-wide .est-sum{position:static;order:2}
+.est-side{display:flex;flex-direction:column;gap:14px;order:2;min-width:0}
 @media (min-width:1500px){
   .est-wide:not(.sum-off){display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:18px;align-items:start}
   .est-wide:not(.sum-off) > .stack{order:1}
-  .est-wide:not(.sum-off) .est-sum{order:2;position:sticky;top:70px;box-shadow:var(--shadow)}
+  .est-wide:not(.sum-off) > .est-side{order:2;position:sticky;top:70px}
+  .est-wide:not(.sum-off) .est-sum,.est-wide:not(.sum-off) .est-calc{box-shadow:var(--shadow)}
 }
 @media (min-width:1000px) and (max-width:1499px){
   .est-wide:not(.sum-off){display:grid;grid-template-columns:minmax(0,1fr) 252px;gap:14px;align-items:start}
   .est-wide:not(.sum-off) > .stack{order:1}
-  .est-wide:not(.sum-off) .est-sum{order:2;position:sticky;top:70px;box-shadow:var(--shadow)}
+  .est-wide:not(.sum-off) > .est-side{order:2;position:sticky;top:70px}
+  .est-wide:not(.sum-off) .est-sum,.est-wide:not(.sum-off) .est-calc{box-shadow:var(--shadow)}
   .est-wide:not(.sum-off) .est-sum .panel-b{padding:12px}
   .est-wide:not(.sum-off) .est-sum .sum-row{font-size:12.5px}
 }
 /* 합계를 접으면 견적 표가 창을 다 쓰고, 합계는 위에 얇게 붙어 있습니다 */
 .est-wide.sum-off > .stack{order:1}
-.est-wide.sum-off .est-sum{order:0;position:sticky;top:70px;z-index:6;box-shadow:var(--shadow)}
+.est-wide.sum-off > .est-side{order:0;position:sticky;top:70px;z-index:6;gap:8px}
+.est-wide.sum-off .est-sum,.est-wide.sum-off .est-calc{box-shadow:var(--shadow)}
 .est-sum.slim .panel-h{padding-top:10px;padding-bottom:10px}
 .est-sum .sum-peek{font-size:17px;font-weight:700;margin-left:10px}
 .warn-t{color:#b45309}
@@ -422,3 +425,14 @@ table.xls td.xls-f:focus{background:#fffbe6;font-family:ui-monospace,Menlo,Conso
 .newmat-bar{margin-top:10px;padding:8px 12px;border:1px solid var(--line2);border-radius:8px;background:var(--soft,#f4f7f5);gap:10px;flex-wrap:wrap}
 table.t tr.is-new > td{background:#fffdf0}
 table.t tr.is-new > td:first-child{box-shadow:inset 3px 0 0 var(--accent,#2f6f4f)}
+
+/* 자재 계산하기 */
+
+.est-calc.slim .panel-h{padding-top:10px;padding-bottom:10px}
+.calc-out{border-top:1px solid var(--line2);padding-top:10px;margin-top:4px}
+.calc-need{font-size:13px}
+.calc-qty{font-size:20px;font-weight:700;margin:2px 0 8px}
+.calc-kv{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;font-size:13px;margin:0 0 10px}
+.calc-kv dt{color:var(--muted)}
+.calc-kv dd{margin:0;text-align:right;font-variant-numeric:tabular-nums}
+.est-wide.sum-off .est-calc{order:0}
