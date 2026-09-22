@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.0.0';
+const APP_VERSION = '5.0.1';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -892,7 +892,7 @@ function renderProc(e,p,pi){ // e: 견적
     <div class="labor">
       <span>재료비 <b id="o-p${pi}-mat"></b></span>
       <span>재료비 부가세 <b id="o-p${pi}-matvat"></b></span>
-      <span>노무비 <b id="o-p${pi}-labor"></b></span>
+      <span title="이 공정 줄들의 (수량 × 노무비 단가) 합계">노무비 <b id="o-p${pi}-labor"></b></span>
       <span class="spacer"></span>
       <span>공정 합계 <b id="o-p${pi}-sum"></b></span>
     </div>
@@ -937,7 +937,7 @@ function renderLine(p,pi,l,li){
     <td class="r" data-l="재료비 단가"><input class="f num" type="number" inputmode="numeric" step="100" id="${id}-mprice" data-bind="line:${pi}:${li}:matPrice" data-num value="${esc(l.matPrice??0)}"></td>
     <td class="cell-out" data-l="재료비 금액"><span id="o-${id}-mat"></span></td>
     <td class="r" data-l="노무비 단가"><input class="f num" type="number" inputmode="numeric" step="100" id="${id}-lprice" data-bind="line:${pi}:${li}:laborPrice" data-num value="${esc(l.laborPrice??0)}"></td>
-    <td class="cell-out" data-l="노무비 금액"><span id="o-${id}-labor"></span></td>
+    <td class="cell-out" data-l="노무비 금액" title="수량 × 노무비 단가"><span id="o-${id}-labor"></span></td>
     <td class="cell-out" data-l="합계"><b id="o-${id}-total"></b></td>
     <td data-l="비고"><textarea class="f grow" rows="1" id="${id}-memo" data-bind="line:${pi}:${li}:memo" placeholder="비고">${esc(l.memo||'')}</textarea></td>
     <td class="c-act"><button class="btn ghost sm danger" data-act="delLine" data-pi="${pi}" data-li="${li}" aria-label="삭제">✕</button></td>
