@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.9.1';
+const APP_VERSION = '5.9.2';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -640,6 +640,7 @@ function restorePlace(k){
 function render(){
   const tabs=$('#tabs');
   if(needLogin()){ tabs.hidden=true; $('#app').innerHTML=renderAuth(); updatePill(); return; }
+  if(VIEW!=='mat' && NEW_MATS.length) NEW_MATS.length=0;   // 자재 화면을 나가면 자동으로 정리됩니다
   const same = LAST_VIEW===VIEW;             // 같은 화면을 다시 그릴 때만 자리를 지킵니다
   const keep = same ? keepPlace() : null;
   tabs.hidden=false;
@@ -1076,6 +1077,9 @@ function recalc(){
 }
 
 /* ---------- materials view ---------- */
+/* 방금 넣은 자재는 다 쓸 때까지 맨 위에 그대로 둡니다.
+   (이름을 적는 도중에 이름순으로 끼어들어가 버리면 다시 찾아야 해서) */
+const NEW_MATS = [];
 function renderMat(){
   const all=[...S.materials.values()];
   const counts={}; all.forEach(m=>counts[m.process]=(counts[m.process]||0)+1);
@@ -1084,6 +1088,9 @@ function renderMat(){
     ||(VENDOR_FILTER==='__none' ? (!m.vendorId&&!(m.vendor||'').trim())
       : VENDOR_FILTER.startsWith('txt:') ? (!m.vendorId&&(m.vendor||'').trim()===VENDOR_FILTER.slice(4))
       : m.vendorId===VENDOR_FILTER))).sort((a,b)=>PROCS.findIndex(p=>p.k===a.process)-PROCS.findIndex(p=>p.k===b.process)||String(a.name).localeCompare(b.name,'ko'));
+  const isNew=m=>NEW_MATS.includes(m.id);
+  const fresh=list.filter(isNew).sort((a,b)=>NEW_MATS.indexOf(a.id)-NEW_MATS.indexOf(b.id));
+  const rows=[...fresh,...list.filter(m=>!isNew(m))];
   return `<div class="stack">
     <div><h2>자재 단가표</h2><p class="muted" style="margin:4px 0 0">거래명세서·단가표·카톡 캡처를 올리면 자재명·단위·단가를 뽑아 표로 정리합니다.</p></div>
     ${renderImport()}
@@ -1108,9 +1115,13 @@ function renderMat(){
           .map(nm=>`<button class="chip" data-act="vendorFilter" data-v="txt:${esc(nm)}" aria-pressed="${VENDOR_FILTER==='txt:'+nm}">${esc(nm)} ${all.filter(m=>!m.vendorId&&(m.vendor||'').trim()===nm).length}</button>`).join('')}
         ${all.some(m=>!m.vendorId&&!(m.vendor||'').trim())?`<button class="chip" data-act="vendorFilter" data-v="__none" aria-pressed="${VENDOR_FILTER==='__none'}">업체 없음 ${all.filter(m=>!m.vendorId&&!(m.vendor||'').trim()).length}</button>`:''}
       </div>`:''}</div>
+      ${fresh.length?`<div class="row newmat-bar">
+        <span class="small">방금 넣은 자재 ${fresh.length}개를 맨 위에 두고 있습니다. 다 쓰시면 이름순으로 정리합니다.</span>
+        <span class="spacer"></span>
+        <button class="btn sm" data-act="sortMats">지금 정리하기</button></div>`:''}
       <div class="tbl-wrap" style="margin-top:10px"><table class="t resp">
         <thead><tr><th class="w-img">사진</th><th class="w-name">자재 · 규격</th><th>업체</th><th>공정</th><th>단위</th><th class="r">재료비 단가</th><th class="r">노무비 단가</th><th>메모</th><th></th></tr></thead>
-        <tbody>${list.map(m=>`<tr>
+        <tbody>${rows.map(m=>`<tr${isNew(m)?' class="is-new"':''}>
           <td class="c-img"><button class="thumb-btn" data-act="matPhoto" data-id="${m.id}" aria-label="사진 바꾸기"><img class="thumb" src="${matImg(m)}" alt=""></button></td>
           <td class="c-name"><input class="f" id="m-${m.id}-name" data-bind="mat:${m.id}:name" value="${esc(m.name)}" placeholder="자재명" style="font-weight:500"><input class="f small" id="m-${m.id}-spec" data-bind="mat:${m.id}:spec" value="${esc(m.spec)}" placeholder="규격" style="margin-top:3px"></td>
           <td data-l="업체">${vendorCell(m)}</td>
@@ -3123,11 +3134,12 @@ document.addEventListener('click',async ev=>{
       if(await askConfirm({title:'이 단가표 사진을 지울까요?',lines:['사진에서 만든 자재는 그대로 남습니다'],ok:'네, 지웁니다',cancel:'아니요'})){
         try{ await sb?.storage.from('plans').remove([s.path]); }catch(err){ console.warn(err); }
         S.sheets.delete(s.id); writeRecord('sheets',s.id,null,true); render(); } break; }
-    case 'addMat': { const m={id:uid(),name:'',spec:'',process:MAT_FILTER==='all'?'etc':MAT_FILTER,unit:'㎡',unitPrice:0,laborPrice:0,coverage:1,loss:0,mode:'area',note:'',updated:Date.now()}; S.materials.set(m.id,m); saveMat(m); render();
+    case 'addMat': { const m={id:uid(),name:'',spec:'',process:MAT_FILTER==='all'?'etc':MAT_FILTER,unit:'㎡',unitPrice:0,laborPrice:0,coverage:1,loss:0,mode:'area',note:'',updated:Date.now()}; S.materials.set(m.id,m); NEW_MATS.push(m.id); saveMat(m); render();
       const el=document.getElementById('m-'+m.id+'-name');
       el?.scrollIntoView({block:'center'}); el?.select(); break; }
     case 'delMat': { const m=S.materials.get(t.dataset.id);
       if(await askConfirm({title:`“${m.name||'이름 없는 자재'}”을(를) 단가표에서 지울까요?`,lines:['이미 만든 견적의 금액은 그대로 유지됩니다'],ok:'네, 지웁니다',cancel:'아니요'})){ deleteMat(m.id); render(); } break; }
+    case 'sortMats': NEW_MATS.length=0; render(); toast('자재를 공정·이름순으로 정리했습니다'); break;
     case 'matPhoto': photoTarget={kind:'mat',id:t.dataset.id}; $('#filePhoto').click(); break;
     case 'linePhoto': photoTarget={kind:'line',pi:+t.dataset.pi,li:+t.dataset.li}; $('#filePhoto').click(); break;
     case 'docMode': DOC_MODE = t.dataset.m==='contract'?'contract':'quote'; render(); break;
