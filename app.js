@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.4.0';
+const APP_VERSION = '5.5.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -2248,7 +2248,7 @@ function paintExcel(){
       </div>
       <button class="btn sm" id="xlsUndoBtn" data-act="xlsUndo" ${(XLS.undo||[]).length?'':'hidden'}>되돌리기${(XLS.undo||[]).length>1?' ('+XLS.undo.length+')':''}</button>
     </div>
-    <div class="xls-zoom" style="transform:scale(${XLS_ZOOM});width:${(100/XLS_ZOOM).toFixed(2)}%">${sheetToHtml(curSheet())}</div>`;
+    <div class="xls-zoom" style="zoom:${XLS_ZOOM}">${sheetToHtml(curSheet())}</div>`;
   EXCEL_BUSY=false; render();
 }
 const argb = v => { if(!v) return ''; const s=String(v.argb||v||''); return s.length===8?'#'+s.slice(2):(s.length===6?'#'+s:''); };
@@ -2805,9 +2805,9 @@ document.addEventListener('click',async ev=>{
       if(z==='0') XLS_ZOOM=1;
       else if(z==='fit'){
         const stage=document.querySelector('.xls-stage'), tb=document.querySelector('table.xls');
-        if(stage&&tb){ const need=tb.scrollWidth||tb.offsetWidth; XLS_ZOOM=Math.min(1,Math.max(0.3,(stage.clientWidth-8)/need)); }
+        if(stage&&tb){ const cur=XLS_ZOOM||1; const need=(tb.offsetWidth||tb.scrollWidth)*cur; XLS_ZOOM=Math.min(1,Math.max(0.1,(stage.clientWidth-10)/need)); }
       }
-      else XLS_ZOOM=Math.min(2.5,Math.max(0.3,XLS_ZOOM+(+z)*0.1));
+      else XLS_ZOOM=Math.min(3,Math.max(0.1,XLS_ZOOM+(+z)*(XLS_ZOOM<0.5?0.05:0.1)));
       XLS_ZOOM=Math.round(XLS_ZOOM*100)/100; paintExcel(); break; }
     case 'officeView': { const p=curProj(); const f=(p?.excel||[]).find(x=>x.id===(t.dataset.id||EXCEL_SEL))||(p?.excel||[])[0];
       if(!f) break;
@@ -2815,12 +2815,31 @@ document.addEventListener('click',async ev=>{
         lines:['마이크로소프트 오피스 미리보기로 파일을 엽니다','이 방식은 파일 주소를 마이크로소프트 서버에 보내 화면을 받아옵니다','보기만 가능하고 수정은 안 됩니다'],
         ok:'네, 열겠습니다', cancel:'아니요', danger:false})) break;
       const box=document.createElement('div'); box.className='modal';
-      box.innerHTML=`<div class="modal-b" style="width:min(1200px,96vw);height:88vh;display:flex;flex-direction:column;gap:8px">
-        <div class="row"><b style="flex:1">${esc(f.name)}</b>
-          <a class="btn sm" href="${esc(f.url)}" target="_blank" rel="noopener" download>원본 내려받기</a>
+      box.innerHTML=`<div class="modal-b" style="width:min(1400px,98vw);height:92vh;display:flex;flex-direction:column;gap:8px">
+        <div class="row"><b style="flex:1;min-width:120px">${esc(f.name)}</b>
+          <div class="row" style="gap:4px">
+            <button class="btn ghost sm" data-oz="-1" title="축소">−</button>
+            <button class="btn ghost sm" data-oz="0" id="ozLabel">100%</button>
+            <button class="btn ghost sm" data-oz="1" title="확대">＋</button>
+          </div>
+          <button class="btn sm" data-x="edit">앱에서 편집</button>
+          <a class="btn sm" href="${esc(f.url)}" target="_blank" rel="noopener" download>엑셀로 열기</a>
           <button class="btn sm" data-x="close">닫기</button></div>
-        <iframe src="https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(f.url)}" style="flex:1;border:0;border-radius:8px;background:#fff"></iframe></div>`;
-      box.addEventListener('click',ev=>{ if(ev.target.closest('[data-x]')||ev.target===box) box.remove(); });
+        <div style="flex:1;overflow:auto"><iframe id="ozFrame" src="https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(f.url)}" style="width:100%;height:100%;min-height:600px;border:0;border-radius:8px;background:#fff"></iframe></div>
+        <p class="muted small" style="margin:0">이 화면은 마이크로소프트 미리보기라 보기만 됩니다. 값을 고치려면 <b>앱에서 편집</b>을 누르세요.</p></div>`;
+      let oz=1;
+      box.addEventListener('click',ev=>{
+        const z=ev.target.closest('[data-oz]');
+        if(z){ const d=z.dataset.oz;
+          oz = d==='0' ? 1 : Math.min(3,Math.max(0.3, oz + (+d)*0.1));
+          oz=Math.round(oz*100)/100;
+          const fr=box.querySelector('#ozFrame'); if(fr){ fr.style.zoom=oz; fr.style.width=(100/oz)+'%'; fr.style.height=(100/oz)+'%'; }
+          const lb=box.querySelector('#ozLabel'); if(lb) lb.textContent=Math.round(oz*100)+'%';
+          return; }
+        const x=ev.target.closest('[data-x]');
+        if(x&&x.dataset.x==='edit'){ box.remove(); EXCEL_SEL=f.id; showExcel(f); return; }
+        if(x||ev.target===box) box.remove();
+      });
       document.body.appendChild(box); break; }
     case 'saveXlsx': { if(!XLS) break;
       try{ const buf=await XLS.wb.xlsx.writeBuffer();
