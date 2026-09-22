@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.13.0';
+const APP_VERSION = '5.14.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -2031,23 +2031,101 @@ function renderHome(){
       </div></section>`:''}
   </div>`;
 }
-/* 사진만 모아 보는 화면 */
+/* ── 사진 폴더 ─────────────────────────────────────────
+   날짜나 공정별로 폴더를 만들어 그날 작업 사진과 메모를 모읍니다. */
+let GAL_FOLDER = '';                       // 열어 둔 폴더 (빈 값이면 폴더 목록)
+const folderOf = (p,id) => (p.folders||[]).find(f=>f.id===id);
+const filesInFolder = (p,id) => (p.files||[]).filter(f=>fileKind(f)==='img' && (f.folderId||'')===id);
+function folderTitle(p,fd){
+  if(fd.name && fd.name.trim()) return fd.name.trim();
+  const t=(p.tasks||[]).find(x=>x.id===fd.taskId);
+  return [fd.date?dstr(fd.date):'', t?t.name:''].filter(Boolean).join(' · ') || '이름 없는 폴더';
+}
+function newFolder(p){
+  const fd={id:uid(),name:'',date:today(),taskId:'',memo:'',at:Date.now()};
+  p.folders=p.folders||[]; p.folders.unshift(fd); saveProj(p);
+  return fd;
+}
+/* 폴더 하나를 펼쳐 봅니다 */
+function renderFolder(p,fd){
+  const list=filesInFolder(p,fd.id).sort((a,b)=>(a.at||0)-(b.at||0));
+  const moveOpts=f=>`<select class="f small" data-bind="file:${f.id}:folderId" style="padding:3px 5px">
+      <option value="">폴더 없음</option>
+      ${(p.folders||[]).map(x=>`<option value="${x.id}" ${f.folderId===x.id?'selected':''}>${esc(folderTitle(p,x))}</option>`).join('')}
+    </select>`;
+  return `<div class="stack">
+    <div class="row"><button class="btn ghost" data-act="folderBack">‹ 사진 폴더</button><span class="spacer"></span>
+      <span class="muted small">사진 ${list.length}장</span>
+      <button class="btn pri sm" data-act="folderPhoto" data-id="${fd.id}">📷 사진 추가</button></div>
+    <section class="panel"><div class="panel-b">
+      <div class="client-grid">
+        <label class="fl">폴더 이름<input class="f" id="fd-name" data-bind="folder:${fd.id}:name" value="${esc(fd.name||'')}" placeholder="${esc(folderTitle(p,fd))}"></label>
+        <label class="fl">날짜<input class="f" type="date" id="fd-date" data-bind="folder:${fd.id}:date" value="${esc(fd.date||'')}"></label>
+        <label class="fl">공정<select class="f" id="fd-task" data-bind="folder:${fd.id}:taskId">
+          <option value="">공정 미지정</option>
+          ${(p.tasks||[]).map(t=>`<option value="${t.id}" ${fd.taskId===t.id?'selected':''}>${esc(t.name)}</option>`).join('')}
+        </select></label>
+      </div>
+      <label class="fl" style="margin-top:10px">그날 작업 메모
+        <textarea class="f" id="fd-memo" rows="3" data-bind="folder:${fd.id}:memo" placeholder="예: 안방·작은방 석고 1차 마감. 거실 천장 보강 추가.">${esc(fd.memo||'')}</textarea></label>
+      <div class="row" style="margin-top:10px"><span class="spacer"></span>
+        <button class="btn ghost sm danger" data-act="delFolder" data-id="${fd.id}">폴더 삭제</button></div>
+    </div></section>
+    <section class="panel">
+      <div class="panel-h"><h3>사진 ${list.length}장</h3><span class="muted small">사진마다 메모를 적을 수 있습니다</span></div>
+      <div class="panel-b">
+        ${list.length?`<div class="files">${list.map(f=>`<figure class="file">
+          <a href="${esc(f.url)}" target="_blank" rel="noopener"><img src="${esc(f.url)}" alt="${esc(f.memo||f.name)}" loading="lazy"></a>
+          <figcaption>
+            <input class="f small" data-bind="file:${f.id}:memo" value="${esc(f.memo||'')}" placeholder="사진 메모" style="padding:3px 5px">
+            ${moveOpts(f)}
+            <div class="row" style="gap:6px;justify-content:space-between">
+              <span class="muted small">${new Date(f.at||Date.now()).toLocaleDateString('ko-KR')}</span>
+              <button class="btn ghost sm danger" data-act="delPlan" data-fid="${f.id}">삭제</button></div>
+          </figcaption></figure>`).join('')}</div>`
+          :`<div class="empty">아직 사진이 없습니다. 위 “📷 사진 추가”로 올려주세요.</div>`}
+      </div></section>
+  </div>`;
+}
+
+/* 사진만 모아 보는 화면 — 폴더 목록 */
 function renderGallery(p){
-  const imgs=(p.files||[]).filter(f=>fileKind(f)==='img').sort((a,b)=>(b.at||0)-(a.at||0));
-  const byTask=new Map();
-  imgs.forEach(f=>{ const t=(p.tasks||[]).find(x=>x.id===f.taskId); const k=t?t.name:'공정 미지정';
-    if(!byTask.has(k)) byTask.set(k,[]); byTask.get(k).push(f); });
-  const card=f=>`<figure class="file">
-    <a href="${esc(f.url)}" target="_blank" rel="noopener"><img src="${esc(f.url)}" alt="${esc(f.memo||f.name)}" loading="lazy"></a>
-    <figcaption>${f.memo?`<b>${esc(f.memo)}</b>`:''}<span class="muted small">${new Date(f.at||Date.now()).toLocaleDateString('ko-KR')}</span></figcaption></figure>`;
+  const fd=GAL_FOLDER && folderOf(p,GAL_FOLDER);
+  if(fd) return renderFolder(p,fd);
+  const imgs=(p.files||[]).filter(f=>fileKind(f)==='img');
+  const loose=imgs.filter(f=>!f.folderId || !folderOf(p,f.folderId));
+  const folders=[...(p.folders||[])].sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))||(b.at||0)-(a.at||0));
+  const card=fd=>{
+    const list=filesInFolder(p,fd.id);
+    const t=(p.tasks||[]).find(x=>x.id===fd.taskId);
+    return `<button class="folder" data-act="openFolder" data-id="${fd.id}">
+      <span class="folder-th">${list[0]?`<img src="${esc(list[0].url)}" alt="" loading="lazy">`:'<span class="folder-i">🗂</span>'}</span>
+      <b>${esc(folderTitle(p,fd))}</b>
+      <span class="muted small">${[fd.date?dstr(fd.date):'', t?t.name:'', `사진 ${list.length}장`].filter(Boolean).join(' · ')}</span>
+      ${fd.memo?`<span class="folder-memo">${esc(fd.memo)}</span>`:''}
+    </button>`;
+  };
   return `<div class="stack">
     <div class="row"><button class="btn ghost" data-act="hubBack">‹ ${esc(siteName(p))}</button><span class="spacer"></span>
-      <span class="muted small">사진 ${imgs.length}장</span>
-      <button class="btn sm" data-act="taskPhotoAny">📷 사진 추가</button></div>
-    ${imgs.length?[...byTask.entries()].map(([name,list])=>`<section class="panel">
-        <div class="panel-h"><h3>${esc(name)}</h3><span class="muted small">${list.length}장</span></div>
-        <div class="panel-b"><div class="files">${list.map(card).join('')}</div></div></section>`).join('')
-      :`<div class="panel"><div class="empty">아직 사진이 없습니다. 일정에서 공정별로 찍거나 여기서 추가하세요.</div></div>`}
+      <span class="muted small">폴더 ${folders.length} · 사진 ${imgs.length}장</span>
+      <button class="btn pri sm" data-act="newFolder">+ 새 폴더</button></div>
+    ${folders.length?`<div class="folders">${folders.map(card).join('')}</div>`
+      :`<div class="panel"><div class="empty">폴더를 만들어 그날 작업 사진과 메모를 모아두세요.<br>
+        <button class="btn pri" data-act="newFolder" style="margin-top:10px">+ 새 폴더 만들기</button></div></div>`}
+    ${loose.length?`<section class="panel">
+      <div class="panel-h"><h3>폴더에 없는 사진 ${loose.length}장</h3><span class="muted small">아래에서 폴더로 옮길 수 있습니다</span></div>
+      <div class="panel-b"><div class="files">${loose.map(f=>`<figure class="file">
+        <a href="${esc(f.url)}" target="_blank" rel="noopener"><img src="${esc(f.url)}" alt="${esc(f.memo||f.name)}" loading="lazy"></a>
+        <figcaption>
+          <input class="f small" data-bind="file:${f.id}:memo" value="${esc(f.memo||'')}" placeholder="사진 메모" style="padding:3px 5px">
+          <select class="f small" data-bind="file:${f.id}:folderId" style="padding:3px 5px">
+            <option value="">폴더 없음</option>
+            ${(p.folders||[]).map(x=>`<option value="${x.id}">${esc(folderTitle(p,x))}</option>`).join('')}
+          </select>
+          <div class="row" style="gap:6px;justify-content:space-between">
+            <span class="muted small">${new Date(f.at||Date.now()).toLocaleDateString('ko-KR')}</span>
+            <button class="btn ghost sm danger" data-act="delPlan" data-fid="${f.id}">삭제</button></div>
+        </figcaption></figure>`).join('')}</div></div></section>`:''}
   </div>`;
 }
 function renderHub(p){
@@ -2076,6 +2154,7 @@ function renderHub(p){
         ? tile('copyShare','','🔗','링크 열기','고객·작업자에게 보낼 주소 복사','열림')
         : tile('startWork','','🔗','링크 열기','착공 처리하고 공유 주소를 만듭니다')}
       ${tile('openFiles','','🖼','사진 · 도면','공정별 사진과 도면 보기',(p.files||[]).length||'')}
+      ${tile('siteGallery','','🗂','사진 폴더','날짜·공정별로 그날 사진과 메모',(p.folders||[]).length||'')}
       ${tile('reportPdf','','📕','공사 보고서','일정·지시사항·사진 정리본 PDF')}
       ${tile('archiveProj','','📦','자료 내려받기','ZIP으로 통째로 보관')}
       ${p.status==='착공'?tile('endWork','','✅','준공 처리','공유 링크를 닫습니다')
@@ -2100,7 +2179,7 @@ const STATUS = {예정:'#8a949013',진행:'var(--accent)',완료:'var(--muted)'}
 const siteName = p => (p && p.name || '').trim() || (p && p.address || '').trim() || ((p && p.client || '').trim() ? p.client + ' 고객님 현장' : '') || '이름 없는 현장';
 function newProject(from){
   const p={id:uid(),name:from?.title||'',client:from?.client?.name||'',phone:from?.client?.phone||'',address:from?.client?.address||'',
-    note:'',estimateId:from?.id||null,tasks:[],files:[],share:{on:false,token:'',showMemo:true},updated:Date.now()};
+    note:'',estimateId:from?.id||null,tasks:[],files:[],folders:[],share:{on:false,token:'',showMemo:true},updated:Date.now()};
   return p;
 }
 function projRange(p){
@@ -2173,6 +2252,7 @@ async function copyShare(p){
 }
 
 /* 도면 파일 */
+let PLAN_FOLDER='';
 async function uploadPlans(files,p,taskId){
   if(!sb||!session){ toast('로그인한 상태에서만 파일을 올릴 수 있습니다.'); return; }
   for(const f of [...files]){
@@ -2184,7 +2264,7 @@ async function uploadPlans(files,p,taskId){
       const {error}=await sb.storage.from('plans').upload(path,f,{contentType:f.type||'application/octet-stream'});
       if(error) throw error;
       const {data}=sb.storage.from('plans').getPublicUrl(path);
-      p.files=p.files||[]; p.files.push({id:uid(),name:f.name,path,url:data.publicUrl,type:f.type||'',size:f.size,shared:true,at:Date.now(),taskId:taskId||'',memo:''});
+      p.files=p.files||[]; p.files.push({id:uid(),name:f.name,path,url:data.publicUrl,type:f.type||'',size:f.size,shared:true,at:Date.now(),taskId:taskId||'',folderId:PLAN_FOLDER||'',memo:''});
       saveProj(p); render(); toast(`${f.name} 올렸습니다`);
     }catch(e){ toast(`${f.name} 올리지 못했습니다: ${e.message||e}`); }
   }
@@ -3160,7 +3240,9 @@ document.addEventListener('input',ev=>{
     if(rest[1]==='start'&&(!t.end||dnum(t.end)<dnum(val))) t.end=val;
     saveProj(p);
     const g=document.querySelector('.gantt'); if(g) g.innerHTML=ganttHTML(p,projRange(p)); }
-  else if(kind==='file'){ const p=curProj(); const f=(p?.files||[]).find(x=>x.id===rest[0]); if(!f) return; f[rest[1]]=val; saveProj(p); }
+  else if(kind==='file'){ const p=curProj(); const f=(p?.files||[]).find(x=>x.id===rest[0]); if(!f) return; f[rest[1]]=val; saveProj(p);
+    if(rest[1]==='folderId') render(); }
+  else if(kind==='folder'){ const p=curProj(); const fd=folderOf(p,rest[0]); if(!fd) return; fd[rest[1]]=val; saveProj(p); }
 });
 function handleSelectChange(t){
   if(t.dataset.unitsel){
@@ -3559,9 +3641,25 @@ document.addEventListener('click',async ev=>{
       if(HOME_SEL===p.id) HOME_SEL=null;
       render(); break; }
     case 'homeBack': HOME_SEL=null; HOME_NEW=false; HUB_GALLERY=false; render(); break;
-    case 'siteGallery': HUB_GALLERY=true; render(); window.scrollTo(0,0); break;
-    case 'hubBack': HUB_GALLERY=false; render(); window.scrollTo(0,0); break;
-    case 'taskPhotoAny': PLAN_TASK=''; $('#filePlan').setAttribute('accept','image/*'); $('#filePlan').click(); break;
+    case 'siteGallery': HUB_GALLERY=true; GAL_FOLDER=''; render(); window.scrollTo(0,0); break;
+    case 'hubBack': HUB_GALLERY=false; GAL_FOLDER=''; render(); window.scrollTo(0,0); break;
+    case 'taskPhotoAny': PLAN_TASK=''; PLAN_FOLDER=''; $('#filePlan').setAttribute('accept','image/*'); $('#filePlan').click(); break;
+    case 'newFolder': { const p=curProj(); if(!p) break;
+      const fd=newFolder(p); GAL_FOLDER=fd.id; HUB_GALLERY=true; render();
+      setTimeout(()=>document.getElementById('fd-name')?.focus(),80); break; }
+    case 'openFolder': GAL_FOLDER=t.dataset.id; render(); window.scrollTo(0,0); break;
+    case 'folderBack': GAL_FOLDER=''; render(); window.scrollTo(0,0); break;
+    case 'folderPhoto': { const p=curProj(); const fd=folderOf(p,t.dataset.id); if(!fd) break;
+      PLAN_FOLDER=fd.id; PLAN_TASK=fd.taskId||'';
+      $('#filePlan').setAttribute('accept','image/*'); $('#filePlan').click(); break; }
+    case 'delFolder': { const p=curProj(); const fd=folderOf(p,t.dataset.id); if(!fd) break;
+      const n=filesInFolder(p,fd.id).length;
+      if(!await askConfirm({title:`“${folderTitle(p,fd)}” 폴더를 지울까요?`,
+        lines:[n?`안에 있는 사진 ${n}장은 “폴더에 없는 사진”으로 남습니다`:'빈 폴더입니다','사진이 지워지지는 않습니다'],
+        ok:'네, 폴더만 지웁니다', cancel:'아니요'})) break;
+      (p.files||[]).forEach(f=>{ if(f.folderId===fd.id) f.folderId=''; });
+      p.folders=(p.folders||[]).filter(x=>x.id!==fd.id); saveProj(p);
+      GAL_FOLDER=''; render(); toast('폴더를 지웠습니다'); break; }
     case 'openSched': VIEW='sched'; SCHED_MODE='site'; ls.set('view',VIEW); render(); window.scrollTo(0,0); break;
     case 'openFiles': VIEW='sched'; SCHED_MODE='site'; ls.set('view',VIEW); render();
       setTimeout(()=>document.querySelector('.files')?.scrollIntoView({block:'center',behavior:'smooth'})||document.getElementById('pdz')?.scrollIntoView({block:'center'}),80); break;
@@ -3582,7 +3680,7 @@ document.addEventListener('click',async ev=>{
     case 'purgeProj': archiveProject(curProj(),true); break;
     case 'delTask': { const p=curProj(); p.tasks.splice(+t.dataset.ti,1); saveProj(p); render(); break; }
     case 'pickPlan': PLAN_TASK=''; $('#filePlan').click(); break;
-    case 'taskPhoto': { const p=curProj(); PLAN_TASK=p.tasks[+t.dataset.ti]?.id||''; $('#filePlan').setAttribute('accept','image/*'); $('#filePlan').click(); break; }
+    case 'taskPhoto': { const p=curProj(); PLAN_TASK=p.tasks[+t.dataset.ti]?.id||''; PLAN_FOLDER=''; $('#filePlan').setAttribute('accept','image/*'); $('#filePlan').click(); break; }
     case 'delPlan': removePlan(curProj(),t.dataset.fid); break;
     case 'copyShare': copyShare(curProj()); break;
     case 'month': { if(t.dataset.d==='0'){ const d=new Date(); MONTH=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }
@@ -3616,7 +3714,9 @@ $('#fileSheet').addEventListener('change',ev=>{ setSheetFiles(ev.target.files); 
 $('#fileBackup').addEventListener('change',ev=>{ if(ev.target.files[0]) importBackup(ev.target.files[0]); ev.target.value=''; });
 $('#fileExcel').addEventListener('change',ev=>{ if(ev.target.files[0]) uploadExcel(ev.target.files[0]); ev.target.value=''; });
 let PLAN_TASK='';
-$('#filePlan').addEventListener('change',ev=>{ if(ev.target.files.length) uploadPlans(ev.target.files,curProj(),PLAN_TASK); ev.target.value=''; ev.target.removeAttribute('accept'); PLAN_TASK=''; });
+$('#filePlan').addEventListener('change',async ev=>{ const fs=ev.target.files;
+  if(fs.length) await uploadPlans(fs,curProj(),PLAN_TASK);
+  ev.target.value=''; ev.target.removeAttribute('accept'); PLAN_TASK=''; PLAN_FOLDER=''; });
 document.addEventListener('dragover',ev=>{ const dz=ev.target.closest?.('#dz'); if(dz){ ev.preventDefault(); dz.classList.add('drag'); } });
 document.addEventListener('dragleave',ev=>{ ev.target.closest?.('#dz')?.classList.remove('drag'); });
 document.addEventListener('drop',ev=>{ const dz=ev.target.closest?.('#dz'); if(dz){ ev.preventDefault(); dz.classList.remove('drag'); setSheetFiles(ev.dataTransfer.files); }
