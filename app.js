@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '4.7.1';
+const APP_VERSION = '4.8.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -25,6 +25,14 @@ const r1 = n => (Math.round(n*10)/10).toLocaleString('ko-KR');
 const clone = o => JSON.parse(JSON.stringify(o));
 const today = () => { const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); };
 const ls = { get(k,d=null){ try{ const v=localStorage.getItem('ie:'+k); return v==null?d:v; }catch{ return d; } }, set(k,v){ try{ v==null?localStorage.removeItem('ie:'+k):localStorage.setItem('ie:'+k,v); }catch{} } };
+/* 지운 직후 잠깐 뜨는 되돌리기 알림 */
+function undoToast(what,undo){
+  const t=document.createElement('div'); t.className='toast undo';
+  t.innerHTML=`${esc(what)}을(를) 지웠습니다 <button class="btn sm">되돌리기</button>`;
+  t.querySelector('button').addEventListener('click',async ()=>{ t.remove(); if(await undo()){ render(); toast('되돌렸습니다'); } });
+  document.body.appendChild(t);
+  setTimeout(()=>t.remove(),8000);
+}
 function toast(msg){ const t=document.createElement('div'); t.className='toast'; t.textContent=msg; document.body.appendChild(t); setTimeout(()=>t.remove(),2600); }
 /* 현장 이름·고객 정보는 목록에서 이 작은 창으로만 고칩니다 (현장 화면에서는 보기만) */
 function editSiteBox(p){
@@ -281,14 +289,31 @@ function flushWrites(){ [...pending.values()].forEach(p=>{ clearTimeout(p.t); p.
 /* 삭제할 때 아직 저장 대기 중인 수정이 남아 있으면 지운 항목이 되살아납니다 */
 function cancelWrite(col,id){ const key=col+'/'+id, p=pending.get(key); if(p){ clearTimeout(p.t); pending.delete(key); } }
 async function writeRecord(col,id,data,deleted=false){
-  await idb.put({key:col+'/'+id,col,id,data:deleted?null:data,updated:Date.now(),dirty:true,deleted});
+  await idb.put({key:col+'/'+id,col,id,data,updated:Date.now(),dirty:true,deleted,deletedAt:deleted?Date.now():undefined});
+  scheduleSync();
+}
+/* 지운 것은 내용을 남겨 두었다가 되돌릴 수 있게 합니다 */
+async function trashList(){
+  const rows=await idb.all();
+  return rows.filter(r=>r.deleted&&r.data).sort((a,b)=>(b.deletedAt||b.updated||0)-(a.deletedAt||a.updated||0));
+}
+async function restoreRecord(col,id){
+  const r=await idb.get(col+'/'+id);
+  if(!r||!r.data) return false;
+  applyRecord(col,id,r.data);
+  await idb.put({...r,deleted:false,deletedAt:undefined,updated:Date.now(),dirty:true});
+  scheduleSync();
+  return true;
+}
+async function purgeRecord(col,id){
+  await idb.put({key:col+'/'+id,col,id,data:null,updated:Date.now(),dirty:true,deleted:true,deletedAt:Date.now()});
   scheduleSync();
 }
 const saveMat = m => queueWrite('materials',m.id,()=>S.materials.has(m.id)?strip(S.materials.get(m.id)):null);
 const saveEst = e => { e.updated=Date.now(); queueWrite('estimates',e.id,()=>S.estimates.has(e.id)?strip(S.estimates.get(e.id)):null); };
 const saveCo = () => queueWrite('settings','company',()=>S.company);
 const saveVendor = v => { v.updated=Date.now(); queueWrite('vendors',v.id,()=>S.vendors.has(v.id)?strip(S.vendors.get(v.id)):null); };
-function deleteVendor(id){ cancelWrite('vendors',id); S.vendors.delete(id); writeRecord('vendors',id,null,true); }
+function deleteVendor(id){ const v=S.vendors.get(id); cancelWrite('vendors',id); S.vendors.delete(id); writeRecord('vendors',id,v?strip(v):null,true); undoToast('업체',()=>restoreRecord('vendors',id)); }
 const vendorName = id => S.vendors.get(id)?.name || '';
 /* 공정에 맞는 업체 (전체 공정으로 등록된 업체 포함) */
 const vendorsFor = k => [...S.vendors.values()]
@@ -309,10 +334,10 @@ function migrateVendors(){
   return made;
 }
 const saveProj = p => { p.updated=Date.now(); queueWrite('projects',p.id,()=>S.projects.has(p.id)?strip(S.projects.get(p.id)):null); if(p.share?.on) schedulePublish(p.id); };
-function deleteMat(id){ cancelWrite('materials',id); S.materials.delete(id); writeRecord('materials',id,null,true); }
-function deleteEst(id){ cancelWrite('estimates',id); S.estimates.delete(id); writeRecord('estimates',id,null,true); }
+function deleteMat(id){ const m=S.materials.get(id); cancelWrite('materials',id); S.materials.delete(id); writeRecord('materials',id,m?strip(m):null,true); undoToast('자재',()=>restoreRecord('materials',id)); }
+function deleteEst(id){ const e=S.estimates.get(id); cancelWrite('estimates',id); S.estimates.delete(id); writeRecord('estimates',id,e?strip(e):null,true); undoToast('견적',()=>restoreRecord('estimates',id)); }
 function deleteProj(id){ const p=S.projects.get(id); if(p?.share?.token) unpublishShare(p.share.token);
-  cancelWrite('projects',id); S.projects.delete(id); writeRecord('projects',id,null,true); }
+  cancelWrite('projects',id); S.projects.delete(id); writeRecord('projects',id,p?strip(p):null,true); undoToast('현장',()=>restoreRecord('projects',id)); }
 
 /* ---------- cloud sync (Supabase) ---------- */
 const CFG = window.APP_CONFIG || {};
@@ -344,7 +369,7 @@ async function push(){
     if(error) throw error;
     for(const r of chunk){
       const now=await idb.get(r.key);
-      if(now && now.updated===r.updated){ if(now.deleted) await idb.del(r.key); else { now.dirty=false; await idb.put(now); } }
+      if(now && now.updated===r.updated){ now.dirty=false; await idb.put(now); }
     }
   }
 }
@@ -364,7 +389,9 @@ async function pull(){
       if(row.updated_at>since){ since=row.updated_at; advanced=true; }
       if(local && local.dirty && local.updated>=Number(row.client_updated)) continue;
       if(local && !local.dirty && local.updated===Number(row.client_updated) && !row.deleted) continue;
-      if(row.deleted){ if(local) await idb.del(key); applyRecord(row.col,row.id,null); changed=true; }
+      if(row.deleted){
+        await idb.put({key,col:row.col,id:row.id,data:row.data||local?.data||null,updated:Number(row.client_updated),dirty:false,deleted:true,deletedAt:Number(row.client_updated)});
+        applyRecord(row.col,row.id,null); changed=true; }
       else { await idb.put({key,col:row.col,id:row.id,data:row.data,updated:Number(row.client_updated),dirty:false,deleted:false}); applyRecord(row.col,row.id,row.data); changed=true; }
     }
     ls.set(markKey,since);
@@ -745,7 +772,7 @@ function renderEst(){
    :sp?`<div class="sitebar warn"><span>이 견적은 아직 어느 현장에도 연결되지 않았습니다.</span><span class="spacer"></span>
       <button class="btn sm" data-act="linkEstToSite">“${esc(siteName(sp))}” 현장에 연결</button></div>`:''}
   <div class="row"><div style="flex:1;min-width:220px"><div class="eyebrow">견적 번호 ${esc(e.no)}</div><input class="f" id="estTitle" data-bind="est:title" value="${esc(e.title)}" placeholder="견적 제목 (예: 상계동 34평 리모델링)" style="font-size:20px;font-weight:700;border-color:transparent;padding-left:0;background:transparent"></div>${estPicker()}</div>
-  <div class="est-grid">
+  <div class="est-wide">
     <div class="stack">
       <section class="panel"><div class="panel-b client-grid">
         <label class="fl">고객명<input class="f" id="c-name" data-bind="est:client.name" value="${esc(e.client.name)}" placeholder="홍길동"></label>
@@ -764,7 +791,7 @@ function renderEst(){
         <div class="chips">${PROCS.filter(p=>!used.has(p.k)).map(p=>`<button class="chip" data-act="addProc" data-k="${p.k}">+ ${p.n}</button>`).join('')}</div>
       </div>
     </div>
-    <aside class="panel summary">
+    <aside class="panel summary est-sum">
       <div class="panel-h"><h3>합계</h3><span class="spacer"></span><button class="btn sm" data-act="view" data-v="doc">고객용 보기 →</button></div>
       <div class="panel-b">
         <div class="sum-rows">
@@ -860,8 +887,8 @@ function renderLine(p,pi,l,li){
         ${here.length?`<optgroup label="${(PMAP[p.k]||PMAP.etc).n}">${here.map(opt).join('')}</optgroup>`:''}
         ${there.length?`<optgroup label="다른 공정">${there.map(opt).join('')}</optgroup>`:''}
       </select>
-      <input class="f" id="${id}-name" data-bind="line:${pi}:${li}:name" value="${esc(l.name)}" placeholder="품명" style="margin-top:3px;font-weight:500">
-      <input class="f small" id="${id}-spec" data-bind="line:${pi}:${li}:spec" value="${esc(l.spec)}" placeholder="규격" style="margin-top:3px">
+      <textarea class="f grow" rows="1" id="${id}-name" data-bind="line:${pi}:${li}:name" placeholder="품명" style="margin-top:3px;font-weight:500">${esc(l.name)}</textarea>
+      <textarea class="f small grow" rows="1" id="${id}-spec" data-bind="line:${pi}:${li}:spec" placeholder="규격" style="margin-top:3px">${esc(l.spec)}</textarea>
       <div class="row small" style="margin-top:4px;gap:4px">
         ${m?`<button class="btn ghost sm" data-act="priceDlg" data-pi="${pi}" data-li="${li}" title="단가표와 금액 맞추기">단가표 ${won(m.unitPrice)}${num(m.laborPrice)?' / '+won(m.laborPrice):''}원</button>`
            :`<button class="btn ghost sm" data-act="saveToMat" data-pi="${pi}" data-li="${li}" title="이 줄을 자재 단가표에 저장">단가표에 저장</button>`}
@@ -878,7 +905,7 @@ function renderLine(p,pi,l,li){
     <td class="r" data-l="노무비 단가"><input class="f num" type="number" inputmode="numeric" step="100" id="${id}-lprice" data-bind="line:${pi}:${li}:laborPrice" data-num value="${esc(l.laborPrice??0)}"></td>
     <td class="cell-out" data-l="노무비 금액"><span id="o-${id}-labor"></span></td>
     <td class="cell-out" data-l="합계"><b id="o-${id}-total"></b></td>
-    <td data-l="비고"><input class="f" id="${id}-memo" data-bind="line:${pi}:${li}:memo" value="${esc(l.memo||'')}" placeholder="비고"></td>
+    <td data-l="비고"><textarea class="f grow" rows="1" id="${id}-memo" data-bind="line:${pi}:${li}:memo" placeholder="비고">${esc(l.memo||'')}</textarea></td>
     <td class="c-act"><button class="btn ghost sm danger" data-act="delLine" data-pi="${pi}" data-li="${li}" aria-label="삭제">✕</button></td>
   </tr>`;
 }
@@ -2032,6 +2059,10 @@ function renderSettings(){
         : `<p class="muted small" style="margin:0">로그인하지 않아 이 기기에만 저장되고 있습니다. 로그인하면 지금 데이터가 계정으로 올라갑니다.</p><div><button class="btn pri" data-act="showLogin">로그인</button></div>`}
     </div></section>
 
+    <section class="panel"><div class="panel-h"><h3>휴지통</h3><span class="spacer"></span><button class="btn sm" data-act="openTrash">열기</button></div>
+      <div class="panel-b"><p class="muted small" style="margin:0">지운 견적·현장·자재·업체를 30일 동안 보관합니다. 열어서 되돌릴 수 있어요.</p>
+      <div id="trashBox"></div></div></section>
+
     <section class="panel"><div class="panel-h"><h3>백업</h3></div><div class="panel-b">
       <p class="muted small" style="margin:0">견적·단가표·사진·업체 정보를 파일 하나로 저장합니다. 불러오면 더 최근에 고친 내용이 남습니다.</p>
       <div class="row"><button class="btn" data-act="exportBackup">백업 파일 만들기</button><button class="btn" data-act="importBackup">백업 불러오기</button></div>
@@ -2112,11 +2143,15 @@ function autoSizeInput(el){
   const min = el.classList.contains('num') ? 96 : (/-(name|spec|memo|note)$/.test(el.id) ? 150 : 64);
   el.style.width = Math.min(el.classList.contains('num')?220:680, Math.max(min, MEASURE.offsetWidth+26)) + 'px';
 }
-function autoSizeAll(){ if(FIELD_SIZING) return; document.querySelectorAll('table.t input.f').forEach(autoSizeInput); }
+function growArea(el){ if(!el||el.tagName!=='TEXTAREA') return; el.style.height='auto'; el.style.height=(el.scrollHeight+2)+'px'; }
+function autoSizeAll(){
+  if(!FIELD_SIZING) document.querySelectorAll('table.t input.f').forEach(autoSizeInput);
+  document.querySelectorAll('textarea.grow').forEach(growArea);
+}
 window.addEventListener('resize',()=>{ clearTimeout(window.__asz); window.__asz=setTimeout(autoSizeAll,150); });
 document.addEventListener('input',ev=>{
   const t=ev.target;
-  autoSizeInput(t);
+  autoSizeInput(t); growArea(t);
   if(t.type==='tel'){                       // 연락처는 적는 대로 - 를 넣어줍니다
     const before=t.value, pos=t.selectionStart??before.length, f=formatPhone(before);
     if(f!==before){
@@ -2391,6 +2426,24 @@ document.addEventListener('click',async ev=>{
     case 'showLogin': AUTH.skipped=false; ls.set('skipLogin',null); render(); break;
     case 'logout': if(confirm('로그아웃할까요? 올리지 못한 변경사항이 있으면 먼저 올린 뒤 이 기기의 데이터를 지웁니다.')) logout(); break;
     case 'saveSb': { ls.set('sb_url',$('#set-sburl').value.trim()||null); ls.set('sb_key',$('#set-sbkey').value.trim()||null); await connectSupabase(); render(); toast(sb?'서버에 연결했습니다':'연결 정보를 확인해주세요'); break; }
+    case 'openTrash': { const box=document.getElementById('trashBox'); if(!box) break;
+      const rows=await trashList();
+      const label={estimates:'견적',projects:'현장',materials:'자재',vendors:'업체',sheets:'단가표 사진'};
+      const nameOf=r=>{ const d=r.data||{};
+        return r.col==='estimates'?(d.title||'제목 없음')
+          :r.col==='projects'?(d.name||d.address||'이름 없음')
+          :r.col==='materials'?(d.name||'이름 없음')
+          :r.col==='vendors'?(d.name||'이름 없음'):(d.name||'사진'); };
+      box.innerHTML = rows.length
+        ? `<div style="display:flex;flex-direction:column;gap:8px;margin-top:10px">${rows.map(r=>`<div class="row" style="border:1px solid var(--line2);border-radius:8px;padding:8px 10px">
+            <span class="badge">${label[r.col]||r.col}</span>
+            <b style="flex:1;min-width:120px">${esc(nameOf(r))}</b>
+            <span class="muted small">${new Date(r.deletedAt||r.updated).toLocaleString('ko-KR')}</span>
+            <button class="btn sm pri" data-act="restoreTrash" data-col="${r.col}" data-id="${r.id}">되돌리기</button>
+          </div>`).join('')}</div>`
+        : '<p class="muted small" style="margin:10px 0 0">되돌릴 수 있는 항목이 없습니다.</p>';
+      break; }
+    case 'restoreTrash': { if(await restoreRecord(t.dataset.col,t.dataset.id)){ toast('되돌렸습니다'); render(); } else toast('내용이 남아 있지 않아 되돌릴 수 없습니다.'); break; }
     case 'exportBackup': exportBackup(); break;
     case 'importBackup': $('#fileBackup').click(); break;
     case 'checkUpdate': checkUpdate(true); break;
