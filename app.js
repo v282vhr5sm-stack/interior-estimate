@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.9.3';
+const APP_VERSION = '5.9.4';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -331,13 +331,14 @@ async function showTrash(){
     ? `<div class="row" style="margin-top:10px">
         <span class="muted small">${rows.length}개 · 그냥 두면 30일 뒤 저절로 사라집니다</span>
         <span class="spacer"></span>
-        <button class="btn ghost sm danger" data-act="purgeAllTrash">전체 완전 지우기</button>
+        <button class="btn ghost sm danger" data-act="purgeAllTrash">전체 비우기</button>
       </div>
       <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">${rows.map(r=>`<div class="row" style="border:1px solid var(--line2);border-radius:8px;padding:8px 10px">
         <span class="badge">${label[r.col]||r.col}</span>
         <b style="flex:1;min-width:120px">${esc(nameOf(r))}</b>
         <span class="muted small">${new Date(r.deletedAt||r.updated).toLocaleString('ko-KR')}</span>
         <button class="btn sm pri" data-act="restoreTrash" data-col="${r.col}" data-id="${r.id}">되돌리기</button>
+        <button class="btn ghost sm danger" data-act="purgeTrash" data-col="${r.col}" data-id="${r.id}" data-name="${esc(nameOf(r))}">완전히 지우기</button>
       </div>`).join('')}</div>`
     : '<p class="muted small" style="margin:10px 0 0">되돌릴 수 있는 항목이 없습니다.</p>';
 }
@@ -3247,6 +3248,13 @@ document.addEventListener('click',async ev=>{
         p.excel=(p.excel||[]).filter(x=>x.id!==f.id); saveProj(p); EXCEL_HTML=''; EXCEL_SEL=null; render(); } break; }
     case 'openTrash': await showTrash(); break;
     case 'restoreTrash': { if(await restoreRecord(t.dataset.col,t.dataset.id)){ toast('되돌렸습니다'); render(); await showTrash(); } else toast('내용이 남아 있지 않아 되돌릴 수 없습니다.'); break; }
+    case 'purgeTrash': {
+      const nm=t.dataset.name||'이 항목';
+      if(!await askConfirm({title:`“${nm}”을(를) 완전히 지울까요?`,
+        lines:['휴지통에서도 사라집니다','다시는 되돌릴 수 없습니다','서버와 다른 기기에서도 함께 사라집니다'],
+        ok:'네, 완전히 지웁니다', cancel:'아니요, 그대로 둡니다'})) break;
+      await purgeRecord(t.dataset.col,t.dataset.id);
+      await showTrash(); toast('완전히 지웠습니다'); break; }
     case 'purgeAllTrash': {
       const rows=await trashList(); if(!rows.length){ toast('휴지통이 비어 있습니다'); break; }
       if(!await askConfirm({title:`휴지통에 있는 ${rows.length}개를 모두 완전히 지울까요?`,
