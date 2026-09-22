@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '4.7.0';
+const APP_VERSION = '4.7.1';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -826,7 +826,7 @@ function renderProc(e,p,pi){ // e: 견적
     <div class="proc-f"><button class="btn sm" data-act="addBlank" data-pi="${pi}">+ 줄 추가</button>
       <span class="muted small">줄에서 업체와 품명을 고르세요. 엔터를 치면 같은 품명으로 한 줄 더 생깁니다.</span></div>
     <div class="tbl-wrap"><table class="t resp">
-      <thead><tr><th class="w-img"></th><th></th><th>업체</th><th class="w-name">품명 · 규격</th><th class="r">수량</th><th>단위</th><th class="r">재료비 단가</th><th class="r">재료비 금액</th><th class="r">노무비 단가</th><th class="r">노무비 금액</th><th class="r">합계</th><th>비고</th><th></th></tr></thead>
+      <thead><tr><th class="w-img"></th><th></th><th>업체</th><th class="w-name">품명 · 규격</th><th>단위</th><th class="r">수량</th><th class="r">재료비 단가</th><th class="r">재료비 금액</th><th class="r">노무비 단가</th><th class="r">노무비 금액</th><th class="r">합계</th><th>비고</th><th></th></tr></thead>
       <tbody>${(p.lines||[]).map((l,li)=>renderLine(p,pi,l,li)).join('') || `<tr><td colspan="13" class="muted small c-empty" style="padding:12px 8px">위에서 업체와 품명을 고르거나 “직접 입력”을 누르세요.</td></tr>`}</tbody>
     </table></div>
     <div class="labor">
@@ -866,13 +866,13 @@ function renderLine(p,pi,l,li){
         ${m?`<button class="btn ghost sm" data-act="priceDlg" data-pi="${pi}" data-li="${li}" title="단가표와 금액 맞추기">단가표 ${won(m.unitPrice)}${num(m.laborPrice)?' / '+won(m.laborPrice):''}원</button>`
            :`<button class="btn ghost sm" data-act="saveToMat" data-pi="${pi}" data-li="${li}" title="이 줄을 자재 단가표에 저장">단가표에 저장</button>`}
       </div></td>
-    <td class="r" data-l="수량"><input class="f num" type="number" inputmode="decimal" step="1" id="${id}-qty" data-bind="line:${pi}:${li}:qty" data-num value="${esc(l.qty)}" title="화살표는 1씩, 소수점도 직접 입력할 수 있습니다"></td>
     <td data-l="단위">
       <select class="f" id="${id}-unitsel" data-lineunit="${pi}:${li}">
         ${UNITS.map(u=>`<option value="${u}" ${!customUnit&&l.unit===u?'selected':''}>${u}</option>`).join('')}
         <option value="__custom" ${customUnit?'selected':''}>직접 입력</option>
       </select>
       ${customUnit?`<input class="f" id="${id}-unit" data-bind="line:${pi}:${li}:unit" value="${esc(l.unit||'')}" placeholder="단위" style="margin-top:4px">`:''}</td>
+    <td class="r" data-l="수량"><input class="f num" type="number" inputmode="decimal" step="1" id="${id}-qty" data-bind="line:${pi}:${li}:qty" data-num value="${esc(l.qty)}" title="화살표는 1씩, 소수점도 직접 입력할 수 있습니다"></td>
     <td class="r" data-l="재료비 단가"><input class="f num" type="number" inputmode="numeric" step="100" id="${id}-mprice" data-bind="line:${pi}:${li}:matPrice" data-num value="${esc(l.matPrice??0)}"></td>
     <td class="cell-out" data-l="재료비 금액"><span id="o-${id}-mat"></span></td>
     <td class="r" data-l="노무비 단가"><input class="f num" type="number" inputmode="numeric" step="100" id="${id}-lprice" data-bind="line:${pi}:${li}:laborPrice" data-num value="${esc(l.laborPrice??0)}"></td>
