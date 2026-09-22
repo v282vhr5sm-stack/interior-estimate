@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.11.1';
+const APP_VERSION = '5.12.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -1270,7 +1270,7 @@ function renderImport(){
   if(I.items && !I.busy){
     const e=cur();
     body+=`<div class="panel" style="margin-top:12px">
-      <div class="panel-h"><h3>읽어낸 자재 ${I.items.length}개</h3><span class="muted small">저장 전에 확인·수정하세요. <span class="badge warn">추정</span>은 사진에 규격이 없어 일반 시공 기준으로 잡은 값입니다.</span></div>
+      <div class="panel-h"><h3>읽어낸 자재 ${I.items.length}개</h3><span class="muted small">품명과 단가만 읽었습니다. 저장 전에 확인·수정하세요.</span></div>
       ${I.draftAt?`<div class="panel-b"><div class="row rev-keep"><span class="small">아직 자재함에 저장하지 않았습니다. 앱을 닫아도 이 목록은 남아 있습니다.
         <span class="muted">(${new Date(I.draftAt).toLocaleString('ko-KR')} 에 읽음)</span></span></div></div>`:''}
       ${I.memo?`<div class="panel-b memo">${esc(I.memo)}</div>`:''}
@@ -1281,16 +1281,15 @@ function renderImport(){
         <label class="row small" style="gap:6px">공정 한 번에 지정
           <select class="f" id="rv-proc-all" data-act-change="revProc" style="width:120px"><option value="">선택</option>${PROCS.map(p=>`<option value="${p.k}">${p.n}</option>`).join('')}</select></label>
       </div>
-      <div class="tbl-wrap"><table class="t resp"><thead><tr><th></th><th class="w-name">자재 · 규격</th><th>업체</th><th>공정</th><th>단위</th><th class="r">재료비 단가</th><th class="r">노무비 단가</th><th>근거</th></tr></thead>
+      <div class="tbl-wrap"><table class="t resp"><thead><tr><th></th><th class="w-name">품명 · 규격</th><th>업체</th><th>공정</th><th>단위</th><th class="r">단가</th><th></th></tr></thead>
       <tbody>${I.items.map((it,i)=>`<tr>
         <td class="c-img"><input type="checkbox" id="rv-${i}-on" data-bind="rev:${i}:on" ${it.on?'checked':''} aria-label="선택" style="width:20px;height:20px"></td>
         <td class="c-name"><input class="f" id="rv-${i}-name" data-bind="rev:${i}:name" value="${esc(it.name)}" style="font-weight:500"><input class="f small" id="rv-${i}-spec" data-bind="rev:${i}:spec" value="${esc(it.spec)}" style="margin-top:3px"></td>
         <td data-l="업체"><input class="f" id="rv-${i}-vendor" data-bind="rev:${i}:vendor" value="${esc(it.vendor||'')}" placeholder="거래처" ></td>
         <td data-l="공정"><select class="f" id="rv-${i}-proc" data-bind="rev:${i}:process" >${PROCS.map(p=>`<option value="${p.k}" ${p.k===it.process?'selected':''}>${p.n}</option>`).join('')}</select></td>
-        <td data-l="단위"><input class="f" id="rv-${i}-unit" data-bind="rev:${i}:unit" value="${esc(it.unit)}" ></td>
+        <td data-l="단위"><input class="f" id="rv-${i}-unit" data-bind="rev:${i}:unit" value="${esc(it.unit)}" placeholder="개·장·박스"></td>
         <td class="r" data-l="단가(원)"><input class="f num" type="number" inputmode="numeric" id="rv-${i}-price" data-bind="rev:${i}:unitPrice" data-num value="${esc(it.unitPrice)}">${it.vatConverted?'<div><span class="badge">VAT 제외 환산</span></div>':''}</td>
-        <td class="r" data-l="로스%"><input class="f num" type="number" inputmode="decimal" id="rv-${i}-loss" data-bind="rev:${i}:loss" data-num value="${esc(it.loss)}"></td>
-        <td class="small muted" data-l="근거" style="max-width:240px">${esc(it.note||'')}</td></tr>`).join('')}</tbody></table></div>
+        <td><button class="btn ghost sm danger" data-act="revDel" data-i="${i}" aria-label="${esc(it.name||'이 줄')} 지우기" title="이 줄 지우기">✕</button></td></tr>`).join('')}</tbody></table></div>
       <div class="panel-b row rev-bar" id="revBar">
         <button class="btn pri" data-act="revSave">선택 항목 자재함에 저장</button>
         ${e?`<button class="btn" data-act="revSaveAdd">저장하고 “${esc(e.title)}” 견적에 추가</button>`:''}
@@ -1371,32 +1370,33 @@ async function ocrText(file,onProgress){
   const {data}=await OCR.recognize(file);
   return data.text||'';
 }
-const UNIT_WORDS=['롤','박스','장','말','통','포','개','m','M','kg','KG','식','대','セ','세트','자','평','매'];
-const COV_HINT={'롤':16.5,'박스':1.5,'장':1.62,'포':5,'통':30,'말':30};
-/* 사진에서 읽은 글자 줄을 자재 항목으로 바꿉니다 */
+/* 사진에서 읽은 글자 줄에서 품명과 단가만 뽑습니다.
+   공정·단위·로스는 짐작하지 않고 비워 둡니다 (짐작이 자꾸 틀려서). */
+const SKIP_LINE = /합계|소계|총계|총액|부가세|공급가|금액계|VAT|인수자|공급자|사업자|등록번호|전화|팩스|주소|성명|담당|거래명세|견적서|일자|페이지|계좌/i;
 function rowsFromText(txt){
   const out=[];
   for(const raw of String(txt).split(/\r?\n/)){
     const line=raw.replace(/\s+/g,' ').trim();
-    if(line.length<3) continue;
-    if(/합계|소계|총액|부가세|공급가|계$|금액계|VAT/i.test(line)) continue;   // 합계 줄은 자재가 아닙니다
-    const nums=[...line.matchAll(/[\d][\d,\.]*/g)].map(m=>({v:num(m[0]),at:m.index}));
-    const priced=nums.filter(n=>n.v>=500);
-    if(!priced.length) continue;
-    const price=Math.round(priced[priced.length-1].v);
-    let name=line.slice(0,priced[priced.length-1].at).replace(/[|:\-–—]+$/,'').replace(/\d[\d,\.]*\s*(원|won)?$/i,'').trim();
+    if(line.length<3 || SKIP_LINE.test(line.replace(/\s/g,''))) continue;   // '소 계'처럼 띄어 쓴 것도 걸러냅니다
+    const nums=[...line.matchAll(/\d[\d,]*(?:\.\d+)?/g)].map(m=>({v:num(m[0]),at:m.index}));
+    const big=nums.filter(n=>n.v>=100);
+    if(!big.length) continue;
+    /* 명세서는 보통 품명 규격 수량 단가 금액 순입니다.
+       끝의 두 숫자가 "단가 × 수량 = 금액"으로 맞아떨어지면 앞의 것이 단가입니다. */
+    let pick=big[big.length-1];
+    if(big.length>=2){
+      const last=big[big.length-1].v, prev=big[big.length-2].v;
+      const q=prev>0 ? last/prev : 0;
+      if(q>=1 && q<=999 && Math.abs(q-Math.round(q))<0.02) pick=big[big.length-2];
+    }
+    const price=Math.round(pick.v);
+    if(price<100) continue;
+    let name=line.slice(0, Math.min(big[0].at, pick.at)).trim();
+    if(name.length<2) name=line.slice(0,pick.at).trim();
+    name=name.replace(/[|:\-–—.,·]+$/,'').trim();
     if(!name || name.length<2) continue;
-    // 단위는 이름 뒤에 떨어져 있는 낱말에서 찾고, 이름에서는 뺍니다
-    const um=name.match(/(?:^|[\s(])(롤|박스|박|장|말|통|포|개|매|세트|식|대|자|병|kg|KG|Kg|g|m|M|EA|ea)\s*$/);
-    const unit=um?um[1]:'';
-    if(um) name=name.slice(0,um.index).trim();
-    name=name.replace(/(d)s*[%*xX]s*(d)/g,'$1×$2');   // 600%600 → 600×600
-    if(!name || name.length<2) continue;
-    const spec=(line.match(/\d{2,4}\s*[x×X*%]\s*\d{2,4}(\s*[x×X*]\s*\d+)?/)||[''])[0].replace('%','×');
-    const cov=1;
-    out.push({on:true,name,spec,process:'etc',unit:unit||'개',unitPrice:price,vendor:'',
-      coverage:1,coverageBasis:'',mode:'area',loss:0,tone:'',
-      note:''});
+    out.push({on:true,name,spec:'',process:'etc',unit:'',unitPrice:price,vendor:'',
+      coverage:0,coverageBasis:'',mode:'qty',loss:0,tone:'',note:''});
   }
   return out;
 }
@@ -1418,7 +1418,7 @@ async function parseSheets(){
     items=[...seen.values()];
     if(!items.length) throw {code:'empty'};
     IMPORT.items=items;
-    IMPORT.memo='사진에서 읽은 값입니다. 공정과 단위는 확인해서 고쳐주세요.';
+    IMPORT.memo='사진에서 품명과 단가만 읽었습니다. 공정과 단위는 직접 골라주세요. 필요 없는 줄은 오른쪽 ✕로 지우면 됩니다.';
     IMPORT.draftAt=Date.now();
     saveImportDraft(true);        // 저장을 누르기 전에 꺼져도 남아 있게
     if(!IMPORT.reread) uploadSheetPhotos();   // 원본 사진은 따로 보관 (다시 읽기면 이미 있습니다)
@@ -3279,6 +3279,11 @@ document.addEventListener('click',async ev=>{
     case 'parse': parseSheets(); break;
     case 'reReadSheet': await reReadSheets([t.dataset.id]); break;
     case 'reReadAll': await reReadSheets([...S.sheets.keys()]); break;
+    case 'revDel': { const i=+t.dataset.i; if(!IMPORT.items?.[i]) break;
+      IMPORT.items.splice(i,1);
+      if(!IMPORT.items.length){ clearImportDraft(); toast('읽어낸 목록을 모두 지웠습니다'); }
+      else saveImportDraft(true);
+      render(); break; }
     case 'revSave': saveReviewed(false); break;
     case 'revSaveAdd': saveReviewed(true); break;
     case 'revCancel': {
