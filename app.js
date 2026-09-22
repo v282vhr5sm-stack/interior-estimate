@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '4.8.0';
+const APP_VERSION = '4.9.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -445,21 +445,23 @@ function calcProc(p, margin){
   const area=num(p.area);
   const lines=(p.lines||[]).map(calcLine);
   const mat=lines.reduce((s,x)=>s+x.mat,0);
+  const matVat=Math.round(mat*0.1);                       // 자재에만 부가세
   const labor=lines.reduce((s,x)=>s+x.labor,0) + area*num(p.laborPerM2) + num(p.laborLump);
-  const cost=mat+labor;
+  const cost=mat+matVat+labor;
   const price=Math.round(cost*(1+margin/100)/1000)*1000;
-  return {area,lines,mat,labor,cost,price,perM2: area>0?cost/area:0};
+  return {area,lines,mat,matVat,labor,cost,price,perM2: area>0?cost/area:0};
 }
 function calcEst(e){
   const margin=num(e.margin);
   const procs=(e.processes||[]).map(p=>calcProc(p,margin));
-  const mat=procs.reduce((s,x)=>s+x.mat,0), labor=procs.reduce((s,x)=>s+x.labor,0), cost=mat+labor;
+  const mat=procs.reduce((s,x)=>s+x.mat,0);
+  const matVat=procs.reduce((s,x)=>s+x.matVat,0);
+  const labor=procs.reduce((s,x)=>s+x.labor,0);
+  const cost=mat+matVat+labor;
   const gross=procs.reduce((s,x)=>s+x.price,0);
-  const supply=Math.max(0,gross-num(e.discount));
-  const vat=e.vat!==false?Math.round(supply*0.1):0;
-  return {procs,mat,labor,cost,gross,supply,vat,total:supply+vat,profit:supply-cost,margin};
+  const total=Math.max(0,gross-num(e.discount));
+  return {procs,mat,matVat,labor,cost,gross,supply:total,vat:0,total,profit:total-cost,margin};
 }
-
 /* ---------- model helpers ---------- */
 function newEstimate(){
   const n=S.estimates.size+1;
@@ -795,13 +797,12 @@ function renderEst(){
       <div class="panel-h"><h3>합계</h3><span class="spacer"></span><button class="btn sm" data-act="view" data-v="doc">고객용 보기 →</button></div>
       <div class="panel-b">
         <div class="sum-rows">
-          <div class="sum-row"><span class="muted">자재 원가</span><span class="v" id="o-mat"></span></div>
-          <div class="sum-row"><span class="muted">인건비</span><span class="v" id="o-labor"></span></div>
+          <div class="sum-row"><span class="muted">재료비</span><span class="v" id="o-mat"></span></div>
+          <div class="sum-row"><span class="muted">재료비 부가세 10%</span><span class="v" id="o-matvat"></span></div>
+          <div class="sum-row"><span class="muted">노무비</span><span class="v" id="o-labor"></span></div>
           <div class="sum-row sep"><b>총 원가</b><b class="v" id="o-cost"></b></div>
           <div class="sum-row"><span class="muted">이윤·관리비 %</span><input class="f num" type="number" inputmode="decimal" id="s-margin" data-bind="est:margin" data-num value="${esc(e.margin)}"></div>
           <div class="sum-row"><span class="muted">할인 (원)</span><input class="f num" type="number" inputmode="numeric" id="s-disc" data-bind="est:discount" data-num value="${esc(e.discount)}" step="10000"></div>
-          <div class="sum-row sep"><span>공급가액</span><span class="v" id="o-supply"></span></div>
-          <div class="sum-row"><label style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" id="s-vat" data-bind="est:vat" ${e.vat!==false?'checked':''}> 부가세 10%</label><span class="v" id="o-vat"></span></div>
           <div class="sum-row total sep"><span>고객 견적가</span><span class="v" id="o-total"></span></div>
           <div class="sum-row"><span class="muted">예상 이익</span><span class="v" id="o-profit"></span></div>
         </div>
@@ -858,6 +859,7 @@ function renderProc(e,p,pi){ // e: 견적
     </table></div>
     <div class="labor">
       <span>재료비 <b id="o-p${pi}-mat"></b></span>
+      <span>재료비 부가세 <b id="o-p${pi}-matvat"></b></span>
       <span>노무비 <b id="o-p${pi}-labor"></b></span>
       <span class="spacer"></span>
       <span>공정 합계 <b id="o-p${pi}-sum"></b></span>
@@ -913,13 +915,13 @@ function setText(id,t){ const el=document.getElementById(id); if(el) el.textCont
 function recalc(){
   const e=cur(); if(!e||VIEW!=='est') return;
   const c=calcEst(e);
-  setText('o-mat',won(c.mat)+'원'); setText('o-labor',won(c.labor)+'원'); setText('o-cost',won(c.cost)+'원');
-  setText('o-supply',won(c.supply)+'원'); setText('o-vat',won(c.vat)+'원'); setText('o-total',won(c.total)+'원');
+  setText('o-mat',won(c.mat)+'원'); setText('o-matvat',won(c.matVat)+'원');
+  setText('o-labor',won(c.labor)+'원'); setText('o-cost',won(c.cost)+'원'); setText('o-total',won(c.total)+'원');
   setText('o-profit',won(c.profit)+'원 ('+(c.supply>0?(c.profit/c.supply*100).toFixed(1):'0')+'%)');
   e.processes.forEach((p,pi)=>{ const pc=c.procs[pi];
     setText(`o-p${pi}-cost`,won(pc.cost)+'원');
     setText(`o-p${pi}-m2`, pc.area>0?`㎡당 ${won(pc.perM2)}원`:'면적 미입력'); setText(`o-p${pi}-labor`,won(pc.labor)+'원');
-    setText(`o-p${pi}-mat`, won(pc.mat)+'원'); setText(`o-p${pi}-sum`, won(pc.cost)+'원');
+    setText(`o-p${pi}-mat`, won(pc.mat)+'원'); setText(`o-p${pi}-matvat`, won(pc.matVat)+'원'); setText(`o-p${pi}-sum`, won(pc.cost)+'원');
     (p.lines||[]).forEach((l,li)=>{ const x=pc.lines[li], id=`p${pi}l${li}`;
       setText(`o-${id}-mat`, won(x.mat)); setText(`o-${id}-labor`, won(x.labor)); setText(`o-${id}-total`, won(x.total)); });
   });
@@ -1239,7 +1241,7 @@ function docHTML(e){
       </div>
     </div>
     <div class="d-total"><span class="lbl">합계금액</span><span class="words">금 ${krWords(c.total)}원정</span><span class="fig">₩ ${won(c.total)}</span></div>
-    <div class="d-vatnote">${e.vat!==false?'부가세 포함':'부가세 별도'}</div>
+    <div class="d-vatnote">자재비 부가세 포함 금액</div>
 
     <h2 class="d-sec">공정별 금액</h2>
     <table><thead><tr><th style="width:36px" class="c">No</th><th>공정</th><th>주요 자재</th><th class="r" style="width:90px">시공면적</th><th class="r" >금액(원)</th></tr></thead>
@@ -1247,17 +1249,17 @@ function docHTML(e){
       <tfoot>
         <tr><td colspan="4" class="r">소계</td><td class="r">${won(c.gross)}</td></tr>
         ${num(e.discount)>0?`<tr><td colspan="4" class="r">할인</td><td class="r">−${won(e.discount)}</td></tr>`:''}
-        <tr><td colspan="4" class="r">공급가액</td><td class="r">${won(c.supply)}</td></tr>
-        ${e.vat!==false?`<tr><td colspan="4" class="r">부가세 (10%)</td><td class="r">${won(c.vat)}</td></tr>`:''}
         <tr class="g"><td colspan="4" class="r">합계</td><td class="r">${won(c.total)}</td></tr>
       </tfoot></table>
 
-    <h2 class="d-sec">공정별 자재 및 시공 내역</h2>
+    <h2 class="d-sec">공정별 내역</h2>
     ${procs.map(({p,pc,P})=>`<div class="d-proc">
-      <div class="d-proc-h"><b>${P.n}</b><span>${pc.area>0?r1(pc.area)+'㎡ ('+Math.round(pc.area/PY)+'평) · ':''}${won(pc.price)}원</span></div>
-      ${e.showImages!==false && p.lines?.length ? `<div class="d-mats">${p.lines.map((l,li)=>{ const x=pc.lines[li]; return `<div class="d-mat"><img src="${lineImg(l,p.k)}" alt=""><div class="t"><b>${esc(l.name)}</b><span>${esc(l.spec)}</span>${x.qty>0?`<br><span>${r1(x.qty)} ${esc(l.unit)}</span>`:''}${e.showLinePrice?`<br><span>${won(x.total*k)}원</span>`:''}</div></div>`; }).join('')}</div>`
-      : p.lines?.length ? `<table><thead><tr><th>자재</th><th>규격</th><th class="r">수량</th>${e.showLinePrice?'<th class="r">금액</th>':''}</tr></thead><tbody>${p.lines.map((l,li)=>{const x=pc.lines[li]; return `<tr><td>${esc(l.name)}</td><td>${esc(l.spec)}</td><td class="r">${r1(x.qty)} ${esc(l.unit)}</td>${e.showLinePrice?`<td class="r">${won(x.total*k)}</td>`:''}</tr>`;}).join('')}</tbody></table>`:''}
-      ${pc.labor>0?`<div class="d-list">시공비 포함${e.showLinePrice?` · ${won(pc.labor*k)}원`:''}</div>`:''}
+      <div class="d-proc-h"><b>${P.n}</b><span>${won(pc.price)}원</span></div>
+      ${(p.lines||[]).length?`<table><thead><tr><th>품명</th><th style="width:70px">단위</th><th class="r" style="width:70px">수량</th><th style="width:34%">비고</th></tr></thead>
+        <tbody>${p.lines.map((l,li)=>{ const x=pc.lines[li]; return `<tr><td>${esc(l.name)}${l.spec?' <span style="color:var(--d-mut)">'+esc(l.spec)+'</span>':''}</td>
+          <td>${esc(l.unit||'')}</td><td class="r">${r1(x.qty)}</td><td>${esc(l.memo||'')}</td></tr>`; }).join('')}</tbody></table>`:''}
+      ${e.showImages!==false && (p.lines||[]).some(l=>(l.mid&&S.materials.get(l.mid)?.image))
+        ? `<div class="d-mats" style="margin-top:8px">${p.lines.filter(l=>l.mid&&S.materials.get(l.mid)?.image).map(l=>`<div class="d-mat"><img src="${lineImg(l,p.k)}" alt=""><div class="t"><b>${esc(l.name)}</b><span>${esc(l.spec||'')}</span></div></div>`).join('')}</div>`:''}
     </div>`).join('')}
 
     ${e.notes?`<h2 class="d-sec">비고 및 계약 조건</h2><div class="d-notes">${esc(e.notes)}</div>`:''}
@@ -1283,7 +1285,6 @@ function renderDocView(){
     <section class="panel no-print"><div class="panel-b">
       <div class="doc-tools">
         <label><input type="checkbox" id="d-img" data-bind="est:showImages" ${e.showImages!==false?'checked':''}> 자재 사진 표시</label>
-        <label><input type="checkbox" id="d-lp" data-bind="est:showLinePrice" ${e.showLinePrice?'checked':''}> 자재·시공비 금액 세부 표시</label>
         <span class="spacer"></span>
         <button class="btn" data-act="print">인쇄 / PDF</button>
         <button class="btn pri" data-act="download">${isTouch()?'보내기':'파일로 저장'}</button>
@@ -1295,7 +1296,7 @@ function renderDocView(){
           <input class="f" id="d-clientsign" data-bind="est:clientSign" value="${esc(e.clientSign||'')}" placeholder="${esc(e.client.name||'고객명')}"></label>
       </div>
       <label class="fl">비고 및 계약 조건<textarea class="f" id="d-notes" rows="3" data-bind="est:notes">${esc(e.notes)}</textarea></label>
-      <p class="small muted" style="margin:8px 0 0">고객용에는 원가·마진이 나오지 않습니다. 공정 금액은 원가에 이윤 ${esc(e.margin)}%를 더해 천 원 단위로 반올림한 값입니다.</p>
+      <p class="small muted" style="margin:8px 0 0">고객용에는 단가·원가·마진이 나오지 않습니다. 공정 금액은 재료비(부가세 10% 포함)와 노무비에 이윤 ${esc(e.margin)}%를 더해 천 원 단위로 반올림한 값입니다.</p>
     </div></section>
     <div class="doc-stage" id="docStage">${docHTML(e)}</div>
   </div>`;
