@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.8.4';
+const APP_VERSION = '5.9.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -887,6 +887,8 @@ function renderEst(){
         <label class="fl">견적일<input class="f" type="date" id="c-date" data-bind="est:date" value="${esc(e.date)}"></label>
         <label class="fl">유효기간(일)<input class="f num" type="number" inputmode="numeric" id="c-valid" data-bind="est:validDays" data-num value="${esc(e.validDays)}"></label>
       </div></section>
+      ${e.processes.length>1?`<div class="row no-print" style="justify-content:flex-end;margin:-4px 0 -4px">
+        <button class="btn ghost sm" data-act="toggleAllProcs">${e.processes.every(p=>isProcClosed(e,p))?'모두 펴기':'모두 접기'}</button></div>`:''}
       ${e.processes.map((p,pi)=>renderProc(e,p,pi)).join('')}
       <div class="add-proc">
         <b>공정 추가</b>
@@ -932,6 +934,15 @@ function matOptions(mats, others, groupByVendor){
   return (mats.length?`<optgroup label="이 공정">${mats.map(matOption).join('')}</optgroup>`:'')
        + (others.length?`<optgroup label="다른 공정">${others.map(matOption).join('')}</optgroup>`:'');
 }
+/* 공정별 접기 — 어떤 공정을 접어 뒀는지 이 기기에 기억합니다 */
+const PROC_CLOSED = new Set((()=>{ try{ return JSON.parse(ls.get('procClosed','[]'))||[]; }catch{ return []; } })());
+const procKey = (e,p) => `${e.id}:${p.k}`;
+const isProcClosed = (e,p) => PROC_CLOSED.has(procKey(e,p));
+function setProcClosed(e,p,close){
+  const k=procKey(e,p);
+  close ? PROC_CLOSED.add(k) : PROC_CLOSED.delete(k);
+  ls.set('procClosed', JSON.stringify([...PROC_CLOSED]));
+}
 function renderProc(e,p,pi){ // e: 견적
   const P=PMAP[p.k]||PMAP.etc;
   const vf=LINE_VENDOR[pi]||'';
@@ -939,16 +950,19 @@ function renderProc(e,p,pi){ // e: 견적
   const byName=(a,b)=>String(a.name||'').localeCompare(String(b.name||''),'ko',{numeric:true});
   const mats=pool.filter(m=>m.process===p.k).sort(byName);
   const others=pool.filter(m=>m.process!==p.k).sort(byName);
-  return `<section class="proc" data-pi="${pi}">
+  const closed=isProcClosed(e,p);
+  return `<section class="proc${closed?' closed':''}" data-pi="${pi}">
     <div class="proc-h">
+      <button class="btn ghost sm proc-tog" data-act="toggleProc" data-pi="${pi}" aria-expanded="${!closed}"
+        title="${closed?'펴기':'접기'}" aria-label="${P.n} ${closed?'펴기':'접기'}">${closed?'+':'−'}</button>
       <img class="sw" src="${procImg(p.k)}" alt="">
-      <div><div class="proc-name">${P.n}</div>
+      <div><div class="proc-name" data-act="toggleProc" data-pi="${pi}" title="눌러서 접거나 펼 수 있습니다">${P.n}</div>
         <div class="proc-area small muted">시공면적
           <span class="unitf"><input class="f num" inputmode="decimal" id="p${pi}-area" data-area="${pi}" value="${esc(p.areaText ?? (p.area||''))}" placeholder="84 또는 26평">
             <i id="o-p${pi}-unit">${areaHint(p.areaText ?? p.area)}</i></span>
         </div></div>
       ${p.k==='temp'?`<button class="btn ghost sm" data-act="saveTempTpl" data-pi="${pi}" title="지금 내용을 새 견적의 기본 가설공사로 저장">기본값으로 저장</button>`:''}
-      <div class="proc-sum"><div class="small muted">원가 소계 · <span id="o-p${pi}-m2"></span></div><b id="o-p${pi}-cost"></b></div>
+      <div class="proc-sum"><div class="small muted">${closed?`${(p.lines||[]).length}줄 · `:''}원가 소계 · <span id="o-p${pi}-m2"></span></div><b id="o-p${pi}-cost"></b></div>
       <div class="row" style="gap:2px;flex-wrap:nowrap">
         <button class="btn ghost sm" data-act="moveProc" data-pi="${pi}" data-d="-1" title="위로" ${pi===0?'disabled':''}>▲</button>
         <button class="btn ghost sm" data-act="moveProc" data-pi="${pi}" data-d="1" title="아래로" ${pi===e.processes.length-1?'disabled':''}>▼</button>
@@ -3093,6 +3107,11 @@ document.addEventListener('click',async ev=>{
       PAYKEYS.forEach(({k})=>{ e.contract.pay[k]={...(e.contract.pay[k]||{}), amount:auto[k]}; });
       saveEst(e); render(); toast('공사대금을 다시 나눴습니다'); break; }
     case 'toggleSum': SUM_OPEN=!SUM_OPEN; ls.set('sumOpen',SUM_OPEN?null:'0'); render(); break;
+    case 'toggleProc': { const e=cur(), p=e?.processes[+t.dataset.pi]; if(!p) break;
+      setProcClosed(e,p,!isProcClosed(e,p)); render(); break; }
+    case 'toggleAllProcs': { const e=cur(); if(!e) break;
+      const close=!e.processes.every(p=>isProcClosed(e,p));
+      e.processes.forEach(p=>setProcClosed(e,p,close)); render(); break; }
     case 'print': if(VIEW==='doc') prepPrint(); flushWrites(); window.print(); break;
     case 'printPreview': showPrintPreview(); break;
     case 'download': downloadDoc(); break;

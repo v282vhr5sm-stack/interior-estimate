@@ -410,3 +410,10 @@ table.xls td.xls-f:focus{background:#fffbe6;font-family:ui-monospace,Menlo,Conso
   background-image:repeating-linear-gradient(to bottom,transparent 0,transparent 1045px,#c8ccc9 1045px,#c8ccc9 1047px)}
 .a4-sheet.one{height:1047px;min-height:0;background-image:none}
 .a4-sheet #doc{box-shadow:none}
+
+/* 공정 접기 */
+.proc.closed .proc-f,.proc.closed .tbl-wrap,.proc.closed .labor{display:none}
+.proc.closed .proc-h{border-bottom:0}
+.proc-tog{min-width:30px;padding:5px 6px;font-size:15px;font-weight:700;line-height:1;flex:none}
+.proc-name[data-act]{cursor:pointer}
+.proc-name[data-act]:hover{text-decoration:underline}
