@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.12.2';
+const APP_VERSION = '5.13.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -1037,30 +1037,66 @@ function setProcClosed(e,p,close){
 /* ── 자재 계산하기 ──────────────────────────────────
    자재를 고르고 면적을 넣으면 몇 개를 사야 하는지와 금액을 냅니다. */
 let CALC_OPEN = ls.get('calcOpen')==='1';
-const CALC = { mid:'', area:'', loss:'' };
+const CALC = { mid:'', area:'', loss:'', size:'' };
+/* "900x1800"(mm) · "0.9*1.8"(m) · "1.62"(㎡) 무엇으로 적어도 1개가 덮는 면적을 냅니다 */
+function parseSize(s){
+  const txt=String(s??'').trim(); if(!txt) return {m2:0,how:''};
+  const d=txt.match(/(\d+(?:\.\d+)?)\s*(?:mm|cm|m)?\s*[x×*X]\s*(\d+(?:\.\d+)?)/i);   // 90cm x 180cm 처럼 적어도 읽습니다
+  if(d){
+    let a=parseFloat(d[1]), b=parseFloat(d[2]);
+    const cm=/cm/i.test(txt);
+    const mm=!cm && (/mm/i.test(txt) || a>=50 || b>=50);   // 큰 숫자는 mm로 봅니다
+    if(cm){ a/=100; b/=100; } else if(mm){ a/=1000; b/=1000; }
+    return {m2:Math.round(a*b*10000)/10000, how:cm?'cm':(mm?'mm':'m')};
+  }
+  const v=parseFloat(txt.replace(/,/g,'').match(/\d+(?:\.\d+)?/)?.[0]||'');
+  return isFinite(v)&&v>0 ? {m2:v, how:'㎡'} : {m2:0,how:''};
+}
+/* 자재에 적힌 규격에서 크기를 찾아봅니다 (900×1800 같은 표기) */
+function sizeFromMat(m){
+  if(!m) return '';
+  if(num(m.coverage)>0 && m.mode!=='qty') return String(num(m.coverage));
+  const hit=[m.spec,m.name].filter(Boolean).join(' ').match(/\d+(?:\.\d+)?\s*[x×*X]\s*\d+(?:\.\d+)?/);
+  return hit ? hit[0] : '';
+}
+/* 면적 단위로 파는 자재는 크기를 물을 필요가 없습니다 */
+const isAreaUnit = m => /^(㎡|m2|m²|평)$/i.test((m?.unit||'').trim());
+const showM2 = v => (Math.round(v*10000)/10000).toLocaleString('ko-KR');
 function calcMat(){
   const m=S.materials.get(CALC.mid); if(!m) return null;
-  const a=parseArea(CALC.area); if(!(a.m2>0)) return {m,a,need:0};
+  const areaUnit=isAreaUnit(m);
+  const sz=parseSize(CALC.size);
+  const a=parseArea(CALC.area);
+  if(!(a.m2>0)) return {m,a,need:0,areaUnit,sz};
   const loss = CALC.loss===''? num(m.loss) : num(CALC.loss);
   const need = a.m2*(1+loss/100);                       // 로스를 더한 필요 면적
-  const cov = num(m.coverage);
   const unit = m.unit||'㎡';
-  let qty, whole;
-  if(m.mode!=='qty' && cov>0){ qty=Math.ceil(need/cov); whole=true; }   // 박스·롤처럼 낱개로 사는 자재
-  else if(/평/.test(unit)){ qty=Math.round(need/PY*10)/10; whole=false; }
-  else { qty=Math.round(need*10)/10; whole=false; }
+  let qty, whole, cov=0;
+  if(areaUnit){                                         // ㎡·평으로 파는 자재
+    qty = /평/.test(unit) ? Math.round(need/PY*10)/10 : Math.round(need*10)/10;
+    whole=false;
+  } else {
+    cov = sz.m2>0 ? sz.m2 : num(m.coverage);            // 적어 넣은 크기가 우선입니다
+    if(!(cov>0)) return {m,a,need,loss,areaUnit,sz,unit,noSize:true};
+    qty=Math.ceil(need/cov); whole=true;                // 장·박스·롤은 낱개 올림
+  }
   const mat=qty*num(m.unitPrice), labor=qty*num(m.laborPrice||0);
-  return {m,a,loss,need,cov,unit,qty,whole,mat,labor,total:mat+labor};
+  return {m,a,loss,need,cov,unit,qty,whole,mat,labor,total:mat+labor,areaUnit,sz};
 }
 function calcOutHtml(){
   const c=calcMat();
   if(!c) return '<p class="muted small" style="margin:0">자재를 먼저 고르세요.</p>';
   if(!c.need) return '<p class="muted small" style="margin:0">면적을 넣으면 필요한 수량이 나옵니다.</p>';
+  if(c.noSize) return `<p class="small calc-warn" style="margin:0">이 자재는 ${esc(c.unit||'개')} 하나가 몇 ㎡인지 몰라 수량을 낼 수 없습니다.
+    위 <b>자재 크기</b> 칸에 900×1800 처럼 적어주세요.</p>`;
   const q = c.whole ? won(c.qty) : (Math.round(c.qty*10)/10).toLocaleString('ko-KR');
+  const saveSize = !c.areaUnit && c.sz.m2>0 && Math.abs(c.sz.m2-num(c.m.coverage))>0.0001;
   return `<div class="calc-out">
     <div class="calc-need">필요량 <b>${(Math.round(c.need*10)/10).toLocaleString('ko-KR')}㎡</b>
       <span class="muted">(로스 ${c.loss}% 포함)</span></div>
     <div class="calc-qty"><b>${q}${esc(c.unit)}</b>${c.whole?'<span class="muted small"> · 낱개 올림</span>':''}</div>
+    ${c.whole?`<div class="small muted" style="margin:-4px 0 8px">${esc(c.unit)} 하나 ${showM2(c.cov)}㎡ 기준</div>`:''}
+    ${saveSize?`<button class="btn ghost sm" data-act="calcSaveSize" style="margin-bottom:8px">이 크기를 자재에 저장</button>`:''}
     <dl class="calc-kv">
       <dt>재료비</dt><dd>${won(c.mat)}원</dd>
       ${c.labor?`<dt>노무비</dt><dd>${won(c.labor)}원</dd><dt>합계</dt><dd><b>${won(c.total)}원</b></dd>`:''}
@@ -1085,6 +1121,10 @@ function renderCalc(e){
       ${m?`<p class="muted small" style="margin:6px 0 0">${num(m.coverage)>0&&m.mode!=='qty'
           ? `${esc(m.unit||'개')} 하나로 ${num(m.coverage)}㎡` : '면적이 아니라 수량으로 파는 자재입니다'}
         · 단가 ${won(m.unitPrice)}원${num(m.laborPrice)?` · 노무비 ${won(m.laborPrice)}원`:''}</p>`:''}
+      ${m&&!isAreaUnit(m)?`<label class="fl" style="margin-top:8px">자재 크기 <span class="muted small">${
+          num(m.coverage)>0 ? '자재에 적힌 값' : (sizeFromMat(m)?'규격에서 찾음 · 확인하세요':'적어주세요 (예: 900×1800)')}</span>
+        <input class="f" id="calc-size" data-calcfield="size" value="${esc(CALC.size)}" placeholder="900×1800 또는 1.62">
+        <span class="muted small" id="calc-size-hint">${parseSize(CALC.size).m2>0?`${esc(m.unit||'개')} 하나 ${showM2(parseSize(CALC.size).m2)}㎡`:''}</span></label>`:''}
       <div class="client-grid" style="margin-top:8px">
         <label class="fl">면적 <span class="muted small">${a.m2>0?`= ${a.typed==='평'?r1(a.m2)+'㎡':a.py+'평'}`:'㎡ 또는 평'}</span>
           <input class="f" id="calc-area" data-calcfield="area" value="${esc(CALC.area)}" placeholder="${esc(estAreaM2(e)?r1(estAreaM2(e))+'':'84 또는 26평')}"></label>
@@ -3054,7 +3094,12 @@ document.addEventListener('input',ev=>{
     }
   }
   if(t.dataset?.calcfield){                 // 자재 계산기: 적는 대로 결과만 고쳐 그립니다
-    CALC[t.dataset.calcfield]=t.value; refreshCalc(); return;
+    CALC[t.dataset.calcfield]=t.value;
+    if(t.dataset.calcfield==='size'){
+      const m=S.materials.get(CALC.mid), sz=parseSize(CALC.size), h=document.getElementById('calc-size-hint');
+      if(h) h.textContent = sz.m2>0 ? `${m?.unit||'개'} 하나 ${showM2(sz.m2)}㎡` : '';
+    }
+    refreshCalc(); return;
   }
   if(t.dataset?.size){                      // 면적: 숫자 칸 + 단위 선택
     const e=cur(); if(!e) return;
@@ -3168,7 +3213,9 @@ function handleSelectChange(t){
 }
 document.addEventListener('change',ev=>{
   const t=ev.target, a=t.dataset?.actChange;
-  if(t.dataset?.calcmat!==undefined){ CALC.mid=t.value; CALC.loss=''; render(); return; }
+  if(t.dataset?.calcmat!==undefined){ CALC.mid=t.value; CALC.loss='';
+    CALC.size=sizeFromMat(S.materials.get(t.value));    // 자재에 적힌 크기가 있으면 그대로 가져옵니다
+    render(); return; }
   if(t.dataset?.revunit!==undefined){          // 사진에서 읽은 줄의 단위 고르기
     const i=+t.dataset.revunit, it=IMPORT.items?.[i]; if(!it) return;
     if(t.value==='__custom'){ CUSTOM_UNIT_REV.add(i); it.unit=''; }
@@ -3359,6 +3406,13 @@ document.addEventListener('click',async ev=>{
     case 'toggleCalc': CALC_OPEN=!CALC_OPEN; ls.set('calcOpen',CALC_OPEN?'1':null); render(); break;
     case 'calcUseSite': { const e=cur(); const m2=estAreaM2(e); if(!m2){ toast('현장 면적이 아직 없습니다'); break; }
       CALC.area=String(r1(m2)); render(); break; }
+    case 'calcSaveSize': { const m=S.materials.get(CALC.mid), sz=parseSize(CALC.size);
+      if(!m||!(sz.m2>0)) break;
+      if(!await askConfirm({title:`“${m.name||'이 자재'}”의 크기를 ${showM2(sz.m2)}㎡로 저장할까요?`,
+        lines:[`${m.unit||'개'} 하나가 덮는 면적으로 자재 단가표에 적어 둡니다`,'다음부터는 이 자재를 고르면 바로 계산됩니다','이미 만든 견적의 금액은 그대로입니다'],
+        ok:'네, 저장합니다', cancel:'아니요', danger:false})) break;
+      m.coverage=sz.m2; m.mode='area'; m.coverageBasis=''; m.updated=Date.now(); saveMat(m);
+      render(); toast('자재에 크기를 적어 두었습니다'); break; }
     case 'calcToLine': { const e=cur(); const c=calcMat();
       if(!e||!c||!c.qty){ toast('자재와 면적을 먼저 넣어주세요'); break; }
       const p=ensureProc(e,c.m.process);
