@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.15.0';
+const APP_VERSION = '5.15.1';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -2151,25 +2151,81 @@ function openMarkup(fileId){
         <input type="range" min="2" max="18" value="5" data-mk="size" style="width:90px"></label>
     </div>
     <div class="mk-stage"><canvas id="mkCanvas"></canvas></div>
-    <p class="muted small" style="margin:0">손가락이나 마우스로 그으세요. 글자는 누른 자리에 적습니다.</p>
+    <p class="muted small mk-note" style="margin:0">사진을 불러오는 중입니다…</p>
   </div>`;
   document.body.appendChild(box);
-  MK={f,box,tool:'pen',color:MK_COLORS[0],size:5,shapes:[],img:null,cv:null,ctx:null,drawing:null};
+  MK={f,box,tool:'pen',color:MK_COLORS[0],size:5,shapes:[],img:null,cv:null,ctx:null,drawing:null,blobUrl:''};
   const cv=box.querySelector('#mkCanvas'); MK.cv=cv; MK.ctx=cv.getContext('2d');
-  const img=new Image(); img.crossOrigin='anonymous';
-  img.onload=()=>{ MK.img=img; cv.width=img.naturalWidth; cv.height=img.naturalHeight; fitMarkup(); drawMarkup(); };
-  img.onerror=()=>{ toast('사진을 열지 못했습니다'); closeMarkup(); };
-  img.src=f.url;
+  const note=box.querySelector('.mk-note');
   box.addEventListener('click',onMarkupClick);
+  /* 아이폰·아이패드는 손가락으로도 그려집니다 */
   cv.addEventListener('pointerdown',mkDown);
   cv.addEventListener('pointermove',mkMove);
   cv.addEventListener('pointerup',mkUp);
   cv.addEventListener('pointercancel',mkUp);
+  cv.addEventListener('touchstart',e=>e.preventDefault(),{passive:false});
+  cv.addEventListener('touchmove',e=>e.preventDefault(),{passive:false});
   addEventListener('resize',fitMarkup);
+  addEventListener('orientationchange',fitMarkup);
+  loadMarkupImage(f,note);
+}
+/* 사진을 받아서 화면에 올립니다.
+   주소로 바로 올리면 기기에 따라 저장이 막히므로 파일로 받아서 씁니다.
+   아이폰은 큰 사진에서 캔버스가 비어 보이므로 긴 변을 2200까지 줄입니다. */
+const MK_MAX = 2200;
+async function loadMarkupImage(f,note){
+  const show=t=>{ if(note) note.textContent=t; };
+  const src=await (async()=>{
+    try{
+      const r=await fetch(f.url,{mode:'cors'});
+      if(!r.ok) throw new Error(r.status);
+      const b=await r.blob();
+      MK.blobUrl=URL.createObjectURL(b);
+      return MK.blobUrl;
+    }catch(e){ return f.url; }          // 못 받아오면 주소로라도 띄웁니다
+  })();
+  if(!MK) return;
+  const img=new Image();
+  if(src===f.url) img.crossOrigin='anonymous';
+  img.onload=()=>{
+    if(!MK) return;
+    const k=Math.min(1, MK_MAX/Math.max(img.naturalWidth,img.naturalHeight));
+    const cv=MK.cv;
+    cv.width=Math.round(img.naturalWidth*k); cv.height=Math.round(img.naturalHeight*k);
+    MK.img=img; fitMarkup(); drawMarkup();
+    show('손가락이나 마우스로 그으세요. 글자는 누른 자리에 적습니다.');
+  };
+  img.onerror=()=>{ show('사진을 열지 못했습니다. 인터넷 연결을 확인하고 다시 눌러주세요.'); };
+  img.src=src;
+}
+/* 글자 입력 — 홈 화면에 담은 앱에서는 prompt가 열리지 않아 직접 만듭니다 */
+function mkAskText(){
+  return new Promise(res=>{
+    const b=document.createElement('div'); b.className='modal mk-ask';
+    b.innerHTML=`<div class="modal-b" style="width:min(420px,94vw);display:flex;flex-direction:column;gap:10px">
+      <b>사진에 적을 글자</b>
+      <input class="f" id="mkText" placeholder="예: 여기 보강 필요" autocomplete="off">
+      <div class="row" style="justify-content:flex-end;gap:6px">
+        <button class="btn" data-t="">취소</button>
+        <button class="btn pri" data-t="ok">넣기</button></div></div>`;
+    const done=v=>{ b.remove(); removeEventListener('keydown',key); res(v); };
+    const key=ev=>{ if(ev.key==='Escape'){ ev.preventDefault(); done(''); } };
+    b.addEventListener('click',ev=>{
+      const btn=ev.target.closest('[data-t]');
+      if(btn) return done(btn.dataset.t ? b.querySelector('#mkText').value.trim() : '');
+      if(ev.target===b) done('');
+    });
+    b.addEventListener('keydown',ev=>{ if(ev.key==='Enter'){ ev.preventDefault(); done(b.querySelector('#mkText').value.trim()); } });
+    addEventListener('keydown',key);
+    document.body.appendChild(b);
+    setTimeout(()=>b.querySelector('#mkText')?.focus(),50);
+  });
 }
 function closeMarkup(){
   if(!MK) return;
   removeEventListener('resize',fitMarkup);
+  removeEventListener('orientationchange',fitMarkup);
+  if(MK.blobUrl) URL.revokeObjectURL(MK.blobUrl);
   MK.box.remove(); MK=null;
 }
 function fitMarkup(){
@@ -2185,13 +2241,13 @@ function mkPos(ev){
   return { x:(ev.clientX-r.left)/r.width*MK.cv.width, y:(ev.clientY-r.top)/r.height*MK.cv.height };
 }
 const mkScale = () => Math.max(1, MK.cv.width/900);      // 큰 사진에서도 선이 보이게
-function mkDown(ev){
+async function mkDown(ev){
   if(!MK?.img) return;
   ev.preventDefault();
   const pt=mkPos(ev);
   if(MK.tool==='text'){
-    const s=prompt('사진에 적을 글자');
-    if(s && s.trim()){ MK.shapes.push({t:'text',x:pt.x,y:pt.y,s:s.trim(),c:MK.color,w:MK.size}); drawMarkup(); }
+    const s=await mkAskText();
+    if(s && MK){ MK.shapes.push({t:'text',x:pt.x,y:pt.y,s,c:MK.color,w:MK.size}); drawMarkup(); }
     return;
   }
   MK.cv.setPointerCapture?.(ev.pointerId);

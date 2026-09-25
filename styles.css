@@ -459,12 +459,21 @@ table.t tr.is-new > td:first-child{box-shadow:inset 3px 0 0 var(--accent,#2f6f4f
 .folder-memo{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 /* 사진에 표시하기 */
-.modal.mk .mk-b{width:min(1100px,96vw);height:92vh;display:flex;flex-direction:column;gap:10px}
-.mk-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.modal.mk .mk-b{width:min(1100px,96vw);height:92vh;height:92dvh;max-height:92dvh;display:flex;flex-direction:column;gap:8px;padding:12px}
+.mk-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.mk-top{gap:6px;flex-wrap:wrap}
+.mk-top b{min-width:100%}
+@media (min-width:560px){.mk-top b{min-width:0}}
+@media (max-width:560px){
+  .modal.mk .mk-b{width:100vw;height:100dvh;max-height:100dvh;border-radius:0;padding:10px}
+  .mk-tools .chip{padding:6px 9px;font-size:13px}
+  .mk-c{width:30px;height:30px}
+}
+.modal.mk-ask{z-index:90}
 .mk-colors{display:flex;gap:6px}
 .mk-c{width:26px;height:26px;border-radius:50%;border:2px solid var(--line);cursor:pointer;padding:0}
 .mk-c[aria-pressed="true"]{outline:2px solid var(--accent);outline-offset:2px}
-.mk-stage{flex:1;min-height:0;display:grid;place-items:center;background:#1c211e;border-radius:8px;overflow:hidden}
+.mk-stage{flex:1 1 auto;min-height:180px;display:grid;place-items:center;background:#1c211e;border-radius:8px;overflow:hidden}
 .mk-stage canvas{touch-action:none;cursor:crosshair;max-width:100%;max-height:100%;display:block}
 .mk-badge{position:absolute;left:8px;top:8px;background:#e11d48;color:#fff;font-size:11px;font-weight:700;
   border-radius:5px;padding:2px 7px;pointer-events:none}
@@ -478,3 +487,6 @@ figure.file{position:relative}
 .note b{font-size:13px;word-break:break-all}
 .txt-view{flex:1;min-height:0;overflow:auto;white-space:pre-wrap;word-break:break-word;background:var(--soft,#f4f7f5);
   border:1px solid var(--line2);border-radius:8px;padding:12px;font-size:13px;line-height:1.6;margin:0}
+
+figure.file figcaption .row{flex-wrap:wrap;gap:4px}
+figure.file figcaption .btn.sm{padding:4px 8px;font-size:12px}
