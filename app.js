@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.16.0';
+const APP_VERSION = '5.16.1';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -2148,17 +2148,20 @@ function openMarkup(fileId){
       <div class="mk-colors">${MK_COLORS.map((c,i)=>
         `<button class="mk-c" data-mk="color" data-c="${c}" style="background:${c}" aria-pressed="${i===0}" aria-label="색 ${i+1}"></button>`).join('')}</div>
       <label class="row small" style="gap:6px">굵기
-        <input type="range" min="2" max="18" value="5" data-mk="size" style="width:90px"></label>
+        <input type="range" min="2" max="18" value="5" data-mk="size" style="width:80px"></label>
+      <label class="row small" style="gap:6px">메모 투명도
+        <input type="range" min="15" max="100" value="95" data-mk="opacity" style="width:80px"></label>
     </div>
     <div class="mk-stage"><div class="mk-wrap" id="mkWrap"><canvas id="mkCanvas"></canvas></div></div>
     <p class="muted small mk-note" style="margin:0">사진을 불러오는 중입니다…</p>
   </div>`;
   document.body.appendChild(box);
-  MK={f,box,tool:'pen',color:MK_COLORS[0],size:5,shapes:[],img:null,cv:null,ctx:null,drawing:null,blobUrl:''};
+  MK={f,box,tool:'pen',color:MK_COLORS[0],size:5,opacity:.95,sel:-1,shapes:[],img:null,cv:null,ctx:null,drawing:null,blobUrl:''};
   const cv=box.querySelector('#mkCanvas'); MK.cv=cv; MK.ctx=cv.getContext('2d');
   const note=box.querySelector('.mk-note');
   box.addEventListener('click',onMarkupClick);
   box.addEventListener('input',onNoteInput);
+  box.addEventListener('input',onMarkupRange);
   box.addEventListener('pointerdown',onNoteDown);
   /* 아이폰·아이패드는 손가락으로도 그려집니다 */
   cv.addEventListener('pointerdown',mkDown);
@@ -2234,6 +2237,8 @@ function placeNotes(){
     el.style.fontSize=Math.max(11,noteFont(d)*k)+'px';
     el.style.maxWidth=Math.round(MK.cv.width*NOTE_W*k)+'px';
     el.style.setProperty('--nc', d.c);
+    el.style.setProperty('--no', d.o ?? .95);
+    el.classList.toggle('sel', MK.sel===i);
   });
 }
 /* 메모지를 다시 그립니다 (글자는 화면에서 바로 고칩니다) */
@@ -2264,12 +2269,15 @@ function mkDown(ev){
   ev.preventDefault();
   const pt=mkPos(ev);
   if(MK.tool==='text'){                       // 누른 자리에 메모지를 붙이고 바로 적습니다
-    MK.shapes.push({t:'text',x:pt.x,y:pt.y,s:'',c:MK.color,w:MK.size});
+    MK.shapes.push({t:'text',x:pt.x,y:pt.y,s:'',c:MK.color,w:MK.size,o:MK.opacity});
+    MK.sel=MK.shapes.length-1;
+    setMkTool('pen');                         // 한 장만 붙입니다. 또 붙이려면 T 글자를 다시 누르세요
     renderNotes();
-    const el=MK.box.querySelector(`.mk-note-item[data-i="${MK.shapes.length-1}"] .mk-note-txt`);
+    const el=MK.box.querySelector(`.mk-note-item[data-i="${MK.sel}"] .mk-note-txt`);
     setTimeout(()=>el?.focus(),30);
     return;
   }
+  MK.sel=-1; MK.box.querySelectorAll('.mk-note-item.sel').forEach(el=>el.classList.remove('sel'));
   try{ MK.cv.setPointerCapture?.(ev.pointerId); }catch{}
   MK.drawing={t:MK.tool,c:MK.color,w:MK.size,x:pt.x,y:pt.y,x2:pt.x,y2:pt.y,pts:[[pt.x,pt.y]]};
 }
@@ -2320,16 +2328,25 @@ function mkPath(ctx,d){
     const boxW=Math.min(MK.cv.width*NOTE_W, Math.max(...lines.map(l=>ctx.measureText(l).width))+pad*2+bar);
     const boxH=lines.length*lh+pad*2;
     const rd=Math.round(fs*0.35);
+    const op=d.o ?? .95;
     ctx.save();
-    ctx.shadowColor='rgba(0,0,0,.28)'; ctx.shadowBlur=fs*0.5; ctx.shadowOffsetY=fs*0.15;
-    ctx.fillStyle='rgba(255,255,255,.95)';
-    ctx.beginPath(); ctx.roundRect ? ctx.roundRect(d.x,d.y,boxW,boxH,rd) : ctx.rect(d.x,d.y,boxW,boxH);
-    ctx.fill();
+    if(op>0.05){
+      ctx.shadowColor=`rgba(0,0,0,${.28*op})`; ctx.shadowBlur=fs*0.5; ctx.shadowOffsetY=fs*0.15;
+      ctx.fillStyle=`rgba(255,255,255,${op})`;
+      ctx.beginPath(); ctx.roundRect ? ctx.roundRect(d.x,d.y,boxW,boxH,rd) : ctx.rect(d.x,d.y,boxW,boxH);
+      ctx.fill();
+    }
     ctx.restore();
-    ctx.fillStyle=d.c==='#ffffff'?'#111827':d.c;        // 왼쪽 색 띠
+    ctx.globalAlpha=Math.max(.55,op);
+    ctx.fillStyle=d.c;                                  // 왼쪽 색 띠
     ctx.beginPath(); ctx.roundRect ? ctx.roundRect(d.x,d.y,bar,boxH,[rd,0,0,rd]) : ctx.rect(d.x,d.y,bar,boxH);
     ctx.fill();
-    ctx.fillStyle='#16201b';
+    ctx.globalAlpha=1;
+    ctx.fillStyle=d.c;                                  // 글자 색
+    if(op<0.5){                                          // 바탕이 옅으면 글자에 테두리를 둡니다
+      ctx.lineWidth=Math.max(2,fs/7); ctx.strokeStyle= d.c==='#ffffff' ? 'rgba(0,0,0,.65)' : 'rgba(255,255,255,.85)';
+      lines.forEach((l,i)=>ctx.strokeText(l, d.x+bar+pad, d.y+pad+i*lh));
+    }
     lines.forEach((l,i)=>ctx.fillText(l, d.x+bar+pad, d.y+pad+i*lh));
   }
 }
@@ -2348,13 +2365,32 @@ function onMarkupClick(ev){
   if(!b){ if(ev.target===MK.box) closeMarkup(); return; }
   const k=b.dataset.mk;
   if(k==='close') return closeMarkup();
-  if(k==='tool'){ MK.tool=b.dataset.t;
-    MK.box.querySelectorAll('[data-mk="tool"]').forEach(x=>x.setAttribute('aria-pressed',String(x===b))); return; }
+  if(k==='tool'){ setMkTool(b.dataset.t); return; }
   if(k==='color'){ MK.color=b.dataset.c;
-    MK.box.querySelectorAll('[data-mk="color"]').forEach(x=>x.setAttribute('aria-pressed',String(x===b))); return; }
+    MK.box.querySelectorAll('[data-mk="color"]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));
+    const d=MK.shapes[MK.sel];                 // 고른 메모지가 있으면 그 글자 색을 바꿉니다
+    if(d && d.t==='text'){ d.c=MK.color; placeNotes(); }
+    return; }
   if(k==='undo'){ MK.shapes.pop(); renderNotes(); drawMarkup(); return; }
   if(k==='clear'){ MK.shapes=[]; renderNotes(); drawMarkup(); return; }
   if(k==='save') saveMarkup();
+}
+function setMkTool(t){
+  if(!MK) return;
+  MK.tool=t;
+  MK.box.querySelectorAll('[data-mk="tool"]').forEach(x=>x.setAttribute('aria-pressed',String(x.dataset.t===t)));
+}
+/* 굵기·투명도 막대 — 고른 메모지가 있으면 그 메모지에 바로 적용됩니다 */
+function onMarkupRange(ev){
+  const r=ev.target.closest('input[type="range"][data-mk]'); if(!r||!MK) return;
+  const d=MK.shapes[MK.sel];
+  if(r.dataset.mk==='size'){
+    MK.size=+r.value;
+    if(d){ d.w=MK.size; d.t==='text' ? placeNotes() : drawMarkup(); }
+  } else if(r.dataset.mk==='opacity'){
+    MK.opacity=+r.value/100;
+    if(d && d.t==='text'){ d.o=MK.opacity; placeNotes(); }
+  }
 }
 /* 메모지: 글 고치기 · 끌어서 옮기기 · 지우기 */
 function noteIdx(el){ return +el.closest('.mk-note-item').dataset.i; }
@@ -2369,6 +2405,7 @@ function onNoteDown(ev){
     ev.preventDefault();
     MK.shapes.splice(noteIdx(item),1); renderNotes(); drawMarkup(); return;
   }
+  MK.sel=noteIdx(item); placeNotes();                        // 고른 메모지로 표시
   if(ev.target.closest('.mk-note-txt') && !ev.target.closest('[data-ng]')) return;   // 글 쓰는 중
   ev.preventDefault();
   const d=MK.shapes[noteIdx(item)]; if(!d) return;
