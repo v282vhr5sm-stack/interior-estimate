@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.15.1';
+const APP_VERSION = '5.16.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -753,7 +753,7 @@ document.addEventListener('pointerdown',ev=>{
   const [pi]=g.dataset.grip.split(':').map(Number);
   DRAG={pi, tr, tbody, from:[...tbody.children].indexOf(tr)};
   tr.classList.add('dragging'); document.body.classList.add('dragging-row');
-  g.setPointerCapture?.(ev.pointerId);
+  try{ g.setPointerCapture?.(ev.pointerId); }catch{}
 },{passive:false});
 document.addEventListener('pointermove',ev=>{
   if(!DRAG) return;
@@ -2150,7 +2150,7 @@ function openMarkup(fileId){
       <label class="row small" style="gap:6px">굵기
         <input type="range" min="2" max="18" value="5" data-mk="size" style="width:90px"></label>
     </div>
-    <div class="mk-stage"><canvas id="mkCanvas"></canvas></div>
+    <div class="mk-stage"><div class="mk-wrap" id="mkWrap"><canvas id="mkCanvas"></canvas></div></div>
     <p class="muted small mk-note" style="margin:0">사진을 불러오는 중입니다…</p>
   </div>`;
   document.body.appendChild(box);
@@ -2158,6 +2158,8 @@ function openMarkup(fileId){
   const cv=box.querySelector('#mkCanvas'); MK.cv=cv; MK.ctx=cv.getContext('2d');
   const note=box.querySelector('.mk-note');
   box.addEventListener('click',onMarkupClick);
+  box.addEventListener('input',onNoteInput);
+  box.addEventListener('pointerdown',onNoteDown);
   /* 아이폰·아이패드는 손가락으로도 그려집니다 */
   cv.addEventListener('pointerdown',mkDown);
   cv.addEventListener('pointermove',mkMove);
@@ -2198,29 +2200,6 @@ async function loadMarkupImage(f,note){
   img.onerror=()=>{ show('사진을 열지 못했습니다. 인터넷 연결을 확인하고 다시 눌러주세요.'); };
   img.src=src;
 }
-/* 글자 입력 — 홈 화면에 담은 앱에서는 prompt가 열리지 않아 직접 만듭니다 */
-function mkAskText(){
-  return new Promise(res=>{
-    const b=document.createElement('div'); b.className='modal mk-ask';
-    b.innerHTML=`<div class="modal-b" style="width:min(420px,94vw);display:flex;flex-direction:column;gap:10px">
-      <b>사진에 적을 글자</b>
-      <input class="f" id="mkText" placeholder="예: 여기 보강 필요" autocomplete="off">
-      <div class="row" style="justify-content:flex-end;gap:6px">
-        <button class="btn" data-t="">취소</button>
-        <button class="btn pri" data-t="ok">넣기</button></div></div>`;
-    const done=v=>{ b.remove(); removeEventListener('keydown',key); res(v); };
-    const key=ev=>{ if(ev.key==='Escape'){ ev.preventDefault(); done(''); } };
-    b.addEventListener('click',ev=>{
-      const btn=ev.target.closest('[data-t]');
-      if(btn) return done(btn.dataset.t ? b.querySelector('#mkText').value.trim() : '');
-      if(ev.target===b) done('');
-    });
-    b.addEventListener('keydown',ev=>{ if(ev.key==='Enter'){ ev.preventDefault(); done(b.querySelector('#mkText').value.trim()); } });
-    addEventListener('keydown',key);
-    document.body.appendChild(b);
-    setTimeout(()=>b.querySelector('#mkText')?.focus(),50);
-  });
-}
 function closeMarkup(){
   if(!MK) return;
   removeEventListener('resize',fitMarkup);
@@ -2232,8 +2211,47 @@ function fitMarkup(){
   if(!MK?.img) return;
   const stage=MK.box.querySelector('.mk-stage');
   const k=Math.min(stage.clientWidth/MK.cv.width, stage.clientHeight/MK.cv.height, 1);
-  MK.cv.style.width=Math.round(MK.cv.width*k)+'px';
-  MK.cv.style.height=Math.round(MK.cv.height*k)+'px';
+  MK.disp=k;
+  const w=Math.round(MK.cv.width*k), h=Math.round(MK.cv.height*k);
+  MK.cv.style.width=w+'px'; MK.cv.style.height=h+'px';
+  const wrap=MK.box.querySelector('#mkWrap');
+  if(wrap){ wrap.style.width=w+'px'; wrap.style.height=h+'px'; }
+  placeNotes();
+}
+/* 메모지 글씨 크기 (굵기 막대로 조절) */
+const noteFont = d => Math.round((10 + (d.w||5)*1.6) * mkScale());
+const NOTE_W = 0.44;                       // 사진 너비 대비 메모지 최대 폭
+/* 사진 위 메모지를 화면에 놓습니다 */
+function placeNotes(){
+  if(!MK) return;
+  const wrap=MK.box.querySelector('#mkWrap'); if(!wrap) return;
+  const k=MK.disp||1;
+  MK.shapes.forEach((d,i)=>{
+    if(d.t!=='text') return;
+    const el=wrap.querySelector(`.mk-note-item[data-i="${i}"]`); if(!el) return;
+    el.style.left=Math.round(d.x*k)+'px';
+    el.style.top=Math.round(d.y*k)+'px';
+    el.style.fontSize=Math.max(11,noteFont(d)*k)+'px';
+    el.style.maxWidth=Math.round(MK.cv.width*NOTE_W*k)+'px';
+    el.style.setProperty('--nc', d.c);
+  });
+}
+/* 메모지를 다시 그립니다 (글자는 화면에서 바로 고칩니다) */
+function renderNotes(){
+  if(!MK) return;
+  const wrap=MK.box.querySelector('#mkWrap'); if(!wrap) return;
+  wrap.querySelectorAll('.mk-note-item').forEach(el=>el.remove());
+  MK.shapes.forEach((d,i)=>{
+    if(d.t!=='text') return;
+    const el=document.createElement('div');
+    el.className='mk-note-item'; el.dataset.i=i;
+    el.innerHTML=`<span class="mk-note-grip" data-ng="1">⠿</span>
+      <span class="mk-note-txt" contenteditable="true" spellcheck="false"></span>
+      <button class="mk-note-x" data-nx="1" aria-label="메모 지우기">✕</button>`;
+    el.querySelector('.mk-note-txt').textContent=d.s||'';
+    wrap.appendChild(el);
+  });
+  placeNotes();
 }
 /* 화면 좌표 → 사진 좌표 */
 function mkPos(ev){
@@ -2241,16 +2259,18 @@ function mkPos(ev){
   return { x:(ev.clientX-r.left)/r.width*MK.cv.width, y:(ev.clientY-r.top)/r.height*MK.cv.height };
 }
 const mkScale = () => Math.max(1, MK.cv.width/900);      // 큰 사진에서도 선이 보이게
-async function mkDown(ev){
+function mkDown(ev){
   if(!MK?.img) return;
   ev.preventDefault();
   const pt=mkPos(ev);
-  if(MK.tool==='text'){
-    const s=await mkAskText();
-    if(s && MK){ MK.shapes.push({t:'text',x:pt.x,y:pt.y,s,c:MK.color,w:MK.size}); drawMarkup(); }
+  if(MK.tool==='text'){                       // 누른 자리에 메모지를 붙이고 바로 적습니다
+    MK.shapes.push({t:'text',x:pt.x,y:pt.y,s:'',c:MK.color,w:MK.size});
+    renderNotes();
+    const el=MK.box.querySelector(`.mk-note-item[data-i="${MK.shapes.length-1}"] .mk-note-txt`);
+    setTimeout(()=>el?.focus(),30);
     return;
   }
-  MK.cv.setPointerCapture?.(ev.pointerId);
+  try{ MK.cv.setPointerCapture?.(ev.pointerId); }catch{}
   MK.drawing={t:MK.tool,c:MK.color,w:MK.size,x:pt.x,y:pt.y,x2:pt.x,y2:pt.y,pts:[[pt.x,pt.y]]};
 }
 function mkMove(ev){
@@ -2282,22 +2302,48 @@ function mkPath(ctx,d){
     ctx.lineTo(d.x2-h*Math.cos(a+Math.PI/7), d.y2-h*Math.sin(a+Math.PI/7));
     ctx.closePath(); ctx.fill();
   } else if(d.t==='text'){
-    const fs=Math.round(d.w*mkScale()*5);
-    ctx.font=`700 ${fs}px "Apple SD Gothic Neo","Malgun Gothic",sans-serif`;
+    if(!String(d.s||'').trim()) return;
+    const fs=noteFont(d), pad=Math.round(fs*0.55), bar=Math.max(3,Math.round(fs*0.22));
+    ctx.font=`600 ${fs}px "Apple SD Gothic Neo","Malgun Gothic",sans-serif`;
     ctx.textBaseline='top';
-    ctx.lineWidth=Math.max(2,fs/8); ctx.strokeStyle= d.c==='#ffffff' ? '#00000088' : '#ffffffcc';
-    ctx.strokeText(d.s,d.x,d.y); ctx.fillText(d.s,d.x,d.y);
+    const maxW=MK.cv.width*NOTE_W - pad*2 - bar;
+    const lines=[];
+    String(d.s).split('\n').forEach(para=>{
+      let cur='';
+      for(const ch of para){
+        if(ctx.measureText(cur+ch).width>maxW && cur){ lines.push(cur); cur=ch; }
+        else cur+=ch;
+      }
+      lines.push(cur);
+    });
+    const lh=Math.round(fs*1.35);
+    const boxW=Math.min(MK.cv.width*NOTE_W, Math.max(...lines.map(l=>ctx.measureText(l).width))+pad*2+bar);
+    const boxH=lines.length*lh+pad*2;
+    const rd=Math.round(fs*0.35);
+    ctx.save();
+    ctx.shadowColor='rgba(0,0,0,.28)'; ctx.shadowBlur=fs*0.5; ctx.shadowOffsetY=fs*0.15;
+    ctx.fillStyle='rgba(255,255,255,.95)';
+    ctx.beginPath(); ctx.roundRect ? ctx.roundRect(d.x,d.y,boxW,boxH,rd) : ctx.rect(d.x,d.y,boxW,boxH);
+    ctx.fill();
+    ctx.restore();
+    ctx.fillStyle=d.c==='#ffffff'?'#111827':d.c;        // 왼쪽 색 띠
+    ctx.beginPath(); ctx.roundRect ? ctx.roundRect(d.x,d.y,bar,boxH,[rd,0,0,rd]) : ctx.rect(d.x,d.y,bar,boxH);
+    ctx.fill();
+    ctx.fillStyle='#16201b';
+    lines.forEach((l,i)=>ctx.fillText(l, d.x+bar+pad, d.y+pad+i*lh));
   }
 }
-function drawMarkup(){
+/* 화면에서는 메모지를 얹어서 보여주고, 저장할 때만 사진에 그려 넣습니다 */
+function drawMarkup(withText){
   if(!MK?.img) return;
   const {ctx,cv}=MK;
   ctx.clearRect(0,0,cv.width,cv.height);
   ctx.drawImage(MK.img,0,0,cv.width,cv.height);
-  MK.shapes.forEach(d=>mkPath(ctx,d));
+  MK.shapes.forEach(d=>{ if(d.t!=='text'||withText) mkPath(ctx,d); });
   if(MK.drawing) mkPath(ctx,MK.drawing);
 }
 function onMarkupClick(ev){
+  if(ev.target.closest('.mk-note-item')) return;          // 메모지 안은 따로 다룹니다
   const b=ev.target.closest('[data-mk]');
   if(!b){ if(ev.target===MK.box) closeMarkup(); return; }
   const k=b.dataset.mk;
@@ -2306,9 +2352,39 @@ function onMarkupClick(ev){
     MK.box.querySelectorAll('[data-mk="tool"]').forEach(x=>x.setAttribute('aria-pressed',String(x===b))); return; }
   if(k==='color'){ MK.color=b.dataset.c;
     MK.box.querySelectorAll('[data-mk="color"]').forEach(x=>x.setAttribute('aria-pressed',String(x===b))); return; }
-  if(k==='undo'){ MK.shapes.pop(); drawMarkup(); return; }
-  if(k==='clear'){ MK.shapes=[]; drawMarkup(); return; }
+  if(k==='undo'){ MK.shapes.pop(); renderNotes(); drawMarkup(); return; }
+  if(k==='clear'){ MK.shapes=[]; renderNotes(); drawMarkup(); return; }
   if(k==='save') saveMarkup();
+}
+/* 메모지: 글 고치기 · 끌어서 옮기기 · 지우기 */
+function noteIdx(el){ return +el.closest('.mk-note-item').dataset.i; }
+function onNoteInput(ev){
+  const t=ev.target.closest('.mk-note-txt'); if(!t||!MK) return;
+  const d=MK.shapes[noteIdx(t)]; if(d) d.s=t.textContent;
+}
+function onNoteDown(ev){
+  if(!MK) return;
+  const item=ev.target.closest('.mk-note-item'); if(!item) return;
+  if(ev.target.closest('[data-nx]')){                      // 지우기
+    ev.preventDefault();
+    MK.shapes.splice(noteIdx(item),1); renderNotes(); drawMarkup(); return;
+  }
+  if(ev.target.closest('.mk-note-txt') && !ev.target.closest('[data-ng]')) return;   // 글 쓰는 중
+  ev.preventDefault();
+  const d=MK.shapes[noteIdx(item)]; if(!d) return;
+  const k=MK.disp||1, sx=ev.clientX, sy=ev.clientY, ox=d.x, oy=d.y;
+  item.classList.add('dragging');
+  try{ item.setPointerCapture?.(ev.pointerId); }catch{}
+  const move=e=>{
+    d.x=Math.max(0,Math.min(MK.cv.width, ox+(e.clientX-sx)/k));
+    d.y=Math.max(0,Math.min(MK.cv.height, oy+(e.clientY-sy)/k));
+    placeNotes();
+  };
+  const up=()=>{ item.classList.remove('dragging');
+    item.removeEventListener('pointermove',move); item.removeEventListener('pointerup',up); item.removeEventListener('pointercancel',up); };
+  item.addEventListener('pointermove',move);
+  item.addEventListener('pointerup',up);
+  item.addEventListener('pointercancel',up);
 }
 async function saveMarkup(){
   if(!MK) return;
@@ -2317,6 +2393,8 @@ async function saveMarkup(){
   const f=MK.f, p=curProj(); if(!p) return;
   const btn=MK.box.querySelector('[data-mk="save"]'); if(btn){ btn.disabled=true; btn.textContent='저장 중…'; }
   try{
+    MK.shapes=MK.shapes.filter(d=>d.t!=='text'||String(d.s||'').trim());   // 빈 메모지는 버립니다
+    drawMarkup(true);                                                      // 메모지를 사진에 그려 넣습니다
     const blob=await new Promise(res=>MK.cv.toBlob(res,'image/jpeg',0.92));
     if(!blob) throw new Error('사진을 만들지 못했습니다');
     const path=`${session.user.id}/${p.id}/${uid()}-mark.jpg`;

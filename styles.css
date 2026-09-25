@@ -490,3 +490,17 @@ figure.file{position:relative}
 
 figure.file figcaption .row{flex-wrap:wrap;gap:4px}
 figure.file figcaption .btn.sm{padding:4px 8px;font-size:12px}
+
+/* 사진 위 메모지 */
+.mk-wrap{position:relative;display:block}
+.mk-wrap canvas{display:block}
+.mk-note-item{position:absolute;display:flex;align-items:flex-start;gap:4px;
+  background:rgba(255,255,255,.95);border-left:4px solid var(--nc,#e11d48);border-radius:7px;
+  padding:5px 6px 5px 5px;box-shadow:0 2px 8px rgba(0,0,0,.28);color:#16201b;
+  font-weight:600;line-height:1.35;min-width:56px;touch-action:none;cursor:move}
+.mk-note-item.dragging{opacity:.85;box-shadow:0 6px 18px rgba(0,0,0,.4)}
+.mk-note-grip{cursor:move;opacity:.45;font-size:.85em;line-height:1.3;user-select:none;flex:none}
+.mk-note-txt{outline:none;min-width:2em;white-space:pre-wrap;word-break:break-word;cursor:text;touch-action:auto}
+.mk-note-txt:empty::before{content:'여기에 적으세요';opacity:.4}
+.mk-note-x{flex:none;border:0;background:none;cursor:pointer;opacity:.45;font-size:.8em;line-height:1;padding:1px 2px;color:inherit}
+.mk-note-x:hover{opacity:1;color:#e11d48}
