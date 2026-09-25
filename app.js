@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.14.1';
+const APP_VERSION = '5.15.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -2062,6 +2062,7 @@ function newFolder(p){
 /* 폴더 하나를 펼쳐 봅니다 */
 function renderFolder(p,fd){
   const list=filesInFolder(p,fd.id).sort((a,b)=>(a.at||0)-(b.at||0));
+  const notes=notesInFolder(p,fd.id).sort((a,b)=>(a.at||0)-(b.at||0));
   const moveOpts=f=>`<select class="f small" data-bind="file:${f.id}:folderId" style="padding:3px 5px">
       <option value="">폴더 없음</option>
       ${(p.folders||[]).map(x=>`<option value="${x.id}" ${f.folderId===x.id?'selected':''}>${esc(folderTitle(p,x))}</option>`).join('')}
@@ -2089,20 +2090,203 @@ function renderFolder(p,fd){
         <button class="btn ghost sm danger" data-act="delFolder" data-id="${fd.id}">폴더 삭제</button></div>
     </div></section>
     <section class="panel">
+      <div class="panel-h"><h3>메모 파일 ${notes.length}</h3><span class="muted small">txt·csv 같은 글 파일을 함께 보관합니다</span>
+        <span class="spacer"></span><button class="btn sm" data-act="folderNote" data-id="${fd.id}">+ 메모 파일 첨부</button></div>
+      <div class="panel-b">
+        ${notes.length?`<div class="notes">${notes.map(f=>`<div class="note">
+          <button class="note-open" data-act="openTxt" data-fid="${f.id}"><span class="note-i">📄</span><b>${esc(f.name)}</b></button>
+          <input class="f small" data-bind="file:${f.id}:memo" value="${esc(f.memo||'')}" placeholder="이 파일 설명" style="padding:3px 5px">
+          <div class="row" style="gap:6px;justify-content:space-between">
+            <span class="muted small">${(f.size/1024).toFixed(0)}KB</span>
+            <button class="btn ghost sm danger" data-act="delPlan" data-fid="${f.id}">삭제</button></div>
+        </div>`).join('')}</div>`
+          :`<p class="muted small" style="margin:0">작업 내용을 적어 둔 글 파일이 있으면 여기에 함께 올려두세요.</p>`}
+      </div></section>
+    <section class="panel">
       <div class="panel-h"><h3>사진 ${list.length}장</h3><span class="muted small">사진마다 메모를 적을 수 있습니다</span></div>
       <div class="panel-b">
         ${list.length?`<div class="files">${list.map(f=>`<figure class="file">
           <a href="${esc(f.url)}" target="_blank" rel="noopener"><img src="${esc(f.url)}" alt="${esc(f.memo||f.name)}" loading="lazy"></a>
+          ${f.marked?'<span class="mk-badge">표시함</span>':''}
           <figcaption>
             <input class="f small" data-bind="file:${f.id}:memo" value="${esc(f.memo||'')}" placeholder="사진 메모" style="padding:3px 5px">
             ${moveOpts(f)}
             <div class="row" style="gap:6px;justify-content:space-between">
-              <span class="muted small">${new Date(f.at||Date.now()).toLocaleDateString('ko-KR')}</span>
+              <button class="btn ghost sm" data-act="markup" data-fid="${f.id}">✏️ 표시</button>
+              ${f.origUrl?`<button class="btn ghost sm" data-act="unmark" data-fid="${f.id}">원본</button>`:''}
               <button class="btn ghost sm danger" data-act="delPlan" data-fid="${f.id}">삭제</button></div>
+            <span class="muted small">${new Date(f.at||Date.now()).toLocaleDateString('ko-KR')}</span>
           </figcaption></figure>`).join('')}</div>`
           :`<div class="empty">아직 사진이 없습니다. 위 “📷 사진 추가”로 올려주세요.</div>`}
       </div></section>
   </div>`;
+}
+
+/* ── 사진 위에 표시하기 (아이폰 마크업처럼) ──────────────
+   펜·화살표·네모·글자를 얹고, 저장하면 표시한 사진으로 바뀝니다.
+   원본은 따로 남겨 두어 언제든 되돌릴 수 있습니다. */
+const MK_COLORS = ['#e11d48','#f59e0b','#16a34a','#2563eb','#111827','#ffffff'];
+let MK = null;
+function openMarkup(fileId){
+  const p=curProj(); const f=(p?.files||[]).find(x=>x.id===fileId);
+  if(!f || fileKind(f)!=='img'){ toast('사진만 표시할 수 있습니다'); return; }
+  const box=document.createElement('div'); box.className='modal mk';
+  box.innerHTML=`<div class="modal-b mk-b">
+    <div class="row mk-top">
+      <b style="flex:1">사진에 표시하기</b>
+      <button class="btn sm" data-mk="undo">되돌리기</button>
+      <button class="btn sm" data-mk="clear">모두 지우기</button>
+      <button class="btn pri sm" data-mk="save">저장</button>
+      <button class="btn sm" data-mk="close">닫기</button>
+    </div>
+    <div class="mk-tools">
+      <div class="chips">
+        ${[['pen','✏️ 펜'],['arrow','↗ 화살표'],['rect','▭ 네모'],['text','T 글자']].map(([k,n],i)=>
+          `<button class="chip" data-mk="tool" data-t="${k}" aria-pressed="${i===0}">${n}</button>`).join('')}
+      </div>
+      <span class="spacer"></span>
+      <div class="mk-colors">${MK_COLORS.map((c,i)=>
+        `<button class="mk-c" data-mk="color" data-c="${c}" style="background:${c}" aria-pressed="${i===0}" aria-label="색 ${i+1}"></button>`).join('')}</div>
+      <label class="row small" style="gap:6px">굵기
+        <input type="range" min="2" max="18" value="5" data-mk="size" style="width:90px"></label>
+    </div>
+    <div class="mk-stage"><canvas id="mkCanvas"></canvas></div>
+    <p class="muted small" style="margin:0">손가락이나 마우스로 그으세요. 글자는 누른 자리에 적습니다.</p>
+  </div>`;
+  document.body.appendChild(box);
+  MK={f,box,tool:'pen',color:MK_COLORS[0],size:5,shapes:[],img:null,cv:null,ctx:null,drawing:null};
+  const cv=box.querySelector('#mkCanvas'); MK.cv=cv; MK.ctx=cv.getContext('2d');
+  const img=new Image(); img.crossOrigin='anonymous';
+  img.onload=()=>{ MK.img=img; cv.width=img.naturalWidth; cv.height=img.naturalHeight; fitMarkup(); drawMarkup(); };
+  img.onerror=()=>{ toast('사진을 열지 못했습니다'); closeMarkup(); };
+  img.src=f.url;
+  box.addEventListener('click',onMarkupClick);
+  cv.addEventListener('pointerdown',mkDown);
+  cv.addEventListener('pointermove',mkMove);
+  cv.addEventListener('pointerup',mkUp);
+  cv.addEventListener('pointercancel',mkUp);
+  addEventListener('resize',fitMarkup);
+}
+function closeMarkup(){
+  if(!MK) return;
+  removeEventListener('resize',fitMarkup);
+  MK.box.remove(); MK=null;
+}
+function fitMarkup(){
+  if(!MK?.img) return;
+  const stage=MK.box.querySelector('.mk-stage');
+  const k=Math.min(stage.clientWidth/MK.cv.width, stage.clientHeight/MK.cv.height, 1);
+  MK.cv.style.width=Math.round(MK.cv.width*k)+'px';
+  MK.cv.style.height=Math.round(MK.cv.height*k)+'px';
+}
+/* 화면 좌표 → 사진 좌표 */
+function mkPos(ev){
+  const r=MK.cv.getBoundingClientRect();
+  return { x:(ev.clientX-r.left)/r.width*MK.cv.width, y:(ev.clientY-r.top)/r.height*MK.cv.height };
+}
+const mkScale = () => Math.max(1, MK.cv.width/900);      // 큰 사진에서도 선이 보이게
+function mkDown(ev){
+  if(!MK?.img) return;
+  ev.preventDefault();
+  const pt=mkPos(ev);
+  if(MK.tool==='text'){
+    const s=prompt('사진에 적을 글자');
+    if(s && s.trim()){ MK.shapes.push({t:'text',x:pt.x,y:pt.y,s:s.trim(),c:MK.color,w:MK.size}); drawMarkup(); }
+    return;
+  }
+  MK.cv.setPointerCapture?.(ev.pointerId);
+  MK.drawing={t:MK.tool,c:MK.color,w:MK.size,x:pt.x,y:pt.y,x2:pt.x,y2:pt.y,pts:[[pt.x,pt.y]]};
+}
+function mkMove(ev){
+  if(!MK?.drawing) return;
+  const pt=mkPos(ev);
+  if(MK.drawing.t==='pen') MK.drawing.pts.push([pt.x,pt.y]);
+  MK.drawing.x2=pt.x; MK.drawing.y2=pt.y;
+  drawMarkup();
+}
+function mkUp(){
+  if(!MK?.drawing) return;
+  const d=MK.drawing; MK.drawing=null;
+  const moved = d.t==='pen' ? d.pts.length>1 : (Math.abs(d.x2-d.x)>3||Math.abs(d.y2-d.y)>3);
+  if(moved){ MK.shapes.push(d); }
+  drawMarkup();
+}
+function mkPath(ctx,d){
+  const w=d.w*mkScale();
+  ctx.strokeStyle=d.c; ctx.fillStyle=d.c; ctx.lineWidth=w; ctx.lineCap='round'; ctx.lineJoin='round';
+  if(d.t==='pen'){
+    ctx.beginPath(); d.pts.forEach(([x,y],i)=> i?ctx.lineTo(x,y):ctx.moveTo(x,y)); ctx.stroke();
+  } else if(d.t==='rect'){
+    ctx.strokeRect(Math.min(d.x,d.x2),Math.min(d.y,d.y2),Math.abs(d.x2-d.x),Math.abs(d.y2-d.y));
+  } else if(d.t==='arrow'){
+    ctx.beginPath(); ctx.moveTo(d.x,d.y); ctx.lineTo(d.x2,d.y2); ctx.stroke();
+    const a=Math.atan2(d.y2-d.y,d.x2-d.x), h=w*4;
+    ctx.beginPath(); ctx.moveTo(d.x2,d.y2);
+    ctx.lineTo(d.x2-h*Math.cos(a-Math.PI/7), d.y2-h*Math.sin(a-Math.PI/7));
+    ctx.lineTo(d.x2-h*Math.cos(a+Math.PI/7), d.y2-h*Math.sin(a+Math.PI/7));
+    ctx.closePath(); ctx.fill();
+  } else if(d.t==='text'){
+    const fs=Math.round(d.w*mkScale()*5);
+    ctx.font=`700 ${fs}px "Apple SD Gothic Neo","Malgun Gothic",sans-serif`;
+    ctx.textBaseline='top';
+    ctx.lineWidth=Math.max(2,fs/8); ctx.strokeStyle= d.c==='#ffffff' ? '#00000088' : '#ffffffcc';
+    ctx.strokeText(d.s,d.x,d.y); ctx.fillText(d.s,d.x,d.y);
+  }
+}
+function drawMarkup(){
+  if(!MK?.img) return;
+  const {ctx,cv}=MK;
+  ctx.clearRect(0,0,cv.width,cv.height);
+  ctx.drawImage(MK.img,0,0,cv.width,cv.height);
+  MK.shapes.forEach(d=>mkPath(ctx,d));
+  if(MK.drawing) mkPath(ctx,MK.drawing);
+}
+function onMarkupClick(ev){
+  const b=ev.target.closest('[data-mk]');
+  if(!b){ if(ev.target===MK.box) closeMarkup(); return; }
+  const k=b.dataset.mk;
+  if(k==='close') return closeMarkup();
+  if(k==='tool'){ MK.tool=b.dataset.t;
+    MK.box.querySelectorAll('[data-mk="tool"]').forEach(x=>x.setAttribute('aria-pressed',String(x===b))); return; }
+  if(k==='color'){ MK.color=b.dataset.c;
+    MK.box.querySelectorAll('[data-mk="color"]').forEach(x=>x.setAttribute('aria-pressed',String(x===b))); return; }
+  if(k==='undo'){ MK.shapes.pop(); drawMarkup(); return; }
+  if(k==='clear'){ MK.shapes=[]; drawMarkup(); return; }
+  if(k==='save') saveMarkup();
+}
+async function saveMarkup(){
+  if(!MK) return;
+  if(!MK.shapes.length){ toast('표시한 내용이 없습니다'); return; }
+  if(!sb||!session){ toast('로그인한 상태에서만 저장할 수 있습니다'); return; }
+  const f=MK.f, p=curProj(); if(!p) return;
+  const btn=MK.box.querySelector('[data-mk="save"]'); if(btn){ btn.disabled=true; btn.textContent='저장 중…'; }
+  try{
+    const blob=await new Promise(res=>MK.cv.toBlob(res,'image/jpeg',0.92));
+    if(!blob) throw new Error('사진을 만들지 못했습니다');
+    const path=`${session.user.id}/${p.id}/${uid()}-mark.jpg`;
+    const {error}=await sb.storage.from('plans').upload(path,blob,{contentType:'image/jpeg'});
+    if(error) throw error;
+    const {data}=sb.storage.from('plans').getPublicUrl(path);
+    if(!f.origPath){ f.origPath=f.path; f.origUrl=f.url; }   // 처음 표시할 때 원본을 적어 둡니다
+    f.path=path; f.url=data.publicUrl; f.size=blob.size; f.type='image/jpeg'; f.marked=true;
+    saveProj(p); closeMarkup(); render(); toast('표시한 사진으로 저장했습니다');
+  }catch(e){
+    if(btn){ btn.disabled=false; btn.textContent='저장'; }
+    toast('저장하지 못했습니다: '+(e?.message||e));
+  }
+}
+async function revertMarkup(fileId){
+  const p=curProj(); const f=(p?.files||[]).find(x=>x.id===fileId);
+  if(!f?.origUrl) return;
+  if(!await askConfirm({title:'표시를 지우고 원본으로 되돌릴까요?',
+    lines:['사진에 그린 표시가 사라집니다','원본 사진은 그대로 남아 있습니다'],
+    ok:'네, 원본으로', cancel:'아니요'})) return;
+  const marked=f.path;
+  f.path=f.origPath; f.url=f.origUrl; f.marked=false;
+  delete f.origPath; delete f.origUrl;
+  saveProj(p);
+  try{ await sb?.storage.from('plans').remove([marked]); }catch(e){ console.warn(e); }
+  render(); toast('원본으로 되돌렸습니다');
 }
 
 /* 사진만 모아 보는 화면 — 폴더 목록 */
@@ -2141,7 +2325,8 @@ function renderGallery(p){
             ${(p.folders||[]).map(x=>`<option value="${x.id}">${esc(folderTitle(p,x))}</option>`).join('')}
           </select>
           <div class="row" style="gap:6px;justify-content:space-between">
-            <span class="muted small">${new Date(f.at||Date.now()).toLocaleDateString('ko-KR')}</span>
+            <button class="btn ghost sm" data-act="markup" data-fid="${f.id}">✏️ 표시</button>
+            ${f.origUrl?`<button class="btn ghost sm" data-act="unmark" data-fid="${f.id}">원본</button>`:''}
             <button class="btn ghost sm danger" data-act="delPlan" data-fid="${f.id}">삭제</button></div>
         </figcaption></figure>`).join('')}</div></div></section>`:''}
   </div>`;
@@ -2209,8 +2394,29 @@ function projProgress(p){
   const t=p.tasks||[]; if(!t.length) return 0;
   return Math.round(t.filter(x=>x.status==='완료').length/t.length*100);
 }
-const fileKind = f => /^image\//.test(f.type)?'img' : f.type==='application/pdf'?'pdf' : /\.(glb|gltf)$/i.test(f.name)?'glb' : 'other';
-const KIND_LABEL = {img:'사진',pdf:'PDF',glb:'3D 모델',other:'파일'};
+const fileKind = f => /^image\//.test(f.type)?'img' : f.type==='application/pdf'?'pdf'
+  : (/^text\//.test(f.type)||/\.(txt|md|csv|log)$/i.test(f.name))?'txt'
+  : /\.(glb|gltf)$/i.test(f.name)?'glb' : 'other';
+const KIND_LABEL = {img:'사진',pdf:'PDF',txt:'메모 파일',glb:'3D 모델',other:'파일'};
+const notesInFolder = (p,id) => (p.files||[]).filter(f=>fileKind(f)==='txt' && (f.folderId||'')===id);
+/* 메모 파일 내용 미리 보기 */
+const TXT_CACHE = new Map();
+async function showTxt(fileId){
+  const p=curProj(); const f=(p?.files||[]).find(x=>x.id===fileId); if(!f) return;
+  let body=TXT_CACHE.get(f.id);
+  if(body===undefined){
+    try{ const r=await fetch(f.url); body=await r.text(); }catch(e){ body='(파일을 열지 못했습니다)'; }
+    TXT_CACHE.set(f.id,body);
+  }
+  const box=document.createElement('div'); box.className='modal';
+  box.innerHTML=`<div class="modal-b" style="width:min(760px,96vw);max-height:88vh;display:flex;flex-direction:column;gap:10px">
+    <div class="row"><b style="flex:1">${esc(f.name)}</b>
+      <a class="btn sm" href="${esc(f.url)}" target="_blank" rel="noopener" download>내려받기</a>
+      <button class="btn sm" data-x="close">닫기</button></div>
+    <pre class="txt-view">${esc(body)}</pre></div>`;
+  box.addEventListener('click',ev=>{ if(ev.target.closest('[data-x]')||ev.target===box) box.remove(); });
+  document.body.appendChild(box);
+}
 
 /* 공유 링크 */
 const shareUrl = t => location.origin + location.pathname + '?s=' + t;
@@ -3666,6 +3872,12 @@ document.addEventListener('click',async ev=>{
       const fd=newFolder(p); GAL_FOLDER=fd.id; HUB_GALLERY=true; render();
       setTimeout(()=>document.getElementById('fd-name')?.focus(),80); break; }
     case 'openFolder': GAL_FOLDER=t.dataset.id; render(); window.scrollTo(0,0); break;
+    case 'markup': openMarkup(t.dataset.fid); break;
+    case 'unmark': await revertMarkup(t.dataset.fid); break;
+    case 'openTxt': await showTxt(t.dataset.fid); break;
+    case 'folderNote': { const p=curProj(); const fd=folderOf(p,t.dataset.id); if(!fd) break;
+      PLAN_FOLDER=fd.id; PLAN_TASK='';
+      $('#filePlan').setAttribute('accept','.txt,.md,.csv,.log,text/plain'); $('#filePlan').click(); break; }
     case 'folderBack': GAL_FOLDER=''; render(); window.scrollTo(0,0); break;
     case 'folderPhoto': { const p=curProj(); const fd=folderOf(p,t.dataset.id); if(!fd) break;
       PLAN_FOLDER=fd.id;
