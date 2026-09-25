@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.16.1';
+const APP_VERSION = '5.16.3';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -2133,7 +2133,7 @@ function openMarkup(fileId){
   const box=document.createElement('div'); box.className='modal mk';
   box.innerHTML=`<div class="modal-b mk-b">
     <div class="row mk-top">
-      <b style="flex:1">사진에 표시하기</b>
+      <b style="flex:1">사진에 표시하기 <span class="muted small" style="font-weight:400">v${APP_VERSION}</span></b>
       <button class="btn sm" data-mk="undo">되돌리기</button>
       <button class="btn sm" data-mk="clear">모두 지우기</button>
       <button class="btn pri sm" data-mk="save">저장</button>
@@ -2159,6 +2159,11 @@ function openMarkup(fileId){
   MK={f,box,tool:'pen',color:MK_COLORS[0],size:5,opacity:.95,sel:-1,shapes:[],img:null,cv:null,ctx:null,drawing:null,blobUrl:''};
   const cv=box.querySelector('#mkCanvas'); MK.cv=cv; MK.ctx=cv.getContext('2d');
   const note=box.querySelector('.mk-note');
+  /* 무언가 잘못되면 조용히 멈추지 않고 화면에 이유를 보여줍니다 */
+  MK.onerr=e=>{ const m=e?.message||e?.reason?.message||e?.reason||e;
+    if(note){ note.style.color='#b45309'; note.textContent='문제가 생겼습니다: '+m; } };
+  addEventListener('error',MK.onerr);
+  addEventListener('unhandledrejection',MK.onerr);
   box.addEventListener('click',onMarkupClick);
   box.addEventListener('input',onNoteInput);
   box.addEventListener('input',onMarkupRange);
@@ -2207,6 +2212,7 @@ function closeMarkup(){
   if(!MK) return;
   removeEventListener('resize',fitMarkup);
   removeEventListener('orientationchange',fitMarkup);
+  if(MK.onerr){ removeEventListener('error',MK.onerr); removeEventListener('unhandledrejection',MK.onerr); }
   if(MK.blobUrl) URL.revokeObjectURL(MK.blobUrl);
   MK.box.remove(); MK=null;
 }
@@ -2337,16 +2343,12 @@ function mkPath(ctx,d){
       ctx.fill();
     }
     ctx.restore();
-    ctx.globalAlpha=Math.max(.55,op);
+    /* 투명도는 바탕에만 걸립니다. 색 띠와 글자는 언제나 또렷하게 */
+    ctx.globalAlpha=1;
     ctx.fillStyle=d.c;                                  // 왼쪽 색 띠
     ctx.beginPath(); ctx.roundRect ? ctx.roundRect(d.x,d.y,bar,boxH,[rd,0,0,rd]) : ctx.rect(d.x,d.y,bar,boxH);
     ctx.fill();
-    ctx.globalAlpha=1;
     ctx.fillStyle=d.c;                                  // 글자 색
-    if(op<0.5){                                          // 바탕이 옅으면 글자에 테두리를 둡니다
-      ctx.lineWidth=Math.max(2,fs/7); ctx.strokeStyle= d.c==='#ffffff' ? 'rgba(0,0,0,.65)' : 'rgba(255,255,255,.85)';
-      lines.forEach((l,i)=>ctx.strokeText(l, d.x+bar+pad, d.y+pad+i*lh));
-    }
     lines.forEach((l,i)=>ctx.fillText(l, d.x+bar+pad, d.y+pad+i*lh));
   }
 }
