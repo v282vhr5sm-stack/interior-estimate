@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.16.4';
+const APP_VERSION = '5.17.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -376,12 +376,36 @@ function deleteProj(id){ const p=S.projects.get(id); if(p?.share?.token) unpubli
 const CFG = window.APP_CONFIG || {};
 const sbConf = () => ({ url:(CFG.SUPABASE_URL||ls.get('sb_url')||'').trim(), key:(CFG.SUPABASE_KEY||ls.get('sb_key')||'').trim() });
 let sb=null, session=null, syncing=false, syncAgain=false, syncTimer=null, lastSyncAt=null, syncErr='';
+let rtChannel=null, RT_OK=false, RT_SEEN=false;
+/* 다른 기기에서 고친 내용을 곧바로 받아옵니다 (서버가 알려주는 대로) */
+function startRealtime(){
+  stopRealtime();
+  if(!sb||!session||window.__viewerMode) return;
+  try{
+    rtChannel=sb.channel('records-'+session.user.id)
+      .on('postgres_changes',
+          {event:'*',schema:'public',table:'records',filter:'user_id=eq.'+session.user.id},
+          ()=>{ RT_SEEN=true; scheduleSync(250); })
+      .subscribe(st=>{ RT_OK = st==='SUBSCRIBED'; updatePill(); });
+  }catch(e){ console.warn('realtime',e); RT_OK=false; }
+}
+function stopRealtime(){
+  if(!rtChannel) return;
+  try{ sb?.removeChannel(rtChannel); }catch(e){}
+  rtChannel=null; RT_OK=false;
+}
+/* 화면으로 돌아오거나 인터넷이 붙으면 바로 맞춰봅니다 */
+function wakeSync(){
+  if(window.__viewerMode||!sb||!session) return;
+  scheduleSync(150);
+  if(!rtChannel) startRealtime();
+}
 function initSupabase(){
   const {url,key}=sbConf();
   if(!url||!key||!window.supabase) return null;
   try{ return window.supabase.createClient(url,key,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:false}}); }catch(e){ console.warn(e); return null; }
 }
-function scheduleSync(ms=1500){ clearTimeout(syncTimer); syncTimer=setTimeout(sync,ms); updatePill(); }
+function scheduleSync(ms=800){ clearTimeout(syncTimer); syncTimer=setTimeout(sync,ms); updatePill(); }
 async function countDirty(){ return (await idb.all()).filter(r=>r.dirty).length; }
 async function sync(){
   if(!sb||!session){ updatePill(); return; }
@@ -3470,7 +3494,7 @@ function renderSettings(){
   return `<div class="stack"><h2>설정</h2><div class="set-grid">
     <section class="panel"><div class="panel-h"><h3>계정 · 동기화</h3></div><div class="panel-b">
       ${!sb?`<p class="muted small" style="margin:0">서버가 연결되지 않아 이 기기에만 저장되고 있습니다. 아래 “서버 연결”을 먼저 채워주세요.</p>`
-        : session?`<dl class="kv"><dt>로그인</dt><dd>${esc(session.user.email)}</dd><dt>마지막 동기화</dt><dd>${lastSyncAt?lastSyncAt.toLocaleString('ko-KR'):'—'}</dd>${syncErr?`<dt>오류</dt><dd style="color:var(--bad)">${esc(syncErr)}</dd>`:''}</dl>
+        : session?`<dl class="kv"><dt>로그인</dt><dd>${esc(session.user.email)}</dd><dt>마지막 동기화</dt><dd>${lastSyncAt?lastSyncAt.toLocaleString('ko-KR'):'—'}</dd><dt>실시간</dt><dd>${RT_SEEN?'켜짐 · 다른 기기에서 고치면 바로 들어옵니다' : RT_OK?'연결은 됐지만 서버에서 신호가 오지 않습니다 · supabase-3-realtime.sql 을 한 번 실행해주세요 (그동안 12초마다 확인합니다)' : '꺼짐 · 12초마다 확인합니다'}</dd>${syncErr?`<dt>오류</dt><dd style="color:var(--bad)">${esc(syncErr)}</dd>`:''}</dl>
           <label class="row" style="gap:8px;font-size:13px"><input type="checkbox" id="set-auto" ${ls.get('autoLogin')!=='0'?'checked':''} data-act-change="autoLogin"> 이 기기에서 자동 로그인
             ${ls.get('autoLogin')==='0'?'' : ls.get('autoPw')?'<span class="muted small">(켜져 있습니다)</span>'
               :'<span class="muted small">(다음에 로그인할 때부터 적용됩니다)</span>'}</label>
@@ -4136,15 +4160,21 @@ document.addEventListener('drop',ev=>{ const dz=ev.target.closest?.('#dz'); if(d
   const pdz=ev.target.closest?.('#pdz'); if(pdz){ ev.preventDefault(); pdz.classList.remove('drag'); uploadPlans(ev.dataTransfer.files,curProj()); } });
 document.addEventListener('dragover',ev=>{ const pdz=ev.target.closest?.('#pdz'); if(pdz){ ev.preventDefault(); pdz.classList.add('drag'); } });
 document.addEventListener('paste',ev=>{ if(VIEW!=='mat') return; const fs=[...(ev.clipboardData?.files||[])]; if(fs.length){ ev.preventDefault(); setSheetFiles(fs); } });
-document.addEventListener('visibilitychange',()=>{ if(window.__viewerMode) return; if(document.visibilityState==='hidden') flushWrites(); else { scheduleSync(200); checkUpdate(false); } });
+document.addEventListener('visibilitychange',()=>{ if(window.__viewerMode) return; if(document.visibilityState==='hidden') flushWrites(); else { wakeSync(); checkUpdate(false); } });
+/* 아이폰·아이패드는 앱을 내렸다 올릴 때 알려주는 신호가 제각각이라 여러 개를 다 듣습니다 */
+window.addEventListener('pageshow',wakeSync);
+window.addEventListener('focus',wakeSync);
+window.addEventListener('resume',wakeSync);
 window.addEventListener('pagehide',flushWrites);
 window.addEventListener('online',()=>scheduleSync(200));
 window.addEventListener('offline',updatePill);
-setInterval(()=>{ if(document.visibilityState==='visible') sync(); },60000);
+/* 서버가 알려주면 바로 받지만, 그게 안 될 때를 대비해 짧게 확인도 합니다 */
+setInterval(()=>{ if(document.visibilityState==='visible') sync(); }, 12000);
 
 async function logout(){
   flushWrites();
   try{ await push(); }catch(e){ if(!confirm('변경사항을 올리지 못했습니다. 그래도 로그아웃하면 이 기기에만 있던 변경사항이 사라집니다. 계속할까요?')) return; }
+  stopRealtime();
   ls.set('autoPw',null); ls.set('autoLogin','0');
   await sb.auth.signOut();
   await idb.clear(); S.materials.clear(); S.estimates.clear(); S.company={}; setCur(null);
@@ -4219,9 +4249,11 @@ async function connectSupabase(){
   if(!sb) return;
   try{ const {data}=await sb.auth.getSession(); session=data.session; }catch{}
   await autoLogin();
+  if(session) startRealtime();
   sb.auth.onAuthStateChange(async (_ev,s)=>{
     session=s; updatePill();
-    if(!s && !window.__viewerMode){ await autoLogin(); if(session){ updatePill(); sync(); } else safeRender(); }
+    if(s) startRealtime(); else stopRealtime();
+    if(!s && !window.__viewerMode){ await autoLogin(); if(session){ updatePill(); startRealtime(); sync(); } else safeRender(); }
   });
 }
 (async()=>{
