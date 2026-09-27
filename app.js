@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.22.1';
+const APP_VERSION = '5.23.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -2695,10 +2695,11 @@ async function toggleShare(p,on){
   }
   render();
 }
-async function copyShare(p){
-  const url=shareUrl(p.share.token);
-  try{ await navigator.clipboard.writeText(url); toast('링크를 복사했습니다'); }
-  catch{ prompt('이 주소를 복사해서 보내세요',url); }
+const shareMsg = p => `${siteName(p)} 공사 일정 안내\n${shareUrl(p.share.token)}`;
+async function copyShare(p,urlOnly){
+  const text = urlOnly ? shareUrl(p.share.token) : shareMsg(p);
+  try{ await navigator.clipboard.writeText(text); toast(urlOnly?'주소를 복사했습니다':'현장 이름과 함께 복사했습니다'); }
+  catch{ prompt('이 내용을 복사해서 보내세요',text); }
 }
 
 /* 도면 파일 */
@@ -2904,7 +2905,8 @@ function renderProject(p){
         <label class="row" style="gap:8px"><input type="checkbox" id="sh-on" ${p.share?.on?'checked':''} data-act-change="shareOn"> <b>공유 링크 켜기</b></label>
         ${p.share?.on&&p.share?.token?`
           <div class="row" style="margin-top:10px"><input class="f" id="sh-url" readonly value="${esc(shareUrl(p.share.token))}" style="flex:1;min-width:220px" onclick="this.select()">
-            <button class="btn pri" data-act="copyShare">링크 복사</button>
+            <button class="btn pri" data-act="copyShare">이름과 함께 복사</button>
+            <button class="btn" data-act="copyShare" data-only="1">주소만 복사</button>
             <a class="btn" href="${esc(shareUrl(p.share.token))}" target="_blank" rel="noopener">미리보기</a></div>
           <label class="row small" style="gap:6px;margin-top:10px"><input type="checkbox" id="sh-memo" ${p.share?.showMemo!==false?'checked':''} data-act-change="shareMemo"> 작업 메모도 함께 보여주기</label>
           <p class="muted small" style="margin:8px 0 0">일정을 고치면 링크 내용도 자동으로 바뀝니다. 링크를 끄면 그 주소는 바로 안 열립니다.</p>`
@@ -4193,7 +4195,7 @@ document.addEventListener('click',async ev=>{
     case 'pickPlan': PLAN_TASK=''; $('#filePlan').click(); break;
     case 'taskPhoto': { const p=curProj(); PLAN_TASK=p.tasks[+t.dataset.ti]?.id||''; PLAN_FOLDER=''; $('#filePlan').setAttribute('accept','image/*'); $('#filePlan').click(); break; }
     case 'delPlan': removePlan(curProj(),t.dataset.fid); break;
-    case 'copyShare': copyShare(curProj()); break;
+    case 'copyShare': copyShare(curProj(), t.dataset.only==='1'); break;
     case 'month': { if(t.dataset.d==='0'){ const d=new Date(); MONTH=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }
       else { const [y,m]=MONTH.split('-').map(Number); const d=new Date(y,m-1+ +t.dataset.d,1); MONTH=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }
       render(); break; }
