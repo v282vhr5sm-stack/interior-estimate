@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.17.0';
+const APP_VERSION = '5.17.1';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -376,13 +376,26 @@ function deleteProj(id){ const p=S.projects.get(id); if(p?.share?.token) unpubli
 const CFG = window.APP_CONFIG || {};
 const sbConf = () => ({ url:(CFG.SUPABASE_URL||ls.get('sb_url')||'').trim(), key:(CFG.SUPABASE_KEY||ls.get('sb_key')||'').trim() });
 let sb=null, session=null, syncing=false, syncAgain=false, syncTimer=null, lastSyncAt=null, syncErr='';
-let rtChannel=null, RT_OK=false, RT_SEEN=false;
+let rtChannel=null, RT_OK=false, RT_SEEN=false, pushedSomething=false;
+const CLIENT_ID = Math.random().toString(36).slice(2);   // 이 기기를 구분하는 이름
+/* 내가 올렸다고 다른 기기에 알려 줍니다 */
+function tellOtherDevices(){
+  if(!rtChannel||!RT_OK) return;
+  try{ rtChannel.send({type:'broadcast',event:'changed',payload:{from:CLIENT_ID,at:Date.now()}}); }
+  catch(e){ console.warn('알림 실패',e); }
+}
 /* 다른 기기에서 고친 내용을 곧바로 받아옵니다 (서버가 알려주는 대로) */
 function startRealtime(){
   stopRealtime();
   if(!sb||!session||window.__viewerMode) return;
   try{
-    rtChannel=sb.channel('records-'+session.user.id)
+    rtChannel=sb.channel('records-'+session.user.id,{config:{broadcast:{self:false}}})
+      /* 다른 기기가 "바꿨다"고 알려주면 바로 받아옵니다 (서버 설정이 필요 없습니다) */
+      .on('broadcast',{event:'changed'}, msg=>{
+        if(msg?.payload?.from===CLIENT_ID) return;
+        RT_SEEN=true; scheduleSync(200);
+      })
+      /* 서버가 표 변경을 알려주도록 켜 두었다면 그것도 함께 듣습니다 */
       .on('postgres_changes',
           {event:'*',schema:'public',table:'records',filter:'user_id=eq.'+session.user.id},
           ()=>{ RT_SEEN=true; scheduleSync(250); })
@@ -412,13 +425,15 @@ async function sync(){
   if(!navigator.onLine){ updatePill(); return; }
   if(syncing){ syncAgain=true; return; }
   syncing=true; syncErr=''; updatePill();
-  try{ await push(); await pull(); lastSyncAt=new Date(); }
+  try{ pushedSomething=false; await push(); await pull(); lastSyncAt=new Date();
+       if(pushedSomething) tellOtherDevices(); }
   catch(e){ console.warn('sync',e); syncErr=e?.message||String(e); }
   finally{ syncing=false; updatePill(); if(syncAgain){ syncAgain=false; scheduleSync(300); } }
 }
 async function push(){
   const dirty=(await idb.all()).filter(r=>r.dirty);
   const userId=session.user.id;
+  if(dirty.length) pushedSomething=true;         // 올린 게 있으면 다른 기기에 알려줍니다
   for(let i=0;i<dirty.length;i+=15){
     const chunk=dirty.slice(i,i+15);
     const rows=chunk.map(r=>({user_id:userId,col:r.col,id:r.id,data:r.data,deleted:!!r.deleted,client_updated:r.updated}));
@@ -3494,7 +3509,7 @@ function renderSettings(){
   return `<div class="stack"><h2>설정</h2><div class="set-grid">
     <section class="panel"><div class="panel-h"><h3>계정 · 동기화</h3></div><div class="panel-b">
       ${!sb?`<p class="muted small" style="margin:0">서버가 연결되지 않아 이 기기에만 저장되고 있습니다. 아래 “서버 연결”을 먼저 채워주세요.</p>`
-        : session?`<dl class="kv"><dt>로그인</dt><dd>${esc(session.user.email)}</dd><dt>마지막 동기화</dt><dd>${lastSyncAt?lastSyncAt.toLocaleString('ko-KR'):'—'}</dd><dt>실시간</dt><dd>${RT_SEEN?'켜짐 · 다른 기기에서 고치면 바로 들어옵니다' : RT_OK?'연결은 됐지만 서버에서 신호가 오지 않습니다 · supabase-3-realtime.sql 을 한 번 실행해주세요 (그동안 12초마다 확인합니다)' : '꺼짐 · 12초마다 확인합니다'}</dd>${syncErr?`<dt>오류</dt><dd style="color:var(--bad)">${esc(syncErr)}</dd>`:''}</dl>
+        : session?`<dl class="kv"><dt>로그인</dt><dd>${esc(session.user.email)}</dd><dt>마지막 동기화</dt><dd>${lastSyncAt?lastSyncAt.toLocaleString('ko-KR'):'—'}</dd><dt>실시간</dt><dd>${RT_SEEN?'켜짐 · 다른 기기에서 고치면 바로 들어옵니다' : RT_OK?'연결됨 · 다른 기기가 고치면 바로 들어옵니다 (아직 받은 신호 없음)' : '끊김 · 12초마다 확인합니다'}</dd>${syncErr?`<dt>오류</dt><dd style="color:var(--bad)">${esc(syncErr)}</dd>`:''}</dl>
           <label class="row" style="gap:8px;font-size:13px"><input type="checkbox" id="set-auto" ${ls.get('autoLogin')!=='0'?'checked':''} data-act-change="autoLogin"> 이 기기에서 자동 로그인
             ${ls.get('autoLogin')==='0'?'' : ls.get('autoPw')?'<span class="muted small">(켜져 있습니다)</span>'
               :'<span class="muted small">(다음에 로그인할 때부터 적용됩니다)</span>'}</label>

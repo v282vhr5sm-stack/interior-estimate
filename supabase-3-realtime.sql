@@ -1,11 +1,12 @@
--- 실시간 동기화 켜기
--- Supabase 대시보드 → SQL Editor 에 붙여넣고 Run 한 번만 하면 됩니다.
--- 한 기기에서 고치면 다른 기기(아이폰·아이패드·노트북)에 바로 들어옵니다.
+-- (선택) 실시간 동기화를 한 겹 더 튼튼하게
+--
+-- 안 하셔도 됩니다. 앱은 이미 기기끼리 서로 "바꿨다"고 알려주는 방식으로
+-- 바로바로 맞춰집니다. 아래를 실행하면 서버가 직접 알려주는 길이 하나 더
+-- 생겨서, 앱을 거치지 않고 데이터가 바뀐 경우에도 곧바로 반영됩니다.
+--
+-- Supabase 대시보드 → SQL Editor 에 붙여넣고 Run 한 번이면 끝입니다.
 
--- records 표의 변경을 실시간으로 알리도록 합니다.
 alter publication supabase_realtime add table public.records;
-
--- 어떤 줄이 바뀌었는지 알리려면 기본키가 필요합니다. (이미 있으면 그대로 둡니다)
 alter table public.records replica identity default;
 
 -- 확인: 아래를 실행했을 때 records 가 보이면 켜진 것입니다.
