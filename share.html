@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>공사 일정 안내</title>
+<meta name="theme-color" content="#2E5B4E">
+<!-- 이 파일 하나로 끝납니다. 바깥에서 받아오는 글꼴·라이브러리가 없어서
+     카카오톡 같은 앱 안 브라우저에서도 그냥 열립니다. -->
+<style>
+:root{--ink:#16201b;--mut:#5f6a64;--line:#dfe5e1;--line2:#eef2ef;--surface:#fff;--bg:#f4f7f5;
+  --accent:#2e5b4e;--warn:#f59e0b;--good:#2f9e6e}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;
+  font-size:15px;line-height:1.5;-webkit-text-size-adjust:100%}
+.wrap{max-width:720px;margin:0 auto;padding:14px 12px 40px;display:flex;flex-direction:column;gap:12px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px}
+h1{font-size:20px;margin:4px 0 6px}
+h2{font-size:15px;margin:0 0 10px}
+.eyebrow{font-size:12px;color:var(--mut);letter-spacing:.02em}
+.muted{color:var(--mut)}
+.small{font-size:13px}
+.row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.badge{display:inline-block;background:var(--line2);border-radius:999px;padding:2px 9px;font-size:12px;white-space:nowrap}
+.badge.warn{background:#fdf1dc;color:#8a5a06}
+.badge.good{background:#e4f5ec;color:#1d6b4b}
+.note{background:#fbfdfc;border:1px solid var(--line2);border-radius:9px;padding:10px 12px;margin:10px 0 0;white-space:pre-wrap}
+/* 일정표 */
+.gx{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.gx table{border-collapse:collapse;font-size:12px}
+.gx th,.gx td{border-bottom:1px solid var(--line2);padding:0}
+.gx th.d{min-width:30px;text-align:center;font-weight:600;color:var(--mut);padding:4px 0;cursor:pointer}
+.gx th.d.sel{background:var(--accent);color:#fff;border-radius:6px 6px 0 0}
+.gx th.d.wk{color:#c2564c}
+.gx td.n{padding:5px 10px 5px 2px;white-space:nowrap;font-size:13px;position:sticky;left:0;background:var(--surface)}
+.gx td.c{height:26px}
+.gx td.c i{display:block;height:13px;background:var(--line2);border-radius:3px}
+.gx td.c.on i{background:#bcd9cb}
+.gx td.c.s i{border-radius:7px 0 0 7px}
+.gx td.c.e i{border-radius:0 7px 7px 0}
+.gx td.c.today i{box-shadow:inset 0 0 0 2px var(--accent)}
+/* 그날 작업 */
+.dayp{border-top:1px solid var(--line2);margin-top:12px;padding-top:12px}
+.tl{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
+.tl li{border:1px solid var(--line);border-radius:10px;padding:10px;cursor:pointer;background:var(--surface)}
+.tl li.on{border-color:var(--accent);box-shadow:inset 3px 0 0 var(--accent)}
+.tl b{font-size:14px}
+.go{color:var(--mut);font-size:12px;margin-left:auto}
+.det{margin-top:10px;border:1px solid var(--line);border-radius:10px;padding:12px;background:#fbfdfc}
+.ph{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-top:10px}
+.ph figure{margin:0;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:var(--surface)}
+.ph img{width:100%;aspect-ratio:4/3;object-fit:cover;display:block}
+.ph figcaption{padding:7px 8px;font-size:12px}
+.ph a.file{display:flex;align-items:center;justify-content:center;height:90px;text-decoration:none;color:var(--accent);font-weight:600;background:var(--line2)}
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:9px;padding:8px 14px;font:inherit;font-size:14px;cursor:pointer;color:var(--ink)}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+.mid{text-align:center;padding:40px 16px;color:var(--mut)}
+.foot{text-align:center;font-size:12px;color:var(--mut);padding-top:6px}
+@media (prefers-color-scheme:dark){
+  :root{--ink:#e8eeea;--mut:#a4b0aa;--line:#31403a;--line2:#26322d;--surface:#1b2420;--bg:#141b18}
+  .gx td.c i{background:#26322d}.gx td.c.on i{background:#39614f}
+  .note,.det{background:#1e2823}
+}
+</style>
+</head>
+<body>
+<div class="wrap" id="app"><div class="mid">불러오는 중…</div></div>
+<script>
+(function(){
+  var SB='https://wcxowlhcneuyiwyxtisq.supabase.co';
+  var KEY='sb_publishable_ydS1XaRSe8qt2kskvA_Q4A_AydWqvB6';
+  var app=document.getElementById('app');
+  var token=new URLSearchParams(location.search).get('s')||'';
+  var P=null, SELD='', SELT='';
+  var WD=['일','월','화','수','목','금','토'], DAY=86400000;
+
+  function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+  function dnum(s){ if(!s) return 0; var m=String(s).match(/^(\d{4})-(\d{2})-(\d{2})$/); return m?Date.UTC(+m[1],+m[2]-1,+m[3]):0; }
+  function dstr(n){ var d=new Date(n); return d.getUTCFullYear()+'-'+String(d.getUTCMonth()+1).padStart(2,'0')+'-'+String(d.getUTCDate()).padStart(2,'0'); }
+  function todayN(){ var d=new Date(); return Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()); }
+  function isImg(f){ return /^image\//.test(f.type||'') || /\.(jpe?g|png|gif|webp|heic)$/i.test(f.name||''); }
+
+  function show(html){ app.innerHTML=html; }
+  function fail(net,msg){
+    show('<div class="card"><div class="mid">'
+      + (net ? '<h1>잠시 연결이 안 됩니다</h1><p class="small">인터넷이 잠깐 끊겼을 수 있습니다.</p>'
+             : '<h1>링크를 열 수 없습니다</h1><p class="small">주소가 바뀌었거나 공유가 끝났을 수 있습니다.<br>보내주신 분께 새 링크를 요청해주세요.</p>')
+      + '<p style="margin-top:14px"><button class="btn pri" onclick="location.reload()">다시 열기</button></p>'
+      + (msg?'<p class="small muted" style="margin-top:10px">('+esc(msg)+')</p>':'')
+      + '</div></div>');
+  }
+
+  function load(){
+    if(!token){ fail(false,''); return; }
+    var xhr=new XMLHttpRequest();                      // 오래된 브라우저에서도 확실하게
+    xhr.open('POST', SB+'/rest/v1/rpc/get_share', true);
+    xhr.setRequestHeader('apikey', KEY);
+    xhr.setRequestHeader('Content-Type','application/json');
+    xhr.timeout=20000;
+    xhr.onload=function(){
+      if(xhr.status<200||xhr.status>=300){ fail(false,'서버 '+xhr.status); return; }
+      try{ P=JSON.parse(xhr.responseText); }catch(e){ fail(false,'응답을 읽지 못했습니다'); return; }
+      if(!P){ fail(false,''); return; }
+      paint();
+    };
+    xhr.onerror=function(){ fail(true,''); };
+    xhr.ontimeout=function(){ fail(true,'시간 초과'); };
+    xhr.send(JSON.stringify({p_token:token}));
+  }
+
+  function paint(){
+    if(P.closed){
+      show('<div class="card"><div class="mid"><h1>공사가 끝났습니다</h1>'
+        +'<p>'+esc((P.site&&P.site.name)||'')+(P.endedAt?' · '+esc(P.endedAt)+' 준공':'')+'</p>'
+        +'<p class="small">그동안 협조해주셔서 감사합니다.</p></div></div>');
+      return;
+    }
+    var s=P.site||{}, tasks=P.tasks||[], co=P.company||{};
+    var h='<section class="card">'
+      +'<div class="eyebrow">공사 일정 안내</div><h1>'+esc(s.name||'현장')+'</h1>'
+      +'<div class="small muted">'+esc([s.address, s.client?s.client+' 님':''].filter(Boolean).join(' · '))+'</div>'
+      +'<div class="row" style="margin-top:10px">'
+      + (s.from?'<span class="badge">'+esc(s.from)+' ~ '+esc(s.to)+'</span>':'')
+      + '<span class="badge good">진행률 '+(s.progress||0)+'%</span></div>'
+      + (s.note?'<div class="note">'+esc(s.note)+'</div>':'')
+      +'</section>';
+
+    h+='<section class="card"><h2>공정 일정 <span class="small muted" style="font-weight:400">보기 전용</span></h2>';
+    var ds=tasks.map(function(t){return dnum(t.start);}).filter(Boolean)
+      .concat(tasks.map(function(t){return dnum(t.end);}).filter(Boolean));
+    if(!ds.length){ h+='<p class="small muted">아직 등록된 일정이 없습니다.</p>'; }
+    else{
+      var from=Math.min.apply(null,ds), to=Math.max.apply(null,ds), tN=todayN();
+      var cols=[]; for(var d=from; d<=to; d+=DAY) cols.push(d);
+      h+='<div class="gx"><table><thead><tr><th></th>';
+      cols.forEach(function(d){ var dt=new Date(d), w=dt.getUTCDay();
+        h+='<th class="d'+(dstr(d)===SELD?' sel':'')+(w===0||w===6?' wk':'')+'" data-day="'+dstr(d)+'">'
+          + dt.getUTCDate()+'<br>'+WD[w]+'</th>'; });
+      h+='</tr></thead><tbody>';
+      tasks.forEach(function(t){
+        var a=dnum(t.start), b=dnum(t.end)||a;
+        h+='<tr><td class="n">'+esc(t.name)+'</td>';
+        cols.forEach(function(d){
+          var on=a&&d>=a&&d<=b;
+          h+='<td class="c'+(on?' on':'')+(on&&d===a?' s':'')+(on&&d===b?' e':'')+(on&&d===tN?' today':'')+'"><i></i></td>';
+        });
+        h+='</tr>';
+      });
+      h+='</tbody></table></div>';
+      h+= SELD ? dayPanel(tasks) : '<p class="small muted" style="margin:12px 0 0">날짜를 누르면 그날 작업과 사진을 볼 수 있습니다.</p>';
+    }
+    h+='</section>';
+    h+='<p class="foot">'+esc(co.name||'')+(co.phone?' · '+esc(co.phone):'')+'<br>이 화면은 보기 전용입니다. 문의는 담당자에게 연락해주세요.</p>';
+    show(h);
+  }
+
+  function dayPanel(tasks){
+    var d=dnum(SELD), dt=new Date(d);
+    var items=tasks.filter(function(t){ var a=dnum(t.start), b=dnum(t.end)||a; return a&&d>=a&&d<=b; });
+    var h='<div class="dayp"><div class="row"><b>'+(dt.getUTCMonth()+1)+'월 '+dt.getUTCDate()+'일 ('+WD[dt.getUTCDay()]+') 작업</b>'
+      +'<span class="small muted">'+(items.length?items.length+'건':'작업 없음')+'</span>'
+      +'<span style="margin-left:auto"></span><button class="btn" data-day="">닫기</button></div>';
+    if(!items.length) h+='<p class="small muted" style="margin:10px 0 0">이 날은 잡힌 작업이 없습니다.</p>';
+    else{
+      h+='<ul class="tl">';
+      items.forEach(function(t){
+        h+='<li class="'+(SELT===t.id?'on':'')+'" data-task="'+esc(t.id)+'"><div class="row">'
+          +'<span class="badge'+(t.status==='완료'?' good':' warn')+'">'+esc(t.status||'예정')+'</span>'
+          +'<b>'+esc(t.name)+'</b>'
+          +'<span class="small muted">'+esc(t.worker||'담당 미정')+'</span>'
+          +'<span class="go">'+(SELT===t.id?'▾':'사진·안내 ›')+'</span></div>'
+          + (SELT===t.id?detail(t):'') +'</li>';
+      });
+      h+='</ul>';
+    }
+    return h+'</div>';
+  }
+
+  function detail(t){
+    var files=(P.files||[]).filter(function(f){ return f.taskId===t.id; });
+    var imgs=files.filter(isImg), docs=files.filter(function(f){ return !isImg(f); });
+    var h='<div class="det"><div class="small muted">'+esc(t.start||'')
+      + (t.end&&t.end!==t.start?' ~ '+esc(t.end):'')+'</div>';
+    if(t.memo && P.showMemo!==false) h+='<div class="note">'+esc(t.memo)+'</div>';
+    if(imgs.length){
+      h+='<div class="ph">';
+      imgs.forEach(function(f){
+        h+='<figure><a href="'+esc(f.url)+'" target="_blank" rel="noopener"><img src="'+esc(f.url)+'" alt="" loading="lazy"></a>'
+          + (f.memo?'<figcaption><b>'+esc(f.memo)+'</b></figcaption>':'')+'</figure>';
+      });
+      h+='</div>';
+    } else h+='<p class="small muted" style="margin:10px 0 0">이 작업에 올라온 사진이 아직 없습니다.</p>';
+    if(docs.length){
+      h+='<div class="ph">';
+      docs.forEach(function(f){
+        h+='<figure><a class="file" href="'+esc(f.url)+'" target="_blank" rel="noopener">파일 열기</a>'
+          +'<figcaption class="muted">'+esc(f.name||'')+'</figcaption></figure>';
+      });
+      h+='</div>';
+    }
+    return h+'</div>';
+  }
+
+  document.addEventListener('click', function(ev){
+    var t=ev.target;
+    var dayEl=t.closest?t.closest('[data-day]'):null;
+    if(dayEl){ var v=dayEl.getAttribute('data-day')||'';
+      SELD = (!v||v===SELD)?'':v; SELT=''; paint(); return; }
+    var li=t.closest?t.closest('[data-task]'):null;
+    if(li){ var id=li.getAttribute('data-task');
+      SELT = (id===SELT)?'':id; paint();
+      if(SELT){ var el=document.querySelector('[data-task="'+id+'"]'); if(el&&el.scrollIntoView) el.scrollIntoView({block:'nearest'}); }
+    }
+  });
+
+  load();
+})();
+</script>
+</body>
+</html>
