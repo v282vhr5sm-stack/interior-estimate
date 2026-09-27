@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.21.3';
+const APP_VERSION = '5.22.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -2951,8 +2951,8 @@ function vTaskPanel(payload){
       <button class="btn ghost sm" data-act="vTask" data-id="">닫기</button></div>
     <div class="muted small">${esc(t.start||'')}${t.end&&t.end!==t.start?' ~ '+esc(t.end):''}${t.worker?' · '+esc(t.worker):''}</div>
     ${t.memo&&payload.showMemo!==false?`<p class="status" style="margin:10px 0 0">${esc(t.memo)}</p>`:''}
-    ${imgs.length?`<div class="files" style="margin-top:10px">${imgs.map(f=>`<figure class="file">
-        <a href="${esc(f.url)}" target="_blank" rel="noopener"><img src="${esc(f.url)}" alt="${esc(f.memo||f.name)}" loading="lazy"></a>
+    ${imgs.length?`<div class="files" style="margin-top:10px">${imgs.map((f,i)=>`<figure class="file">
+        <button class="thumb-btn" data-act="vShot" data-tid="${esc(t.id)}" data-i="${i}" aria-label="사진 크게 보기"><img src="${esc(f.url)}" alt="${esc(f.memo||f.name)}" loading="lazy"></button>
         <figcaption>${f.memo?`<b>${esc(f.memo)}</b>`:''}<span class="muted small">${esc(f.name)}</span></figcaption></figure>`).join('')}</div>`
       :'<p class="muted small" style="margin:10px 0 0">이 작업에 올라온 사진이 아직 없습니다.</p>'}
     ${docs.length?`<div class="files" style="margin-top:10px">${docs.map(f=>{const k=fileKind(f); return `<figure class="file">
@@ -4207,6 +4207,12 @@ document.addEventListener('click',async ev=>{
       if(VSEL_TASK) setTimeout(()=>document.querySelector('.vtask')?.scrollIntoView({block:'nearest'}),60);
       break; }
     case 'vRetry': location.reload(); break;
+    case 'vShot': {                              // 공유 화면에서 사진 크게 보기 (좌우로 넘기고 ✕로 닫습니다)
+      const p=window.__viewerPayload; if(!p) break;
+      const list=(p.files||[]).filter(f=>f.taskId===t.dataset.tid && fileKind(f)==='img')
+        .map(f=>({url:f.url, name:f.name, memo:f.memo||''}));
+      if(list.length) openLightbox(list, +t.dataset.i||0);
+      break; }
     case 'view3d': view3d(+t.dataset.i); break;
     case 'close3d': document.querySelector('.modal')?.remove(); break;
   }
