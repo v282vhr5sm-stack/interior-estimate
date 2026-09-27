@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.24.0';
+const APP_VERSION = '5.24.1';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -2647,7 +2647,7 @@ async function showTxt(fileId){
    바깥에서 받아오는 것이 하나도 없어 카톡 같은 앱 안 브라우저에서도 잘 열립니다. */
 const shareBase = () => location.origin + location.pathname.replace(/[^/]*$/,'') + 'share.html?s=';
 /* 현장별 안내 파일이 만들어져 있으면 그 주소를 씁니다 (미리보기에 현장 이름이 나옵니다) */
-const shareUrl = p => (typeof p==='string') ? shareBase()+p : (p?.share?.cardUrl || shareBase()+(p?.share?.token||''));
+const shareUrl = p => (typeof p==='string') ? shareBase()+p : shareBase()+(p?.share?.token||'');
 function sharePayload(p){
   const r=projRange(p);
   return {v:1, updatedAt:new Date().toISOString(),
@@ -2667,35 +2667,6 @@ async function publishShare(p){
     if(error) throw error;
     p.share.publishedAt=Date.now();
   }catch(e){ console.warn('share',e); toast('공유 링크 갱신에 실패했습니다: '+(e.message||'')); }
-  publishShareCard(p);          // 미리보기 카드용 파일은 뒤에서 조용히 만듭니다
-}
-/* 카톡·문자 미리보기 카드에 현장 이름이 뜨도록, 현장마다 안내 파일을 하나 만들어 둡니다.
-   (카톡은 화면을 그리지 않고 파일에 적힌 글만 읽어가서 이렇게 해야 합니다) */
-async function publishShareCard(p){
-  if(!sb||!session||!p.share?.on||!p.share?.token) return;
-  try{
-    const res=await fetch('share.html');
-    if(!res.ok) throw new Error('share.html '+res.status);
-    let html=await res.text();
-    const name=siteName(p), r=projRange(p);
-    const title=`${name} 공사 일정`;
-    const desc=(r?`${dstr(r.from)} ~ ${dstr(r.to)} · `:'')+'공정 일정과 현장 사진을 확인하실 수 있습니다.';
-    const at=s=>String(s).replace(/"/g,'&quot;').replace(/</g,'&lt;');
-    html=html
-      .replace(/<title>[^<]*<\/title>/, `<title>${at(title)}</title>`)
-      .replace(/(<meta name="description" content=")[^"]*/, `$1${at(desc)}`)
-      .replace(/(<meta property="og:title" content=")[^"]*/, `$1${at(title)}`)
-      .replace(/(<meta property="og:description" content=")[^"]*/, `$1${at(desc)}`)
-      .replace("var FIXED_TOKEN='';", `var FIXED_TOKEN=${JSON.stringify(p.share.token)};`);
-    const path=`${session.user.id}/_share/${p.share.token}.html`;
-    const {error}=await sb.storage.from('plans').upload(path,new Blob([html],{type:'text/html; charset=utf-8'}),
-      {contentType:'text/html; charset=utf-8', upsert:true, cacheControl:'60'});
-    if(error) throw error;
-    const {data}=sb.storage.from('plans').getPublicUrl(path);
-    if(p.share.cardUrl!==data.publicUrl){ p.share.cardUrl=data.publicUrl; saveProj(p); }
-  }catch(e){
-    console.warn('sharecard',e);   // 실패해도 기본 링크는 그대로 씁니다
-  }
 }
 async function unpublishShare(token){ if(!sb||!session||!token) return;
   try{ await sb.from('shares').delete().eq('token',token); }catch(e){ console.warn(e); }
