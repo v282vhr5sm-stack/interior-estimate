@@ -5,6 +5,15 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>공사 일정 안내</title>
 <meta name="theme-color" content="#2E5B4E">
+<!-- 카카오톡·문자에 링크를 붙였을 때 보이는 미리보기 카드.
+     카톡은 이 파일을 그대로 읽기만 하고 화면을 그리지는 않아서,
+     현장 이름은 여기에 넣을 수 없습니다 (현장마다 파일이 따로 있어야 합니다). -->
+<meta name="description" content="공정 일정과 현장 사진을 확인하실 수 있습니다.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="공사 일정 안내">
+<meta property="og:description" content="공정 일정과 현장 사진을 확인하실 수 있습니다.">
+<meta property="og:image" content="https://v282vhr5sm-stack.github.io/interior-estimate/icons/icon-512.png">
+<meta property="og:locale" content="ko_KR">
 <!-- 이 파일 하나로 끝납니다. 바깥에서 받아오는 글꼴·라이브러리가 없어서
      카카오톡 같은 앱 안 브라우저에서도 그냥 열립니다. -->
 <style>
@@ -133,6 +142,7 @@ body.noscroll{overflow:hidden;position:fixed;width:100%}
       return;
     }
     var s=P.site||{}, tasks=P.tasks||[], co=P.company||{};
+    if(s.name) document.title=s.name+' 공사 일정';   // 열고 나면 제목에 현장 이름이 나옵니다
     var h='<section class="card">'
       +'<div class="eyebrow">공사 일정 안내</div><h1>'+esc(s.name||'현장')+'</h1>'
       +'<div class="small muted">'+esc([s.address, s.client?s.client+' 님':''].filter(Boolean).join(' · '))+'</div>'
