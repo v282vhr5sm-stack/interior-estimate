@@ -1,6 +1,6 @@
 // 앱 파일(index.html, app.js, styles.css 등)을 고쳐서 다시 올릴 때는 이 숫자를 꼭 올리세요.
 // 그래야 아이폰·아이패드·노트북에 "새 버전이 있습니다" 알림이 뜨고 새 버전이 적용됩니다.
-const VERSION = 91;
+const VERSION = 92;
 const CACHE = 'estimate-v' + VERSION;
 const SHELL = [
   './', 'index.html', 'share.html', 'styles.css', 'app.js', 'manifest.webmanifest',
@@ -33,7 +33,9 @@ self.addEventListener('fetch', e => {
   }
   // 앱 화면
   if (req.mode === 'navigate') {
-    e.respondWith(caches.match('index.html').then(r => r || fetch(req)));
+    // 손님용 공유 화면은 앱이 아니라 그 한 장짜리 파일로 엽니다
+    const page = url.pathname.endsWith('/share.html') ? 'share.html' : 'index.html';
+    e.respondWith(caches.match(page).then(r => r || fetch(req)));
     return;
   }
   // 나머지(앱 파일, 라이브러리, 글꼴)는 저장본 우선, 없으면 받아서 저장
