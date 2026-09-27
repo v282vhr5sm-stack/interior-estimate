@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.16.3';
+const APP_VERSION = '5.16.4';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -2793,13 +2793,22 @@ function renderProject(p){
         </div>
         ${(p.files||[]).length?`<div class="files">${p.files.map(f=>{const k=fileKind(f); return `<figure class="file">
           ${k==='img'?`<a href="${esc(f.url)}" target="_blank" rel="noopener"><img src="${esc(f.url)}" alt="${esc(f.name)}" loading="lazy"></a>`
+            :k==='txt'?`<button class="fi" data-act="openTxt" data-fid="${f.id}"><span>${KIND_LABEL[k]}</span></button>`
             :`<a class="fi" href="${esc(f.url)}" target="_blank" rel="noopener"><span>${KIND_LABEL[k]}</span></a>`}
+          ${f.marked?'<span class="mk-badge">표시함</span>':''}
           <figcaption><b title="${esc(f.name)}">${esc(f.name)}</b>
             <select class="f small" data-bind="file:${f.id}:taskId" style="padding:3px 5px">
               <option value="">공정 미지정</option>
               ${(p.tasks||[]).map(t=>`<option value="${t.id}" ${f.taskId===t.id?'selected':''}>${esc(t.name)}</option>`).join('')}
             </select>
+            ${(p.folders||[]).length?`<select class="f small" data-bind="file:${f.id}:folderId" style="padding:3px 5px">
+              <option value="">폴더 없음</option>
+              ${(p.folders||[]).map(x=>`<option value="${x.id}" ${f.folderId===x.id?'selected':''}>${esc(folderTitle(p,x))}</option>`).join('')}
+            </select>`:''}
             <input class="f small" data-bind="file:${f.id}:memo" value="${esc(f.memo||'')}" placeholder="사진 설명 (예: 방수 2회차 완료)" style="padding:3px 5px">
+            ${k==='img'?`<div class="row" style="gap:6px">
+              <button class="btn ghost sm" data-act="markup" data-fid="${f.id}">✏️ 표시</button>
+              ${f.origUrl?`<button class="btn ghost sm" data-act="unmark" data-fid="${f.id}">원본</button>`:''}</div>`:''}
             <div class="row" style="gap:6px;justify-content:space-between">
               <label class="small row" style="gap:5px"><input type="checkbox" data-bind="file:${f.id}:shared" ${f.shared!==false?'checked':''}> 공유</label>
               <span class="muted small">${(f.size/1024/1024).toFixed(1)}MB</span>
