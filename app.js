@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.24.1';
+const APP_VERSION = '5.26.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -502,6 +502,19 @@ async function updatePill(){
 const UNITS = ['㎡','평','식','인','롤','박스','장','포','통','말','개','m','kg','대','매','세트'];
 const CUSTOM_UNIT = new Set();          // 직접 입력으로 열어둔 자재
 const CUSTOM_UNIT_REV = new Set();      // 사진에서 읽은 줄 중 직접 입력으로 열어둔 것
+const CUSTOM_WORKER = new Set();        // 담당을 직접 입력으로 열어둔 작업
+/* 공정 일정의 담당 — 그 공정 업체 목록에서 고릅니다 */
+function workerCell(t,ti){
+  const list=vendorsFor(t.proc||'');
+  const names=list.map(v=>v.name);
+  const custom=CUSTOM_WORKER.has(t.id) || (t.worker && !names.includes(t.worker));
+  return `<select class="f" id="t${ti}-wsel" data-taskworker="${ti}">
+      <option value="" ${!custom&&!t.worker?'selected':''}>— 담당 고르기 —</option>
+      ${list.map(v=>`<option value="${esc(v.name)}" ${!custom&&t.worker===v.name?'selected':''}>${esc(v.name)}</option>`).join('')}
+      <option value="__custom" ${custom?'selected':''}>직접 입력</option>
+    </select>
+    ${custom?`<input class="f" id="t${ti}-w" data-bind="task:${ti}:worker" value="${esc(t.worker||'')}" placeholder="예: 김반장" style="margin-top:4px">`:''}`;
+}
 /* 사진에서 읽은 줄의 단위 고르기 */
 function revUnitCell(it,i){
   const custom = CUSTOM_UNIT_REV.has(i) || (it.unit && !UNITS.includes(it.unit));
@@ -2827,7 +2840,7 @@ function renderProject(p){
         <thead><tr><th class="w-name">작업</th><th>담당</th><th>시작</th><th>종료</th><th>상태</th><th>작업 메모</th><th></th></tr></thead>
         <tbody>${(p.tasks||[]).map((t,ti)=>`<tr>
           <td class="c-name"><input class="f" id="t${ti}-name" data-bind="task:${ti}:name" value="${esc(t.name)}" placeholder="작업 이름" style="font-weight:500"></td>
-          <td data-l="담당"><input class="f" id="t${ti}-w" data-bind="task:${ti}:worker" value="${esc(t.worker||'')}" placeholder="예: 김반장"></td>
+          <td data-l="담당">${workerCell(t,ti)}</td>
           <td data-l="시작"><input class="f" type="date" id="t${ti}-s" data-bind="task:${ti}:start" value="${esc(t.start||'')}"></td>
           <td data-l="종료"><input class="f" type="date" id="t${ti}-e" data-bind="task:${ti}:end" value="${esc(t.end||'')}" min="${esc(t.start||'')}"></td>
           <td data-l="상태"><select class="f" id="t${ti}-st" data-bind="task:${ti}:status">${['예정','진행','완료'].map(s=>`<option ${s===(t.status||'예정')?'selected':''}>${s}</option>`).join('')}</select></td>
@@ -3530,6 +3543,19 @@ function renderVendors(){
           <div class="eyebrow">서류 사진</div>
           <div class="vdocs">${doc(v,'bizDoc','사업자등록증')}${doc(v,'bankDoc','통장 사본')}</div>
         </div>
+        <div>
+          <div class="row"><span class="eyebrow" style="flex:1">단가표 사진 ${(v.sheets||[]).length||''}</span>
+            <button class="btn sm" data-act="vendorSheet" data-id="${v.id}">📷 단가표 넣기</button></div>
+          ${(v.sheets||[]).length?`<div class="files" style="margin-top:8px">${v.sheets.map(s=>`<figure class="file">
+            <button class="thumb-btn" data-act="vendorSheetBig" data-id="${v.id}" data-sid="${s.id}" aria-label="크게 보기"><img src="${esc(s.url)}" alt="단가표" loading="lazy"></button>
+            <figcaption>
+              <input class="f small" data-bind="vsheet:${v.id}:${s.id}:memo" value="${esc(s.memo||'')}" placeholder="예: 2026년 1월 단가" style="padding:3px 5px">
+              <div class="row" style="gap:6px;justify-content:space-between">
+                <span class="muted small">${new Date(s.at||Date.now()).toLocaleDateString('ko-KR')}</span>
+                <button class="btn ghost sm danger" data-act="vendorSheetDel" data-id="${v.id}" data-sid="${s.id}">삭제</button></div>
+            </figcaption></figure>`).join('')}</div>`
+            :'<p class="muted small" style="margin:6px 0 0">받아온 단가표를 찍어서 여러 장 넣어두면 나중에 찾아보기 좋습니다.</p>'}
+        </div>
         <label class="fl">메모<input class="f" id="v-${v.id}-memo" data-bind="vendor:${v.id}:memo" value="${esc(v.memo||'')}" placeholder="결제 조건, 담당자 등"></label>
       </div>
     </section>`).join('')
@@ -3538,7 +3564,30 @@ function renderVendors(){
 }
 
 /* 업체 서류 사진: 저장소에 올리고 주소만 기록합니다 */
-let VENDOR_DOC=null;
+let VENDOR_DOC=null, VENDOR_SHEET='';
+/* 업체 단가표 — 한 번에 여러 장 */
+async function uploadVendorSheets(files,v){
+  if(!sb||!session){ toast('로그인한 상태에서만 사진을 올릴 수 있습니다.'); return; }
+  let n=0;
+  for(const file of [...files]){
+    if(!file.type.startsWith('image/')) continue;
+    try{
+      const img=await loadImage(file);
+      const max=1800, s=Math.min(1,max/Math.max(img.width,img.height));
+      const c=document.createElement('canvas'); c.width=Math.round(img.width*s); c.height=Math.round(img.height*s);
+      c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+      const blob=await new Promise(r=>c.toBlob(r,'image/jpeg',.85));
+      const path=`${session.user.id}/vendors/${uid()}.jpg`;
+      const {error}=await sb.storage.from('plans').upload(path,blob,{contentType:'image/jpeg'});
+      if(error) throw error;
+      const {data}=sb.storage.from('plans').getPublicUrl(path);
+      v.sheets=v.sheets||[];
+      v.sheets.push({id:uid(),url:data.publicUrl,path,at:Date.now(),memo:''});
+      n++;
+    }catch(e){ toast('사진을 올리지 못했습니다: '+(e.message||e)); }
+  }
+  if(n){ saveVendor(v); render(); toast(`단가표 ${n}장을 넣었습니다`); }
+}
 async function uploadVendorDoc(file,v,field){
   if(!sb||!session){ toast('로그인한 상태에서만 사진을 올릴 수 있습니다.'); return; }
   try{
@@ -3730,6 +3779,8 @@ document.addEventListener('input',ev=>{
     const o=document.getElementById('o-m-'+m.id); if(o) o.innerHTML=perM2Html(matPerM2(m)); }
   else if(kind==='rev'){ const it=IMPORT.items[+rest[0]]; it[rest[1]]=val; if(rest[1]==='coverage') it.mode=val>0?'area':'qty'; saveImportDraft();
     const o=document.getElementById('o-rv-'+rest[0]); if(o) o.innerHTML=perM2Html(matPerM2(it)); }
+  else if(kind==='vsheet'){ const v=S.vendors.get(rest[0]); const s=(v?.sheets||[]).find(x=>x.id===rest[1]);
+    if(!v||!s) return; s[rest[2]]=val; saveVendor(v); }
   else if(kind==='vendor'){ const v=S.vendors.get(rest[0]); if(!v) return; v[rest[1]]=val; saveVendor(v);
     if(rest[1]==='name'){ S.materials.forEach(m=>{ if(m.vendorId===v.id&&m.vendor!==val){ m.vendor=val; saveMat(m); } });
       S.estimates.forEach(e=>{ let hit=false; (e.processes||[]).forEach(p=>{ if(p.vendorId===v.id&&p.vendor!==val){ p.vendor=val; hit=true; } }); if(hit) saveEst(e); }); } }
@@ -3807,6 +3858,14 @@ document.addEventListener('change',ev=>{
   if(t.dataset?.calcmat!==undefined){ CALC.mid=t.value; CALC.loss='';
     CALC.size=sizeFromMat(S.materials.get(t.value));    // 자재에 적힌 크기가 있으면 그대로 가져옵니다
     render(); return; }
+  if(t.dataset?.taskworker!==undefined){       // 공정 일정의 담당 고르기
+    const ti=+t.dataset.taskworker, p=curProj(), tk=p?.tasks?.[ti]; if(!tk) return;
+    if(t.value==='__custom'){ CUSTOM_WORKER.add(tk.id); tk.worker=''; }
+    else { CUSTOM_WORKER.delete(tk.id); tk.worker=t.value; }
+    saveProj(p); render();
+    if(t.value==='__custom') setTimeout(()=>document.getElementById('t'+ti+'-w')?.focus(),60);
+    return;
+  }
   if(t.dataset?.revunit!==undefined){          // 사진에서 읽은 줄의 단위 고르기
     const i=+t.dataset.revunit, it=IMPORT.items?.[i]; if(!it) return;
     if(t.value==='__custom'){ CUSTOM_UNIT_REV.add(i); it.unit=''; }
@@ -3960,6 +4019,16 @@ document.addEventListener('click',async ev=>{
     case 'goReview': VIEW='mat'; render(); setTimeout(()=>document.getElementById('revBar')?.scrollIntoView({block:'center'}),80); break;
     case 'matFilter': MAT_FILTER=t.dataset.k; render(); break;
     case 'vendorDoc': VENDOR_DOC={id:t.dataset.id,field:t.dataset.f}; $('#filePhoto').click(); break;
+    case 'vendorSheet': VENDOR_SHEET=t.dataset.id; $('#fileVendorSheet').click(); break;
+    case 'vendorSheetDel': { const v=S.vendors.get(t.dataset.id); const s=(v?.sheets||[]).find(x=>x.id===t.dataset.sid);
+      if(!v||!s) break;
+      if(!await askConfirm({title:'이 단가표 사진을 지울까요?',lines:['업체 정보는 그대로 남습니다'],ok:'네, 지웁니다',cancel:'아니요'})) break;
+      try{ await sb?.storage.from('plans').remove([s.path]); }catch(err){ console.warn(err); }
+      v.sheets=(v.sheets||[]).filter(x=>x.id!==s.id); saveVendor(v); render(); break; }
+    case 'vendorSheetBig': { const v=S.vendors.get(t.dataset.id); const list=(v?.sheets||[]);
+      const i=list.findIndex(x=>x.id===t.dataset.sid);
+      if(list.length) openLightbox(list.map(s=>({url:s.url,name:v.name||'단가표',memo:s.memo||''})), Math.max(0,i));
+      break; }
     case 'vendorDocDel': { const v=S.vendors.get(t.dataset.id); const f=v?.[t.dataset.f]; if(!v||!f) break;
       if(await askConfirm({title:'이 사진을 지울까요?',lines:['업체 정보는 그대로 남습니다'],ok:'네, 지웁니다',cancel:'아니요'})){
         try{ await sb?.storage.from('plans').remove([f.path]); }catch(err){ console.warn(err); }
@@ -4240,6 +4309,11 @@ async function fileToStamp(file){
   return c.toDataURL('image/png');
 }
 $('#fileSheet').addEventListener('change',ev=>{ setSheetFiles(ev.target.files); ev.target.value=''; });
+$('#fileVendorSheet').addEventListener('change',async ev=>{
+  const v=S.vendors.get(VENDOR_SHEET); VENDOR_SHEET='';
+  if(ev.target.files.length && v) await uploadVendorSheets(ev.target.files,v);
+  ev.target.value='';
+});
 $('#fileBackup').addEventListener('change',ev=>{ if(ev.target.files[0]) importBackup(ev.target.files[0]); ev.target.value=''; });
 $('#fileExcel').addEventListener('change',ev=>{ if(ev.target.files[0]) uploadExcel(ev.target.files[0]); ev.target.value=''; });
 let PLAN_TASK='';
