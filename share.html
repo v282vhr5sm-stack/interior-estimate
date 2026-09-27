@@ -95,7 +95,10 @@ body.noscroll{overflow:hidden;position:fixed;width:100%}
   var SB='https://wcxowlhcneuyiwyxtisq.supabase.co';
   var KEY='sb_publishable_ydS1XaRSe8qt2kskvA_Q4A_AydWqvB6';
   var app=document.getElementById('app');
-  var token=new URLSearchParams(location.search).get('s')||'';
+  /* 현장별로 따로 만들어 올리는 파일에는 아래에 토큰이 박혀 나갑니다.
+     그 경우 주소에 ?s=... 가 없어도 열립니다. */
+  var FIXED_TOKEN='';
+  var token=FIXED_TOKEN||new URLSearchParams(location.search).get('s')||'';
   var P=null, SELD='', SELT='';
   var WD=['일','월','화','수','목','금','토'], DAY=86400000;
 
