@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.18.0';
+const APP_VERSION = '5.18.1';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -376,7 +376,7 @@ function deleteProj(id){ const p=S.projects.get(id); if(p?.share?.token) unpubli
 const CFG = window.APP_CONFIG || {};
 const sbConf = () => ({ url:(CFG.SUPABASE_URL||ls.get('sb_url')||'').trim(), key:(CFG.SUPABASE_KEY||ls.get('sb_key')||'').trim() });
 let sb=null, session=null, syncing=false, syncAgain=false, syncTimer=null, lastSyncAt=null, syncErr='';
-let rtChannel=null, RT_OK=false, RT_SEEN=false, pushedSomething=false;
+let rtChannel=null, RT_OK=false, RT_SEEN=false, pushedSomething=false, rtLastAt=null;
 const CLIENT_ID = Math.random().toString(36).slice(2);   // 이 기기를 구분하는 이름
 /* 내가 올렸다고 다른 기기에 알려 줍니다 */
 function tellOtherDevices(){
@@ -393,12 +393,12 @@ function startRealtime(){
       /* 다른 기기가 "바꿨다"고 알려주면 바로 받아옵니다 (서버 설정이 필요 없습니다) */
       .on('broadcast',{event:'changed'}, msg=>{
         if(msg?.payload?.from===CLIENT_ID) return;
-        RT_SEEN=true; scheduleSync(200);
+        RT_SEEN=true; rtLastAt=new Date(); scheduleSync(200);
       })
       /* 서버가 표 변경을 알려주도록 켜 두었다면 그것도 함께 듣습니다 */
       .on('postgres_changes',
           {event:'*',schema:'public',table:'records',filter:'user_id=eq.'+session.user.id},
-          ()=>{ RT_SEEN=true; scheduleSync(250); })
+          ()=>{ RT_SEEN=true; rtLastAt=new Date(); scheduleSync(250); })
       .subscribe(st=>{ RT_OK = st==='SUBSCRIBED'; updatePill(); });
   }catch(e){ console.warn('realtime',e); RT_OK=false; }
 }
@@ -408,10 +408,17 @@ function stopRealtime(){
   rtChannel=null; RT_OK=false;
 }
 /* 화면으로 돌아오거나 인터넷이 붙으면 바로 맞춰봅니다 */
+/* 실시간 연결이 정말 살아 있는지 봅니다.
+   아이폰·아이패드는 앱을 내려두면 연결이 끊기는데, 껍데기는 남아 있어서
+   "있다"고만 보고 다시 잇지 않으면 다른 기기 변경을 못 받습니다. */
+function rtAlive(){
+  try{ return !!rtChannel && rtChannel.state==='joined' && sb?.realtime?.isConnected?.()!==false; }
+  catch(e){ return false; }
+}
 function wakeSync(){
   if(window.__viewerMode||!sb||!session) return;
-  scheduleSync(150);
-  if(!rtChannel) startRealtime();
+  if(!rtAlive()) startRealtime();     // 끊겨 있으면 새로 잇습니다
+  sync();                            // 기다리지 않고 바로 맞춰봅니다
 }
 function initSupabase(){
   const {url,key}=sbConf();
@@ -3509,7 +3516,7 @@ function renderSettings(){
   return `<div class="stack"><h2>설정</h2><div class="set-grid">
     <section class="panel"><div class="panel-h"><h3>계정 · 동기화</h3></div><div class="panel-b">
       ${!sb?`<p class="muted small" style="margin:0">서버가 연결되지 않아 이 기기에만 저장되고 있습니다. 아래 “서버 연결”을 먼저 채워주세요.</p>`
-        : session?`<dl class="kv"><dt>로그인</dt><dd>${esc(session.user.email)}</dd><dt>마지막 동기화</dt><dd>${lastSyncAt?lastSyncAt.toLocaleString('ko-KR'):'—'}</dd><dt>실시간</dt><dd>${RT_SEEN?'켜짐 · 다른 기기에서 고치면 바로 들어옵니다' : RT_OK?'연결됨 · 다른 기기가 고치면 바로 들어옵니다 (아직 받은 신호 없음)' : '끊김 · 12초마다 확인합니다'}</dd>${syncErr?`<dt>오류</dt><dd style="color:var(--bad)">${esc(syncErr)}</dd>`:''}</dl>
+        : session?`<dl class="kv"><dt>로그인</dt><dd>${esc(session.user.email)}</dd><dt>마지막 동기화</dt><dd>${lastSyncAt?lastSyncAt.toLocaleString('ko-KR'):'—'}</dd><dt>실시간</dt><dd>${RT_SEEN?`켜짐 · 마지막으로 받은 변경 ${rtLastAt?rtLastAt.toLocaleTimeString('ko-KR'):'—'}` : RT_OK?'연결됨 · 다른 기기가 고치면 바로 들어옵니다 (아직 받은 신호 없음)' : '끊김 · 12초마다 확인합니다'}</dd>${syncErr?`<dt>오류</dt><dd style="color:var(--bad)">${esc(syncErr)}</dd>`:''}</dl>
           <label class="row" style="gap:8px;font-size:13px"><input type="checkbox" id="set-auto" ${ls.get('autoLogin')!=='0'?'checked':''} data-act-change="autoLogin"> 이 기기에서 자동 로그인
             ${ls.get('autoLogin')==='0'?'' : ls.get('autoPw')?'<span class="muted small">(켜져 있습니다)</span>'
               :'<span class="muted small">(다음에 로그인할 때부터 적용됩니다)</span>'}</label>
@@ -4193,7 +4200,11 @@ window.addEventListener('pagehide',flushWrites);
 window.addEventListener('online',()=>scheduleSync(200));
 window.addEventListener('offline',updatePill);
 /* 서버가 알려주면 바로 받지만, 그게 안 될 때를 대비해 짧게 확인도 합니다 */
-setInterval(()=>{ if(document.visibilityState==='visible') sync(); }, 12000);
+setInterval(()=>{
+  if(document.visibilityState!=='visible') return;
+  if(sb&&session&&!rtAlive()) startRealtime();   // 끊겨 있으면 다시 잇습니다
+  sync();
+}, 12000);
 
 async function logout(){
   flushWrites();
