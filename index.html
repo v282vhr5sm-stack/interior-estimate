@@ -4,6 +4,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>견적 작업실</title>
+<!-- 예전에 보낸 공유 링크(?s=...)도 가벼운 손님 화면으로 보냅니다.
+     무거운 앱을 받기 전에 바로 넘어가므로 카톡 같은 앱 안에서도 잘 열립니다. -->
+<script>
+(function(){
+  try{
+    var s=new URLSearchParams(location.search).get('s');
+    if(s) location.replace('share.html?s='+encodeURIComponent(s));
+  }catch(e){}
+})();
+</script>
 <meta name="theme-color" content="#2E5B4E">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
