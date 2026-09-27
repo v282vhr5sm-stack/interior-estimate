@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.17.1';
+const APP_VERSION = '5.18.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -2810,7 +2810,7 @@ function renderProject(p){
           <td class="c-name"><input class="f" id="t${ti}-name" data-bind="task:${ti}:name" value="${esc(t.name)}" placeholder="작업 이름" style="font-weight:500"></td>
           <td data-l="담당"><input class="f" id="t${ti}-w" data-bind="task:${ti}:worker" value="${esc(t.worker||'')}" placeholder="예: 김반장"></td>
           <td data-l="시작"><input class="f" type="date" id="t${ti}-s" data-bind="task:${ti}:start" value="${esc(t.start||'')}"></td>
-          <td data-l="종료"><input class="f" type="date" id="t${ti}-e" data-bind="task:${ti}:end" value="${esc(t.end||'')}"></td>
+          <td data-l="종료"><input class="f" type="date" id="t${ti}-e" data-bind="task:${ti}:end" value="${esc(t.end||'')}" min="${esc(t.start||'')}"></td>
           <td data-l="상태"><select class="f" id="t${ti}-st" data-bind="task:${ti}:status">${['예정','진행','완료'].map(s=>`<option ${s===(t.status||'예정')?'selected':''}>${s}</option>`).join('')}</select></td>
           <td data-l="작업 메모"><input class="f" id="t${ti}-m" data-bind="task:${ti}:memo" value="${esc(t.memo||'')}" placeholder="작업자에게 전할 말"></td>
           <td class="c-act"><button class="btn ghost sm" data-act="taskPhoto" data-ti="${ti}" title="이 공정 사진 올리기">📷 사진${(p.files||[]).filter(f=>f.taskId===t.id).length||''}</button><button class="btn ghost sm" data-act="dupTask" data-ti="${ti}" title="같은 작업을 다른 날짜에 한 번 더 넣기">한 번 더</button><button class="btn ghost sm danger" data-act="delTask" data-ti="${ti}" aria-label="삭제">✕ 삭제</button></td></tr>`).join('')
@@ -3681,8 +3681,17 @@ document.addEventListener('input',ev=>{
   else if(kind==='co'){ S.company[rest[0]]=val; saveCo(); refreshDoc(); }
   else if(kind==='proj'){ const p=curProj(); if(!p) return; p[rest[0]]=val; saveProj(p);
     if(rest[0]==='name'){ const o=document.querySelector(`#projSel option[value="${p.id}"]`); if(o) o.textContent=val+(p.share?.on?' · 공유중':''); } }
-  else if(kind==='task'){ const p=curProj(); const t=p?.tasks?.[+rest[0]]; if(!t) return; t[rest[1]]=val;
-    if(rest[1]==='start'&&(!t.end||dnum(t.end)<dnum(val))) t.end=val;
+  else if(kind==='task'){ const p=curProj(); const ti=+rest[0], t=p?.tasks?.[ti]; if(!t) return; t[rest[1]]=val;
+    const endEl=document.getElementById('t'+ti+'-e');
+    if(rest[1]==='start'){
+      if(!t.end||dnum(t.end)<dnum(val)) t.end=val;         // 시작일을 뒤로 옮기면 종료일도 따라갑니다
+      if(endEl){ endEl.min=val||''; if(endEl.value!==t.end) endEl.value=t.end||''; }
+    }
+    if(rest[1]==='end' && t.start && val && dnum(val)<dnum(t.start)){
+      t.end=t.start;                                        // 시작일보다 앞선 날은 못 넣습니다
+      if(endEl) endEl.value=t.end;
+      toast('종료일은 시작일보다 앞설 수 없습니다');
+    }
     saveProj(p);
     const g=document.querySelector('.gantt'); if(g) g.innerHTML=ganttHTML(p,projRange(p)); }
   else if(kind==='file'){ const p=curProj(); const f=(p?.files||[]).find(x=>x.id===rest[0]); if(!f) return; f[rest[1]]=val; saveProj(p);
@@ -4042,8 +4051,8 @@ document.addEventListener('click',async ev=>{
       if(VIEW==='home'){ HOME_NEW=true; HOME_SEL=null; render(); setTimeout(()=>document.getElementById('ns-name')?.focus(),60); break; }
       const n=newProject(); S.projects.set(n.id,n); S.curPid=n.id; ls.set('curPid',n.id); saveProj(n); SCHED_MODE='site';
       render(); setTimeout(()=>document.getElementById('pj-name')?.select(),80); break; }
-    case 'projFromEst': { const n=newProject(e); e.processes.forEach((pr,i)=>{ const P=PMAP[pr.k]||PMAP.etc; const st=addDays(today(),i*2);
-        n.tasks.push({id:uid(),proc:pr.k,name:P.n,start:st,end:addDays(st,1),worker:'',status:'예정',memo:''}); });
+    case 'projFromEst': { const n=newProject(e); e.processes.forEach((pr,i)=>{ const P=PMAP[pr.k]||PMAP.etc; const st=addDays(today(),i);
+        n.tasks.push({id:uid(),proc:pr.k,name:P.n,start:st,end:st,worker:'',status:'예정',memo:''}); });
       S.projects.set(n.id,n); S.curPid=n.id; ls.set('curPid',n.id); saveProj(n); VIEW='sched'; SCHED_MODE='site'; ls.set('view',VIEW); render(); toast('견적의 공정으로 일정을 만들었습니다. 날짜를 고쳐주세요.'); break; }
     case 'delProj': { const p=curProj(); if(!p) break;
       const n=(p.files||[]).length;
@@ -4056,7 +4065,7 @@ document.addEventListener('click',async ev=>{
       const st=last?addDays(last,1):today();
       p.tasks=p.tasks||[];
       const same=k?p.tasks.filter(x=>x.proc===k).length:0;
-      p.tasks.push({id:uid(),proc:k||'',name:P?(same?`${P.n} ${same+1}차`:P.n):'',start:st,end:addDays(st,1),worker:'',status:'예정',memo:''});
+      p.tasks.push({id:uid(),proc:k||'',name:P?(same?`${P.n} ${same+1}차`:P.n):'',start:st,end:st,worker:'',status:'예정',memo:''});
       saveProj(p); render(); if(!P) setTimeout(()=>document.getElementById(`t${p.tasks.length-1}-name`)?.focus(),60); break; }
     case 'dupTask': { const p=curProj(); const src=p.tasks[+t.dataset.ti];
       const last=p.tasks.map(x=>x.end).filter(Boolean).sort().pop();
@@ -4122,8 +4131,8 @@ document.addEventListener('click',async ev=>{
       S.estimates.set(n.id,n); setCur(n.id); saveEst(n); p.estimateId=n.id; saveProj(p);
       VIEW='est'; ls.set('view',VIEW); render(); toast('이 현장의 견적을 만들었습니다'); break; }
     case 'projFromEstId': { const src=S.estimates.get(t.dataset.id); if(!src) break;
-      const n=newProject(src); src.processes.forEach((pr,i)=>{ const P=PMAP[pr.k]||PMAP.etc; const st=addDays(today(),i*2);
-        n.tasks.push({id:uid(),proc:pr.k,name:P.n,start:st,end:addDays(st,1),worker:'',status:'예정',memo:''}); });
+      const n=newProject(src); src.processes.forEach((pr,i)=>{ const P=PMAP[pr.k]||PMAP.etc; const st=addDays(today(),i);
+        n.tasks.push({id:uid(),proc:pr.k,name:P.n,start:st,end:st,worker:'',status:'예정',memo:''}); });
       S.projects.set(n.id,n); S.curPid=n.id; ls.set('curPid',n.id); saveProj(n); HOME_SEL=n.id; render(); toast('견적의 공정으로 현장을 만들었습니다'); break; }
     case 'startWork': startWork(curProj()); break;
     case 'endWork': endWork(curProj()); break;
