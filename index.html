@@ -14,7 +14,8 @@
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=Nanum+Myeongjo:wght@700;800&display=swap">
+<!-- 글꼴은 늦게 와도 화면이 먼저 뜨게 합니다 -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=Nanum+Myeongjo:wght@700;800&display=swap" media="print" onload="this.media='all'">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -30,7 +31,11 @@
       <button class="tab" role="tab" data-act="view" data-v="vend" id="tab-vend"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9l1.5-5h15L21 9"/><path d="M4 9h16v11H4z"/><path d="M9 20v-6h6v6"/></svg>업체</button>
       <button class="tab" role="tab" data-act="view" data-v="set" id="tab-set"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg>설정</button>
     </nav>
-    <button class="sync-pill" id="syncPill" data-act="syncNow" hidden></button>
+    <div class="topbar-sync" id="topSync" hidden>
+      <button class="sync-pill" id="syncPill" data-act="syncNow"></button>
+      <button class="mini-btn" id="btnSyncNow" data-act="syncNow" title="지금 동기화">지금 동기화</button>
+      <button class="mini-btn" id="btnUpdate" data-act="topUpdate" title="업데이트 확인">업데이트</button>
+    </div>
   </div>
 </header>
 <div class="update-bar" id="updateBar" hidden>새 버전이 있습니다. <button class="btn sm pri" data-act="applyUpdate">지금 적용</button></div>
@@ -41,7 +46,8 @@
 <input type="file" id="fileBackup" accept="application/json,.json" hidden>
 <input type="file" id="filePlan" multiple hidden>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.116.0/dist/umd/supabase.js"></script>
+<!-- 라이브러리를 앱 안에 두어 바깥 주소가 막혀도 열립니다 (카톡 인앱 브라우저 등) -->
+<script src="vendor/supabase.js"></script>
 <script src="config.js"></script>
 <script type="module" src="app.js"></script>
 </body>

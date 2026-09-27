@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.18.1';
+const APP_VERSION = '5.20.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -479,8 +479,8 @@ async function pull(){
   if(changed){ if(!S.estimates.has(S.curId)) setCur([...S.estimates.values()].sort((a,b)=>(b.updated||0)-(a.updated||0))[0]?.id||null); safeRender(); }
 }
 async function updatePill(){
-  const el=$('#syncPill'); if(!el||window.__viewerMode) return;
-  el.hidden=false;
+  const box=$('#topSync'), el=$('#syncPill'); if(!el||window.__viewerMode) return;
+  if(box) box.hidden=false;
   const n=await countDirty();
   let s,t;
   if(!sb){ s='local'; t='이 기기에만 저장'; }
@@ -491,6 +491,11 @@ async function updatePill(){
   else if(n){ s='sync'; t=`${n}건 올리는 중`; }
   else { s='ok'; t=lastSyncAt?`동기화됨 ${lastSyncAt.getHours()}:${String(lastSyncAt.getMinutes()).padStart(2,'0')}`:'동기화됨'; }
   el.dataset.s=s; el.textContent=t; el.title=syncErr||'';
+  /* 손볼 게 있으면 단추를 주황색으로 */
+  const bs=$('#btnSyncNow');
+  if(bs){ bs.classList.toggle('need', !!(sb&&session&&(n>0||syncErr||!navigator.onLine))); }
+  const bu=$('#btnUpdate');
+  if(bu){ bu.classList.toggle('need', !!(swReg?.waiting||swReg?.installing)); }
 }
 
 /* ---------- calculation ---------- */
@@ -2928,6 +2933,33 @@ function ganttBars(tasks,r,sel){
   return `<div class="gantt-scroll">${head}${rows}</div>`;
 }
 function ganttHTML(p,r){ return ganttBars(p.tasks||[],r,SEL_DAY); }
+let VSEL_TASK='';
+/* 공유 화면: 고른 작업 하나의 사진과 안내를 보여줍니다 */
+function vTaskPanel(payload){
+  if(!VSEL_TASK) return '';
+  const t=(payload.tasks||[]).find(x=>x.id===VSEL_TASK); if(!t) return '';
+  const files=payload.files||[];
+  const mine=files.filter(f=>f.taskId===t.id);
+  const imgs=mine.filter(f=>fileKind(f)==='img');
+  const docs=mine.filter(f=>fileKind(f)!=='img');
+  const idx=new Map(files.map((f,i)=>[f,i]));
+  return `<div class="vtask">
+    <div class="row"><b style="flex:1">${esc(t.name)}</b>
+      <span class="badge${t.status==='완료'?'':' warn'}">${esc(t.status||'예정')}</span>
+      <button class="btn ghost sm" data-act="vTask" data-id="">닫기</button></div>
+    <div class="muted small">${esc(t.start||'')}${t.end&&t.end!==t.start?' ~ '+esc(t.end):''}${t.worker?' · '+esc(t.worker):''}</div>
+    ${t.memo&&payload.showMemo!==false?`<p class="status" style="margin:10px 0 0">${esc(t.memo)}</p>`:''}
+    ${imgs.length?`<div class="files" style="margin-top:10px">${imgs.map(f=>`<figure class="file">
+        <a href="${esc(f.url)}" target="_blank" rel="noopener"><img src="${esc(f.url)}" alt="${esc(f.memo||f.name)}" loading="lazy"></a>
+        <figcaption>${f.memo?`<b>${esc(f.memo)}</b>`:''}<span class="muted small">${esc(f.name)}</span></figcaption></figure>`).join('')}</div>`
+      :'<p class="muted small" style="margin:10px 0 0">이 작업에 올라온 사진이 아직 없습니다.</p>'}
+    ${docs.length?`<div class="files" style="margin-top:10px">${docs.map(f=>{const k=fileKind(f); return `<figure class="file">
+        ${k==='glb'?`<button class="fi glb" data-act="view3d" data-i="${idx.get(f)}"><span>3D 보기</span></button>`
+          :`<a class="fi" href="${esc(f.url)}" target="_blank" rel="noopener"><span>${KIND_LABEL[k]}</span></a>`}
+        <figcaption><span class="muted small">${esc(f.name)}</span>
+          <a class="btn sm" href="${esc(f.url)}" target="_blank" rel="noopener" download>${k==='pdf'?'열기':'내려받기'}</a></figcaption></figure>`;}).join('')}</div>`:''}
+  </div>`;
+}
 function dayPanel(items,key,opts={}){
   if(!key) return '';
   const d=new Date(dnum(key));
@@ -2935,12 +2967,13 @@ function dayPanel(items,key,opts={}){
     <div class="row"><b>${d.getMonth()+1}월 ${d.getDate()}일 (${WD[d.getDay()]}) 작업</b>
       <span class="muted small">${items.length?items.length+'건':'작업 없음'}</span>
       <span class="spacer"></span><button class="btn ghost sm" data-act="selDay" data-d="">닫기</button></div>
-    ${items.length?`<ul class="dayl">${items.map(({t,p})=>`<li>
+    ${items.length?`<ul class="dayl">${items.map(({t,p})=>`<li${opts.pick?` class="pick${VSEL_TASK===t.id?' on':''}" data-act="vTask" data-id="${esc(t.id)}" role="button" tabindex="0"`:''}>
       <span class="badge${t.status==='완료'?'':' warn'}">${esc(t.status||'예정')}</span>
       <b>${p&&opts.showProject?esc(siteName(p))+' · ':''}${esc(t.name)}</b>
       <span class="muted">${esc(t.worker||'담당 미정')}</span>
       <span class="muted small">${esc(t.start)}${t.end&&t.end!==t.start?' ~ '+esc(t.end):''}</span>
-      ${t.memo&&opts.showMemo!==false?`<span class="small" style="flex-basis:100%">${esc(t.memo)}</span>`:''}
+      ${opts.pick?`<span class="muted small pick-go">${VSEL_TASK===t.id?'▾ 열림':'사진·안내 보기 ›'}</span>`:''}
+      ${t.memo&&opts.showMemo!==false&&!opts.pick?`<span class="small" style="flex-basis:100%">${esc(t.memo)}</span>`:''}
     </li>`).join('')}</ul>`:'<p class="muted small" style="margin:8px 0 0">이 날은 잡힌 작업이 없습니다.</p>'}
   </div>`;
 }
@@ -3063,16 +3096,29 @@ async function renderViewer(token){
   const app=$('#app'); $('#tabs').hidden=true; $('#syncPill').hidden=true;
   app.innerHTML=`<div class="empty"><span class="spin"></span> 불러오는 중</div>`;
   const {url,key}=sbConf();
-  let payload=null, err='';
+  let payload=null, err='', netFail=false;
   try{
+    if(!window.supabase) throw new Error('lib');
     const client=window.supabase.createClient(url,key,{auth:{persistSession:false}});
     const {data,error}=await client.rpc('get_share',{p_token:token});
     if(error) throw error; payload=data;
-  }catch(e){ err=e.message||String(e); }
-  if(!payload){ app.innerHTML=`<div class="panel" style="max-width:520px;margin:6vh auto"><div class="empty">
-    <h2 style="margin-bottom:8px">링크를 열 수 없습니다</h2>
-    <p>주소가 바뀌었거나 공유가 꺼졌을 수 있어요. 보내주신 분께 새 링크를 요청해주세요.</p>
-    ${err?`<p class="small muted">(${esc(err)})</p>`:''}</div></div>`; return; }
+  }catch(e){
+    err=e?.message||String(e);
+    netFail = err==='lib' || /fetch|network|load failed|timeout|offline/i.test(err) || !navigator.onLine;
+  }
+  if(!payload){
+    app.innerHTML=`<div class="panel" style="max-width:520px;margin:6vh auto"><div class="empty">
+      ${netFail?`<h2 style="margin-bottom:8px">잠시 연결이 안 됩니다</h2>
+        <p>인터넷이 잠깐 끊겼거나 화면을 다 못 받았습니다.</p>
+        <p class="small">카카오톡에서 열었다면 오른쪽 위 <b>···</b> 를 눌러
+          <b>다른 브라우저로 열기</b>(사파리·크롬)를 골라보세요. 그러면 잘 열립니다.</p>
+        <div class="row" style="justify-content:center;margin-top:12px">
+          <button class="btn pri" data-act="vRetry">다시 열기</button></div>`
+      :`<h2 style="margin-bottom:8px">링크를 열 수 없습니다</h2>
+        <p>주소가 바뀌었거나 공유가 꺼졌을 수 있어요. 보내주신 분께 새 링크를 요청해주세요.</p>`}
+      ${err&&err!=='lib'?`<p class="small muted" style="margin-top:10px">(${esc(err)})</p>`:''}
+    </div></div>`;
+    return; }
   window.__viewerPayload=payload;
   paintViewer();
 }
@@ -3103,16 +3149,10 @@ function paintViewer(){
 
     <section class="panel"><div class="panel-h"><h3>공정 일정</h3><span class="muted small">보기 전용입니다</span></div>
       ${r?`<div class="gantt">${ganttBars(tasks,r,SEL_DAY)}</div>
-      ${SEL_DAY?dayPanel(tasks.filter(t=>onDay(t,SEL_DAY)).map(t=>({t})),SEL_DAY,{showMemo:payload.showMemo}):''}`:''}
-      <div class="tbl-wrap"><table class="t resp"><thead><tr><th>작업</th><th>기간</th><th>담당</th><th>상태</th>${payload.showMemo?'<th>안내</th>':''}</tr></thead>
-        <tbody>${tasks.map(t=>{const s2=dnum(t.start),e2=dnum(t.end);
-          const on=s2&&e2&&todayT>=s2&&todayT<=e2;
-          return `<tr${on?' class="on"':''}><td class="c-name"><b>${esc(t.name)}</b></td>
-          <td data-l="기간">${esc(t.start||'')}${t.end&&t.end!==t.start?' ~ '+esc(t.end):''}</td>
-          <td data-l="담당">${esc(t.worker||'-')}</td>
-          <td data-l="상태"><span class="badge${t.status==='완료'?'':' warn'}">${esc(t.status||'예정')}</span></td>
-          ${payload.showMemo?`<td data-l="안내" class="small muted">${esc(t.memo||'')}</td>`:''}</tr>`;}).join('')
-          || '<tr><td colspan="5" class="empty c-empty">아직 등록된 일정이 없습니다.</td></tr>'}</tbody></table></div>
+      ${SEL_DAY?dayPanel(tasks.filter(t=>onDay(t,SEL_DAY)).map(t=>({t})),SEL_DAY,{showMemo:payload.showMemo,pick:true}):''}
+      ${vTaskPanel(payload)}`
+      :'<div class="panel-b"><p class="muted small" style="margin:0">아직 등록된 일정이 없습니다.</p></div>'}
+      ${r&&!SEL_DAY?'<div class="panel-b"><p class="muted small" style="margin:0">날짜를 누르면 그날 작업과 사진을 볼 수 있습니다.</p></div>':''}
     </section>
 
     ${files.length?(()=>{
@@ -4052,6 +4092,7 @@ document.addEventListener('click',async ev=>{
     case 'exportBackup': exportBackup(); break;
     case 'importBackup': $('#fileBackup').click(); break;
     case 'checkUpdate': checkUpdate(true); break;
+    case 'topUpdate': (swReg?.waiting ? applyUpdate() : checkUpdate(true)); break;
     case 'applyUpdate': applyUpdate(); break;
     case 'schedMode': SCHED_MODE=t.dataset.m; ls.set('schedMode',SCHED_MODE); render(); break;
     case 'newProj': {
@@ -4154,10 +4195,16 @@ document.addEventListener('click',async ev=>{
     case 'month': { if(t.dataset.d==='0'){ const d=new Date(); MONTH=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }
       else { const [y,m]=MONTH.split('-').map(Number); const d=new Date(y,m-1+ +t.dataset.d,1); MONTH=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }
       render(); break; }
-    case 'selDay': { const d=t.dataset.d||''; SEL_DAY = (!d||d===SEL_DAY) ? null : d;
+    case 'selDay': { const d=t.dataset.d||''; SEL_DAY = (!d||d===SEL_DAY) ? null : d; VSEL_TASK='';
       if(window.__viewerMode) paintViewer(); else render();
       if(SEL_DAY) setTimeout(()=>document.querySelector('.dayp')?.scrollIntoView({block:'nearest',behavior:'smooth'}),60);
       break; }
+    case 'vTask': { const id=t.dataset.id||'';
+      VSEL_TASK = (!id||id===VSEL_TASK) ? '' : id;
+      paintViewer();
+      if(VSEL_TASK) setTimeout(()=>document.querySelector('.vtask')?.scrollIntoView({block:'nearest'}),60);
+      break; }
+    case 'vRetry': location.reload(); break;
     case 'view3d': view3d(+t.dataset.i); break;
     case 'close3d': document.querySelector('.modal')?.remove(); break;
   }
@@ -4253,7 +4300,7 @@ async function registerSW(){
   if(location.hostname==='localhost' && !location.search.includes('sw=1')) return;
   try{
     swReg=await navigator.serviceWorker.register('sw.js');
-    const showIfWaiting=()=>{ if(swReg.waiting && navigator.serviceWorker.controller) $('#updateBar').hidden=false; };
+    const showIfWaiting=()=>{ if(swReg.waiting && navigator.serviceWorker.controller) $('#updateBar').hidden=false; updatePill(); };
     showIfWaiting();
     swReg.addEventListener('updatefound',()=>{ const w=swReg.installing; w?.addEventListener('statechange',()=>{ if(w.state==='installed') showIfWaiting(); }); });
     let reloaded=false;
