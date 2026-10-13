@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.27.0';
+const APP_VERSION = '5.27.1';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -4198,8 +4198,8 @@ document.addEventListener('click',async ev=>{
       p.tasks.push({id:uid(),proc:k||'',name:P?(same?`${P.n} ${same+1}차`:P.n):'',start:st,end:st,worker:'',status:'예정',memo:''});
       saveProj(p); render(); if(!P) setTimeout(()=>document.getElementById(`t${p.tasks.length-1}-name`)?.focus(),60); break; }
     case 'dupTask': { const p=curProj(); const src=p.tasks[+t.dataset.ti];
-      const last=p.tasks.map(x=>x.end).filter(Boolean).sort().pop();
-      const st=last?addDays(last,1):today(), len=Math.max(0,(dnum(src.end)-dnum(src.start))/DAY||0);
+      /* 바로 아래에 붙으니 날짜도 원래 작업 다음 날부터 잡습니다 */
+      const st=src.end?addDays(src.end,1):today(), len=Math.max(0,(dnum(src.end)-dnum(src.start))/DAY||0);
       const same=p.tasks.filter(x=>x.proc?x.proc===src.proc:x.name.replace(/ \d+차$/,'')===src.name.replace(/ \d+차$/,'')).length;
       const ti=+t.dataset.ti;
       p.tasks.splice(ti+1,0,{...src,id:uid(),name:src.name.replace(/ \d+차$/,'')+` ${same+1}차`,start:st,end:addDays(st,len),status:'예정'});
