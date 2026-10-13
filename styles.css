@@ -529,3 +529,8 @@ figure.file figcaption .btn.sm{padding:4px 8px;font-size:12px}
 .g-pick:hover{color:var(--ink);text-decoration:underline}
 .g-row.on .g-name{color:#8a5a06;font-weight:700}
 .g-row.on .g-bar{box-shadow:0 0 0 2px #d9922a}
+
+/* 작업 메모를 일정표 막대 옆에 같이 보여줍니다 */
+.g-memo{position:absolute;top:50%;transform:translateY(-50%);font-size:10.5px;color:#8a5a06;
+  white-space:nowrap;pointer-events:none;max-width:260px;overflow:hidden;text-overflow:ellipsis}
+.g-row.on .g-memo{font-weight:700}

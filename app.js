@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.28.0';
+const APP_VERSION = '5.28.1';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -2953,7 +2953,7 @@ function ganttBars(tasks,r,sel,selTask){
     const selm=sel&&dnum(sel)>=r.from&&dnum(sel)<=r.to?`<span class="g-sel" style="left:${(dnum(sel)-r.from)/DAY*DAYW}px;width:${DAYW}px"></span>`:'';
     const onT=t.id===selTask;
     return `<div class="g-row${onT?' on':''}"><button class="g-name g-pick" data-act="selTask" data-id="${esc(t.id)}" title="${esc(t.name)} — 눌러서 이 공정 기간 보기">${esc(t.name)}</button>
-      <span class="g-track" style="width:${span*DAYW}px">${now}${selm}<span class="g-bar ${st==='완료'?'done':st==='진행'?'now':''}" style="left:${s*DAYW}px;width:${w*DAYW}px" title="${esc(t.start)} ~ ${esc(t.end)} · ${esc(t.worker||'담당 미정')}"><b>${esc(t.name)}</b></span></span></div>`;
+      <span class="g-track" style="width:${span*DAYW}px">${now}${selm}<span class="g-bar ${st==='완료'?'done':st==='진행'?'now':''}" style="left:${s*DAYW}px;width:${w*DAYW}px" title="${esc(t.start)} ~ ${esc(t.end)} · ${esc(t.worker||'담당 미정')}"><b>${esc(t.name)}</b></span>${t.memo?`<span class="g-memo" style="left:${(s+w)*DAYW+8}px" title="${esc(t.memo)}">${esc(t.memo)}</span>`:''}</span></div>`;
   }).join('');
   return `<div class="gantt-scroll">${head}${rows}</div>`;
 }
