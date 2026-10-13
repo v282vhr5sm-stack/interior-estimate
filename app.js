@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.26.0';
+const APP_VERSION = '5.27.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -738,7 +738,7 @@ function needLogin(){ return sb && !session && !AUTH.skipped; }
 /* 화면을 다시 그려도 보던 자리와 쓰던 칸이 그대로 있게 합니다.
    (단위를 바꾸거나 업체를 고를 때 화면이 위로 튀지 않게) */
 let LAST_VIEW=null;
-const SIDE_BOXES='.tbl-wrap,.xls-stage,.doc-stage,.pv-stage';
+const SIDE_BOXES='.tbl-wrap,.xls-stage,.doc-stage,.pv-stage,.gantt-scroll';
 function keepPlace(){
   const a=document.activeElement, app=$('#app');
   const inApp = !!(a && app && app.contains(a));
@@ -2937,23 +2937,28 @@ let SEL_DAY=null;
 const LINE_VENDOR={};        // 공정별로 고른 업체 (자재 목록 좁히기)
 const LINE_SYNC={}, MAT_SYNC={};            // 눌러서 펼쳐 본 날짜
 const onDay=(t,key)=>{ const s=dnum(t.start),e=dnum(t.end),d=dnum(key); return s&&e&&d>=s&&d<=e; };
-function ganttBars(tasks,r,sel){
+function ganttBars(tasks,r,sel,selTask){
   if(!r) return '';
   const span=Math.max(1,(r.to-r.from)/DAY+1), t0=dnum(today());
+  /* 고른 공정의 기간 — 그 날짜들만 다른 색으로 보여줍니다 */
+  const pick=selTask?tasks.find(x=>x.id===selTask):null;
+  const pr=pick&&dnum(pick.start)?{a:dnum(pick.start),b:dnum(pick.end)||dnum(pick.start)}:null;
   const days=[...Array(span)].map((_,i)=>{ const ms=r.from+i*DAY, d=new Date(ms); return {ms,key:dstr(ms),d}; });
   const head=`<div class="g-row g-head"><span class="g-name">날짜</span><span class="g-track" style="width:${span*DAYW}px">${
-    days.map(x=>`<button class="g-day${x.key===today()?' today':''}${x.key===sel?' sel':''}${x.d.getDay()===0?' sun':x.d.getDay()===6?' sat':''}" style="left:${(x.ms-r.from)/DAY*DAYW}px;width:${DAYW}px" data-act="selDay" data-d="${x.key}" title="${x.key}">
+    days.map(x=>`<button class="g-day${x.key===today()?' today':''}${x.key===sel?' sel':''}${pr&&x.ms>=pr.a&&x.ms<=pr.b?' inr':''}${x.d.getDay()===0?' sun':x.d.getDay()===6?' sat':''}" style="left:${(x.ms-r.from)/DAY*DAYW}px;width:${DAYW}px" data-act="selDay" data-d="${x.key}" title="${x.key}">
       <b>${x.d.getDate()}</b><i>${WD[x.d.getDay()]}</i></button>`).join('')}</span></div>`;
   const rows=tasks.filter(t=>dnum(t.start)&&dnum(t.end)).map(t=>{
     const s=(dnum(t.start)-r.from)/DAY, w=Math.max(1,(dnum(t.end)-dnum(t.start))/DAY+1), st=t.status||'예정';
     const now=(t0>=r.from&&t0<=r.to)?`<span class="g-now" style="left:${(t0-r.from)/DAY*DAYW}px;width:${DAYW}px"></span>`:'';
     const selm=sel&&dnum(sel)>=r.from&&dnum(sel)<=r.to?`<span class="g-sel" style="left:${(dnum(sel)-r.from)/DAY*DAYW}px;width:${DAYW}px"></span>`:'';
-    return `<div class="g-row"><span class="g-name" title="${esc(t.name)}">${esc(t.name)}</span>
+    const onT=t.id===selTask;
+    return `<div class="g-row${onT?' on':''}"><button class="g-name g-pick" data-act="selTask" data-id="${esc(t.id)}" title="${esc(t.name)} — 눌러서 이 공정 기간 보기">${esc(t.name)}</button>
       <span class="g-track" style="width:${span*DAYW}px">${now}${selm}<span class="g-bar ${st==='완료'?'done':st==='진행'?'now':''}" style="left:${s*DAYW}px;width:${w*DAYW}px" title="${esc(t.start)} ~ ${esc(t.end)} · ${esc(t.worker||'담당 미정')}"><b>${esc(t.name)}</b></span></span></div>`;
   }).join('');
   return `<div class="gantt-scroll">${head}${rows}</div>`;
 }
-function ganttHTML(p,r){ return ganttBars(p.tasks||[],r,SEL_DAY); }
+let SEL_TASK='';
+function ganttHTML(p,r){ return ganttBars(p.tasks||[],r,SEL_DAY,SEL_TASK); }
 let VSEL_TASK='';
 /* 공유 화면: 고른 작업 하나의 사진과 안내를 보여줍니다 */
 function vTaskPanel(payload){
@@ -3169,7 +3174,7 @@ function paintViewer(){
     </div></section>
 
     <section class="panel"><div class="panel-h"><h3>공정 일정</h3><span class="muted small">보기 전용입니다</span></div>
-      ${r?`<div class="gantt">${ganttBars(tasks,r,SEL_DAY)}</div>
+      ${r?`<div class="gantt">${ganttBars(tasks,r,SEL_DAY,VSEL_TASK)}</div>
       ${SEL_DAY?dayPanel(tasks.filter(t=>onDay(t,SEL_DAY)).map(t=>({t})),SEL_DAY,{showMemo:payload.showMemo,pick:true}):''}
       ${vTaskPanel(payload)}`
       :'<div class="panel-b"><p class="muted small" style="margin:0">아직 등록된 일정이 없습니다.</p></div>'}
@@ -4196,8 +4201,10 @@ document.addEventListener('click',async ev=>{
       const last=p.tasks.map(x=>x.end).filter(Boolean).sort().pop();
       const st=last?addDays(last,1):today(), len=Math.max(0,(dnum(src.end)-dnum(src.start))/DAY||0);
       const same=p.tasks.filter(x=>x.proc?x.proc===src.proc:x.name.replace(/ \d+차$/,'')===src.name.replace(/ \d+차$/,'')).length;
-      p.tasks.push({...src,id:uid(),name:src.name.replace(/ \d+차$/,'')+` ${same+1}차`,start:st,end:addDays(st,len),status:'예정'});
-      saveProj(p); render(); toast('같은 작업을 뒤쪽 날짜로 하나 더 넣었습니다. 날짜를 고쳐주세요.'); break; }
+      const ti=+t.dataset.ti;
+      p.tasks.splice(ti+1,0,{...src,id:uid(),name:src.name.replace(/ \d+차$/,'')+` ${same+1}차`,start:st,end:addDays(st,len),status:'예정'});
+      saveProj(p); render(); toast('바로 아래에 같은 작업을 하나 더 넣었습니다. 날짜를 고쳐주세요.');
+      setTimeout(()=>document.getElementById('t'+(ti+1)+'-name')?.focus(),80); break; }
     case 'sortTasks': { const p=curProj(); p.tasks.sort((a,b)=>String(a.start||'').localeCompare(String(b.start||''))); saveProj(p); render(); break; }
     case 'openSite': HUB_GALLERY=false; HOME_SEL=t.dataset.id; selectSite(t.dataset.id); VIEW='home'; ls.set('view',VIEW); render(); window.scrollTo(0,0); break;
     case 'saveTempTpl': { const p=e.processes[+t.dataset.pi];
@@ -4272,6 +4279,13 @@ document.addEventListener('click',async ev=>{
     case 'month': { if(t.dataset.d==='0'){ const d=new Date(); MONTH=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }
       else { const [y,m]=MONTH.split('-').map(Number); const d=new Date(y,m-1+ +t.dataset.d,1); MONTH=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }
       render(); break; }
+    case 'selTask': { const id=t.dataset.id||'';
+      SEL_TASK = (!id||id===SEL_TASK) ? '' : id;
+      const g=document.querySelector('.gantt'), p=curProj();
+      if(g&&p){ const keep=g.querySelector('.gantt-scroll')?.scrollLeft||0;
+        g.innerHTML=ganttHTML(p,projRange(p));
+        const s=g.querySelector('.gantt-scroll'); if(s) s.scrollLeft=keep; }
+      break; }
     case 'selDay': { const d=t.dataset.d||''; SEL_DAY = (!d||d===SEL_DAY) ? null : d; VSEL_TASK='';
       if(window.__viewerMode) paintViewer(); else render();
       if(SEL_DAY) setTimeout(()=>document.querySelector('.dayp')?.scrollIntoView({block:'nearest',behavior:'smooth'}),60);
