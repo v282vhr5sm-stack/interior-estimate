@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.30.1';
+const APP_VERSION = '5.30.2';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -486,7 +486,7 @@ async function updatePill(){
   const bu=$('#btnUpdate'); if(!bu) return;
   const ready=!!swReg?.waiting;
   bu.classList.toggle('need', ready);
-  bu.textContent = ready ? '새 버전 적용' : 'v'+APP_VERSION;
+  bu.textContent = ready ? 'v'+APP_VERSION+' → 새 버전 적용' : 'v'+APP_VERSION;
   bu.title = ready ? '눌러서 새 버전으로 바꾸기' : '눌러서 새 버전 확인 (지금 v'+APP_VERSION+')';
 }
 
@@ -4428,7 +4428,15 @@ async function checkUpdate(manual){
     else toast('최신 버전입니다 (v'+APP_VERSION+')');
   },1200);
 }
-function applyUpdate(){ flushWrites(); swReg?.waiting?.postMessage('skipWaiting'); }
+function applyUpdate(){
+  flushWrites();
+  const w=swReg?.waiting;
+  if(!w){ location.reload(); return; }
+  w.postMessage('skipWaiting');
+  toast('새 버전으로 바꾸는 중입니다…');
+  /* 기기에 따라 바뀌었다는 신호가 안 올 때가 있어 직접 다시 엽니다 */
+  setTimeout(()=>location.reload(), 1500);
+}
 
 /* ---------- boot ---------- */
 async function autoLogin(){
