@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.30.0';
+const APP_VERSION = '5.30.1';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -479,28 +479,15 @@ async function pull(){
   if(changed){ if(!S.estimates.has(S.curId)) setCur([...S.estimates.values()].sort((a,b)=>(b.updated||0)-(a.updated||0))[0]?.id||null); safeRender(); }
 }
 async function updatePill(){
-  const box=$('#topSync'), el=$('#syncPill'); if(!el||window.__viewerMode) return;
-  if(box) box.hidden=false;
-  const n=await countDirty();
-  let s,t;
-  if(!sb){ s='local'; t='이 기기에만 저장'; }
-  else if(!session){ s='local'; t='로그인 안 됨'; }
-  else if(!navigator.onLine){ s='offline'; t=n?`오프라인 · ${n}건 대기`:'오프라인'; }
-  else if(syncing){ s='sync'; t='동기화 중'; }
-  else if(syncErr){ s='err'; t='동기화 실패 · 다시 시도'; }
-  else if(n){ s='sync'; t=`${n}건 올리는 중`; }
-  else { s='ok'; t=lastSyncAt?`동기화됨 ${lastSyncAt.getHours()}:${String(lastSyncAt.getMinutes()).padStart(2,'0')}`:'동기화됨'; }
-  el.dataset.s=s; el.textContent=t; el.title=syncErr||'';
-  /* 동기화 알림은 문제가 있을 때만 보여줍니다 */
-  el.hidden = !(s==='err'||s==='offline'||s==='local');
-  /* 버전과 업데이트 단추 — 새 버전이 와 있으면 주황색 */
-  const bu=$('#btnUpdate');
-  if(bu){
-    const ready=!!swReg?.waiting;
-    bu.classList.toggle('need', ready);
-    bu.textContent = ready ? '새 버전 적용' : 'v'+APP_VERSION;
-    bu.title = ready ? '눌러서 새 버전으로 바꾸기' : '눌러서 새 버전 확인 (지금 v'+APP_VERSION+')';
-  }
+  if(window.__viewerMode) return;
+  const box=$('#topSync'); if(box) box.hidden=false;
+  /* 윗줄에는 버전만. 새 버전이 와 있으면 주황색으로 바뀝니다.
+     동기화 상태와 오류는 설정 화면에서 봅니다. */
+  const bu=$('#btnUpdate'); if(!bu) return;
+  const ready=!!swReg?.waiting;
+  bu.classList.toggle('need', ready);
+  bu.textContent = ready ? '새 버전 적용' : 'v'+APP_VERSION;
+  bu.title = ready ? '눌러서 새 버전으로 바꾸기' : '눌러서 새 버전 확인 (지금 v'+APP_VERSION+')';
 }
 
 /* ---------- calculation ---------- */
@@ -3139,7 +3126,7 @@ async function reportPdf(p){
 /* 공유 링크로 열었을 때 보이는 화면 (로그인 없음, 수정 불가) */
 async function renderViewer(token){
   window.__viewerMode=true;
-  const app=$('#app'); $('#tabs').hidden=true; $('#syncPill').hidden=true;
+  const app=$('#app'); $('#tabs').hidden=true; const ts=$('#topSync'); if(ts) ts.hidden=true;
   app.innerHTML=`<div class="empty"><span class="spin"></span> 불러오는 중</div>`;
   const {url,key}=sbConf();
   let payload=null, err='', netFail=false;
