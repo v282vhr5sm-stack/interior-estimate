@@ -207,7 +207,7 @@ details.co[open] summary{border-bottom:1px solid var(--line2)}
 .g-day.today{background:var(--accent-weak);border-radius:5px}
 .g-day.sel{box-shadow:inset 0 0 0 2px var(--accent);border-radius:5px}
 .g-sel{position:absolute;top:-2px;bottom:-2px;background:var(--accent-weak);border-radius:4px}
-.g-bar{position:absolute;top:0;bottom:0;border-radius:7px;background:var(--accent-weak);border:1px solid var(--accent);min-width:8px;overflow:hidden}
+.g-bar{position:absolute;top:0;bottom:0;border-radius:7px;background:var(--accent-weak);border:1px solid var(--accent);min-width:26px;overflow:hidden}
 .g-bar b{position:absolute;left:6px;right:4px;top:50%;transform:translateY(-50%);font-size:10px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:1}
 .g-bar.done b{color:#fff;opacity:.95}
 .g-bar.now b{color:#fff}
@@ -532,10 +532,6 @@ figure.file figcaption .btn.sm{padding:4px 8px;font-size:12px}
 .g-row.on .g-name{color:#8a5a06;font-weight:700}
 .g-row.on .g-bar{box-shadow:0 0 0 2px #d9922a}
 
-/* 작업 메모를 일정표 막대 옆에 같이 보여줍니다 */
-.g-memo{position:absolute;top:50%;transform:translateY(-50%);font-size:10.5px;color:#8a5a06;
-  white-space:nowrap;pointer-events:none;max-width:260px;overflow:hidden;text-overflow:ellipsis}
-.g-row.on .g-memo{font-weight:700}
 
 .g-cnt{font-style:normal;font-size:9.5px;font-weight:700;background:var(--line2);border-radius:999px;padding:1px 5px;margin-left:3px;color:var(--muted)}
 .g-row.on .g-cnt{background:#f6e2c4;color:#8a5a06}
