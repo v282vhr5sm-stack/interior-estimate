@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.28.1';
+const APP_VERSION = '5.29.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -2937,23 +2937,38 @@ let SEL_DAY=null;
 const LINE_VENDOR={};        // 공정별로 고른 업체 (자재 목록 좁히기)
 const LINE_SYNC={}, MAT_SYNC={};            // 눌러서 펼쳐 본 날짜
 const onDay=(t,key)=>{ const s=dnum(t.start),e=dnum(t.end),d=dnum(key); return s&&e&&d>=s&&d<=e; };
-function ganttBars(tasks,r,sel,selTask){
+function ganttBars(tasks,r,sel,selKey){
   if(!r) return '';
   const span=Math.max(1,(r.to-r.from)/DAY+1), t0=dnum(today());
+  /* 같은 공정은 몇 차수든 한 줄로 모읍니다 (창호·샷시 / 창호·샷시 2차 → 한 줄) */
+  const baseName=n=>String(n||'').replace(/\s*\d+\s*차$/,'').trim();
+  const keyOf=t=>t.proc||baseName(t.name)||t.id;
+  const groups=new Map();
+  tasks.filter(t=>dnum(t.start)&&dnum(t.end)).forEach(t=>{
+    const k=keyOf(t);
+    if(!groups.has(k)) groups.set(k,{k,name:baseName(t.name)||t.name,items:[]});
+    groups.get(k).items.push(t);
+  });
   /* 고른 공정의 기간 — 그 날짜들만 다른 색으로 보여줍니다 */
-  const pick=selTask?tasks.find(x=>x.id===selTask):null;
-  const pr=pick&&dnum(pick.start)?{a:dnum(pick.start),b:dnum(pick.end)||dnum(pick.start)}:null;
+  const pick=selKey?[...groups.values()].find(g=>g.k===selKey||g.items.some(t=>t.id===selKey)):null;
+  const inPick=ms=>!!pick&&pick.items.some(t=>{const a=dnum(t.start),b=dnum(t.end)||a; return ms>=a&&ms<=b;});
   const days=[...Array(span)].map((_,i)=>{ const ms=r.from+i*DAY, d=new Date(ms); return {ms,key:dstr(ms),d}; });
   const head=`<div class="g-row g-head"><span class="g-name">날짜</span><span class="g-track" style="width:${span*DAYW}px">${
-    days.map(x=>`<button class="g-day${x.key===today()?' today':''}${x.key===sel?' sel':''}${pr&&x.ms>=pr.a&&x.ms<=pr.b?' inr':''}${x.d.getDay()===0?' sun':x.d.getDay()===6?' sat':''}" style="left:${(x.ms-r.from)/DAY*DAYW}px;width:${DAYW}px" data-act="selDay" data-d="${x.key}" title="${x.key}">
+    days.map(x=>`<button class="g-day${x.key===today()?' today':''}${x.key===sel?' sel':''}${inPick(x.ms)?' inr':''}${x.d.getDay()===0?' sun':x.d.getDay()===6?' sat':''}" style="left:${(x.ms-r.from)/DAY*DAYW}px;width:${DAYW}px" data-act="selDay" data-d="${x.key}" title="${x.key}">
       <b>${x.d.getDate()}</b><i>${WD[x.d.getDay()]}</i></button>`).join('')}</span></div>`;
-  const rows=tasks.filter(t=>dnum(t.start)&&dnum(t.end)).map(t=>{
-    const s=(dnum(t.start)-r.from)/DAY, w=Math.max(1,(dnum(t.end)-dnum(t.start))/DAY+1), st=t.status||'예정';
-    const now=(t0>=r.from&&t0<=r.to)?`<span class="g-now" style="left:${(t0-r.from)/DAY*DAYW}px;width:${DAYW}px"></span>`:'';
-    const selm=sel&&dnum(sel)>=r.from&&dnum(sel)<=r.to?`<span class="g-sel" style="left:${(dnum(sel)-r.from)/DAY*DAYW}px;width:${DAYW}px"></span>`:'';
-    const onT=t.id===selTask;
-    return `<div class="g-row${onT?' on':''}"><button class="g-name g-pick" data-act="selTask" data-id="${esc(t.id)}" title="${esc(t.name)} — 눌러서 이 공정 기간 보기">${esc(t.name)}</button>
-      <span class="g-track" style="width:${span*DAYW}px">${now}${selm}<span class="g-bar ${st==='완료'?'done':st==='진행'?'now':''}" style="left:${s*DAYW}px;width:${w*DAYW}px" title="${esc(t.start)} ~ ${esc(t.end)} · ${esc(t.worker||'담당 미정')}"><b>${esc(t.name)}</b></span>${t.memo?`<span class="g-memo" style="left:${(s+w)*DAYW+8}px" title="${esc(t.memo)}">${esc(t.memo)}</span>`:''}</span></div>`;
+  const now=(t0>=r.from&&t0<=r.to)?`<span class="g-now" style="left:${(t0-r.from)/DAY*DAYW}px;width:${DAYW}px"></span>`:'';
+  const selm=sel&&dnum(sel)>=r.from&&dnum(sel)<=r.to?`<span class="g-sel" style="left:${(dnum(sel)-r.from)/DAY*DAYW}px;width:${DAYW}px"></span>`:'';
+  const rows=[...groups.values()].map(g=>{
+    const onG=!!pick&&pick.k===g.k;
+    /* 한 줄 안에 차수별 막대를 나란히, 메모는 그 막대 옆에 */
+    const bars=g.items.map(t=>{
+      const s=(dnum(t.start)-r.from)/DAY, w=Math.max(1,(dnum(t.end)-dnum(t.start))/DAY+1), st=t.status||'예정';
+      return `<span class="g-bar ${st==='완료'?'done':st==='진행'?'now':''}" style="left:${s*DAYW}px;width:${w*DAYW}px" title="${esc(t.name)} · ${esc(t.start)} ~ ${esc(t.end)} · ${esc(t.worker||'담당 미정')}"><b>${esc(t.name)}</b></span>`
+        + (t.memo?`<span class="g-memo" style="left:${(s+w)*DAYW+8}px" title="${esc(t.name)} — ${esc(t.memo)}">${esc(t.memo)}</span>`:'');
+    }).join('');
+    const label=g.items.length>1?`${g.name} <i class="g-cnt">${g.items.length}</i>`:esc(g.name);
+    return `<div class="g-row${onG?' on':''}"><button class="g-name g-pick" data-act="selTask" data-id="${esc(g.k)}" title="${esc(g.name)} — 눌러서 이 공정 기간 보기">${g.items.length>1?esc(g.name)+' <i class="g-cnt">'+g.items.length+'</i>':esc(g.name)}</button>
+      <span class="g-track" style="width:${span*DAYW}px">${now}${selm}${bars}</span></div>`;
   }).join('');
   return `<div class="gantt-scroll">${head}${rows}</div>`;
 }
