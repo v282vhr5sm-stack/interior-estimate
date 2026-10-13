@@ -208,7 +208,9 @@ details.co[open] summary{border-bottom:1px solid var(--line2)}
 .g-day.sel{box-shadow:inset 0 0 0 2px var(--accent);border-radius:5px}
 .g-sel{position:absolute;top:-2px;bottom:-2px;background:var(--accent-weak);border-radius:4px}
 .g-bar{position:absolute;top:0;bottom:0;border-radius:7px;background:var(--accent-weak);border:1px solid var(--accent);min-width:8px;overflow:hidden}
-.g-bar b{position:absolute;left:6px;top:50%;transform:translateY(-50%);font-size:10px;font-weight:600;color:var(--ink);white-space:nowrap;opacity:0}
+.g-bar b{position:absolute;left:6px;right:4px;top:50%;transform:translateY(-50%);font-size:10px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:1}
+.g-bar.done b{color:#fff;opacity:.95}
+.g-bar.now b{color:#fff}
 .g-row.g-head{font-size:11px;color:var(--muted);position:sticky;top:0;z-index:4;background:var(--surface);padding-bottom:4px}
 .g-row.g-head .g-name{z-index:5}
 .g-axis{background:transparent;height:16px;border-bottom:1px solid var(--line)}

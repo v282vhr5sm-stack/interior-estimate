@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.29.0';
+const APP_VERSION = '5.29.1';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -2845,7 +2845,7 @@ function renderProject(p){
           <td data-l="종료"><input class="f" type="date" id="t${ti}-e" data-bind="task:${ti}:end" value="${esc(t.end||'')}" min="${esc(t.start||'')}"></td>
           <td data-l="상태"><select class="f" id="t${ti}-st" data-bind="task:${ti}:status">${['예정','진행','완료'].map(s=>`<option ${s===(t.status||'예정')?'selected':''}>${s}</option>`).join('')}</select></td>
           <td data-l="작업 메모"><input class="f" id="t${ti}-m" data-bind="task:${ti}:memo" value="${esc(t.memo||'')}" placeholder="작업자에게 전할 말"></td>
-          <td class="c-act"><button class="btn ghost sm" data-act="taskPhoto" data-ti="${ti}" title="이 공정 사진 올리기">📷 사진${(p.files||[]).filter(f=>f.taskId===t.id).length||''}</button><button class="btn ghost sm" data-act="dupTask" data-ti="${ti}" title="같은 공정을 또 할 때는 작업 메모에 적어두세요">메모 적기</button><button class="btn ghost sm danger" data-act="delTask" data-ti="${ti}" aria-label="삭제">✕ 삭제</button></td></tr>`).join('')
+          <td class="c-act"><button class="btn ghost sm" data-act="taskPhoto" data-ti="${ti}" title="이 공정 사진 올리기">📷 사진${(p.files||[]).filter(f=>f.taskId===t.id).length||''}</button><button class="btn ghost sm" data-act="dupTask" data-ti="${ti}" title="같은 공정을 다른 날짜에 한 차수 더 넣기 (일정표에는 같은 줄에 나옵니다)">한 번 더</button><button class="btn ghost sm danger" data-act="delTask" data-ti="${ti}" aria-label="삭제">✕ 삭제</button></td></tr>`).join('')
           || `<tr><td colspan="7" class="muted small c-empty" style="padding:12px 8px">아래에서 공정을 눌러 일정을 추가하세요.</td></tr>`}</tbody>
       </table></div>
       <div class="proc-f"><b class="small">공정 추가</b><div class="chips">
@@ -4212,13 +4212,14 @@ document.addEventListener('click',async ev=>{
       const same=k?p.tasks.filter(x=>x.proc===k).length:0;
       p.tasks.push({id:uid(),proc:k||'',name:P?(same?`${P.n} ${same+1}차`:P.n):'',start:st,end:st,worker:'',status:'예정',memo:''});
       saveProj(p); render(); if(!P) setTimeout(()=>document.getElementById(`t${p.tasks.length-1}-name`)?.focus(),60); break; }
-    case 'dupTask': {                      // 줄은 늘리지 않고 작업 메모에 적도록 커서만 보냅니다
+    case 'dupTask': { const p=curProj(); const src=p.tasks[+t.dataset.ti];
+      /* 바로 아래에 넣고 날짜는 원래 작업 다음 날부터 (일정표에서는 같은 줄에 모입니다) */
+      const st=src.end?addDays(src.end,1):today(), len=Math.max(0,(dnum(src.end)-dnum(src.start))/DAY||0);
+      const same=p.tasks.filter(x=>x.proc?x.proc===src.proc:x.name.replace(/ \d+차$/,'')===src.name.replace(/ \d+차$/,'')).length;
       const ti=+t.dataset.ti;
-      const el=document.getElementById('t'+ti+'-m');
-      if(el){ el.scrollIntoView({block:'nearest'}); el.focus();
-        try{ el.setSelectionRange(el.value.length,el.value.length); }catch(e){}
-        toast('같은 공정을 또 할 때는 여기에 적어두세요 (예: 2차 11/30 예정)'); }
-      break; }
+      p.tasks.splice(ti+1,0,{...src,id:uid(),name:src.name.replace(/ \d+차$/,'')+` ${same+1}차`,start:st,end:addDays(st,len),status:'예정',memo:''});
+      saveProj(p); render(); toast('바로 아래에 한 차수 더 넣었습니다. 날짜와 메모를 적어주세요.');
+      setTimeout(()=>document.getElementById('t'+(ti+1)+'-s')?.focus(),80); break; }
     case 'sortTasks': { const p=curProj(); p.tasks.sort((a,b)=>String(a.start||'').localeCompare(String(b.start||''))); saveProj(p); render(); break; }
     case 'openSite': HUB_GALLERY=false; HOME_SEL=t.dataset.id; selectSite(t.dataset.id); VIEW='home'; ls.set('view',VIEW); render(); window.scrollTo(0,0); break;
     case 'saveTempTpl': { const p=e.processes[+t.dataset.pi];
