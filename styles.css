@@ -529,13 +529,13 @@ figure.file figcaption .btn.sm{padding:4px 8px;font-size:12px}
 .g-day.inr.today{background:#f0cf96}
 .g-pick{border:0;background:var(--surface);font:inherit;font-size:12px;text-align:left;cursor:pointer;padding:0 4px 0 0}
 .g-pick:hover{color:var(--ink);text-decoration:underline}
-.g-row.on .g-name{color:#8a5a06;font-weight:700}
+.g-row.on .g-name{color:#5a3400;font-weight:800}
 .g-row.on .g-bar{box-shadow:0 0 0 2px #d9922a}
-.g-row.on .g-name{background:#f6e2c4;border-radius:6px}
+.g-row.on .g-name{background:#f0bf72;border-radius:6px;box-shadow:0 0 0 1px #d9922a}
 /* 고른 공정: 가로줄 전체 + 날짜만큼 세로 띠 */
-.g-row.on{background:#fff4e2;border-radius:8px}
-.g-row.on .g-track{background:#fbe3bd}
-.g-pin{position:absolute;top:-3px;bottom:-3px;background:#fbe3bd;border-left:2px solid #d9922a;border-right:2px solid #d9922a;border-radius:4px}
+.g-row.on{background:#fff0d8;border-radius:8px;box-shadow:0 0 0 2px #e0a040}
+.g-row.on .g-track{background:#f8cf94}
+.g-pin{position:absolute;top:-3px;bottom:-3px;background:#fdeeda;border-left:2px solid #e0a040;border-right:2px solid #e0a040;border-radius:4px}
 .g-head .g-pin{top:0;bottom:0}
 
 
