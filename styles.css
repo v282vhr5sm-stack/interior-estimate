@@ -533,3 +533,16 @@ figure.file figcaption .btn.sm{padding:4px 8px;font-size:12px}
 .g-row.on .g-bar{box-shadow:0 0 0 2px #d9922a}
 
 
+
+/* 일정 순서 바꾸기 */
+table.t th.w-ord{width:62px}
+table.t td.c-ord{white-space:nowrap}
+table.t td.c-ord .btn{padding:2px 5px;font-size:11px;line-height:1.2;min-width:0}
+
+/* 고른 공정·날짜를 글자로 보여주는 줄 */
+.g-info{font-size:12px;color:var(--muted);padding:0 16px 8px 0;min-height:17px}
+.g-info.on{color:#8a5a06}
+.g-info b{color:var(--ink);margin-right:6px;font-weight:700}
+.g-info.on b{color:#8a5a06}
+button.g-bar{padding:0;font:inherit;cursor:pointer;text-align:left;-webkit-appearance:none;appearance:none}
+.g-bar.pickd{box-shadow:0 0 0 2px #d9922a}

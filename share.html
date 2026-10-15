@@ -51,6 +51,12 @@ h2{font-size:15px;margin:0 0 10px}
 .gx td.c.s i{border-radius:7px 0 0 7px}
 .gx td.c.e i{border-radius:0 7px 7px 0}
 .gx td.c.today i{box-shadow:inset 0 0 0 2px var(--accent)}
+.gx td.c.on,.gx td.n{cursor:pointer}
+.gx th.d.inr{background:#f6e2c4;color:#8a5a06;border-radius:6px 6px 0 0}
+.gx tr.on td.n{color:#8a5a06;font-weight:700}
+.gx td.c.pickd i{box-shadow:0 0 0 2px #d9922a}
+.gxinfo{font-size:12px;color:var(--mut);margin:0 0 8px}
+.gxinfo.on{color:#8a5a06;font-weight:700}
 /* 그날 작업 */
 .dayp{border-top:1px solid var(--line2);margin-top:12px;padding-top:12px}
 .tl{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
@@ -101,7 +107,7 @@ body.noscroll{overflow:hidden;position:fixed;width:100%}
      그 경우 주소에 ?s=... 가 없어도 열립니다. */
   var FIXED_TOKEN='';
   var token=FIXED_TOKEN||new URLSearchParams(location.search).get('s')||'';
-  var P=null, SELD='', SELT='';
+  var P=null, SELD='', SELT='', SELB='';
   var WD=['일','월','화','수','목','금','토'], DAY=86400000;
 
   function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){
@@ -174,13 +180,23 @@ body.noscroll{overflow:hidden;position:fixed;width:100%}
         if(!gmap[k]){ gmap[k]={k:k,name:baseName(t.name)||t.name,items:[]}; groups.push(gmap[k]); }
         gmap[k].items.push(t);
       });
+      /* 누른 막대의 기간 (그 날짜만 다른 색) */
+      var pickT=null;
+      if(SELB) tasks.forEach(function(t){ if(t.id===SELB&&dnum(t.start)) pickT=t; });
+      var inB=function(d){ if(!pickT) return false; var a=dnum(pickT.start), b=dnum(pickT.end)||a; return d>=a&&d<=b; };
+      var fmtD=function(k){ var ms=dnum(k); if(!ms) return String(k||''); var x=new Date(ms); return (x.getUTCMonth()+1)+'월 '+x.getUTCDate()+'일('+WD[x.getUTCDay()]+')'; };
+      var dtxt=function(t){ var s=fmtD(t.start), e=(t.end&&t.end!==t.start)?fmtD(t.end):''; return e?s+' ~ '+e:s; };
+      var infoTxt = pickT ? (baseName(pickT.name)||pickT.name)+' · '+dtxt(pickT)+(pickT.memo?' · '+pickT.memo:'')
+        : SELD ? fmtD(SELD) : '';
+      h+= infoTxt ? '<div class="gxinfo on">'+esc(infoTxt)+'</div>'
+        : '<div class="gxinfo">공정 이름이나 막대, 날짜를 누르면 그 날짜가 여기에 보입니다</div>';
       h+='<div class="gx"><table><thead><tr><th></th>';
       cols.forEach(function(d){ var dt=new Date(d), w=dt.getUTCDay();
-        h+='<th class="d'+(dstr(d)===SELD?' sel':'')+(w===0||w===6?' wk':'')+'" data-day="'+dstr(d)+'">'
+        h+='<th class="d'+(dstr(d)===SELD?' sel':'')+(inB(d)?' inr':'')+(w===0||w===6?' wk':'')+'" data-day="'+dstr(d)+'">'
           + dt.getUTCDate()+'<br>'+WD[w]+'</th>'; });
       h+='</tr></thead><tbody>';
       groups.forEach(function(g){
-        h+='<tr><td class="n">'+esc(g.name)+'</td>';
+        h+='<tr'+(pickT&&keyOf(pickT)===g.k?' class="on"':'')+'><td class="n" data-bar="'+esc(g.items[0].id)+'">'+esc(g.name)+'</td>';
         cols.forEach(function(d){
           /* 이 날에 걸친 차수를 찾습니다 */
           var hit=null;
@@ -191,8 +207,8 @@ body.noscroll{overflow:hidden;position:fixed;width:100%}
           if(!hit){ h+='<td class="c"><i></i></td>'; return; }
           /* 메모를 적었으면 그 차수 막대 안에 보여줍니다 */
           var lab=(d===hit.a&&hit.t.memo)?'<span class="bl">'+esc(hit.t.memo)+'</span>':'';
-          h+='<td class="c on'+(d===hit.a?' s':'')+(d===hit.b?' e':'')+(d===tN?' today':'')
-            +'" title="'+esc(hit.t.name)+(hit.t.memo?' · '+esc(hit.t.memo):'')+'"><i>'+lab+'</i></td>';
+          h+='<td class="c on'+(d===hit.a?' s':'')+(d===hit.b?' e':'')+(d===tN?' today':'')+(hit.t.id===SELB?' pickd':'')
+            +'" data-bar="'+esc(hit.t.id)+'" title="'+esc(hit.t.name)+(hit.t.memo?' · '+esc(hit.t.memo):'')+' — 눌러서 날짜 보기"><i>'+lab+'</i></td>';
         });
         h+='</tr>';
       });
@@ -307,9 +323,12 @@ body.noscroll{overflow:hidden;position:fixed;width:100%}
       openShot(list, +shot.getAttribute('data-shot'));
       return;
     }
+    var barEl=t.closest?t.closest('[data-bar]'):null;
+    if(barEl){ var bid=barEl.getAttribute('data-bar')||'';
+      SELB = (!bid||bid===SELB)?'':bid; paint(); return; }
     var dayEl=t.closest?t.closest('[data-day]'):null;
     if(dayEl){ var v=dayEl.getAttribute('data-day')||'';
-      SELD = (!v||v===SELD)?'':v; SELT=''; paint(); return; }
+      SELD = (!v||v===SELD)?'':v; SELT=''; SELB=''; paint(); return; }
     var li=t.closest?t.closest('[data-task]'):null;
     if(li){ var id=li.getAttribute('data-task');
       SELT = (id===SELT)?'':id; paint();

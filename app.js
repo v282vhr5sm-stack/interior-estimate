@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.31.0';
+const APP_VERSION = '5.32.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -2827,17 +2827,18 @@ function renderProject(p){
       <div class="panel-h"><h3>공정 일정</h3><span class="muted small">${r?`${dstr(r.from)} ~ ${dstr(r.to)} · ${Math.round((r.to-r.from)/DAY)+1}일`:'일정 없음'}</span>
         <span class="spacer"></span><span class="badge">진행률 ${prog}%</span></div>
       ${(p.tasks||[]).length?`<div class="gantt">${ganttHTML(p,r)}</div>
-      ${SEL_DAY?dayPanel((p.tasks||[]).filter(t=>onDay(t,SEL_DAY)).map(t=>({t,p})),SEL_DAY):''}`:''}
+      ${SEL_DAY?dayPanel((p.tasks||[]).filter(t=>onDay(t,SEL_DAY)).map(t=>({t,p})),SEL_DAY,{send:true}):''}`:''}
       <div class="tbl-wrap"><table class="t resp">
-        <thead><tr><th class="w-name">작업</th><th>담당</th><th>시작</th><th>종료</th><th>상태</th><th>작업 메모</th><th></th></tr></thead>
+        <thead><tr><th class="w-ord">순서</th><th class="w-name">작업</th><th>담당</th><th>시작</th><th>종료</th><th>상태</th><th>작업 메모</th><th></th></tr></thead>
         <tbody>${(p.tasks||[]).map((t,ti)=>`<tr>
+          <td class="c-ord" data-l="순서"><button class="btn ghost sm" data-act="moveTask" data-ti="${ti}" data-d="-1" title="위로" ${ti===0?'disabled':''}>▲</button><button class="btn ghost sm" data-act="moveTask" data-ti="${ti}" data-d="1" title="아래로" ${ti===(p.tasks||[]).length-1?'disabled':''}>▼</button></td>
           <td class="c-name"><input class="f" id="t${ti}-name" data-bind="task:${ti}:name" value="${esc(t.name)}" placeholder="작업 이름" style="font-weight:500"></td>
           <td data-l="담당">${workerCell(t,ti)}</td>
           <td data-l="시작"><input class="f" type="date" id="t${ti}-s" data-bind="task:${ti}:start" value="${esc(t.start||'')}"></td>
           <td data-l="종료"><input class="f" type="date" id="t${ti}-e" data-bind="task:${ti}:end" value="${esc(t.end||'')}" min="${esc(t.start||'')}"></td>
           <td data-l="상태"><select class="f" id="t${ti}-st" data-bind="task:${ti}:status">${['예정','진행','완료'].map(s=>`<option ${s===(t.status||'예정')?'selected':''}>${s}</option>`).join('')}</select></td>
           <td data-l="작업 메모"><input class="f" id="t${ti}-m" data-bind="task:${ti}:memo" value="${esc(t.memo||'')}" placeholder="작업자에게 전할 말"></td>
-          <td class="c-act"><button class="btn ghost sm" data-act="taskPhoto" data-ti="${ti}" title="이 공정 사진 올리기">📷 사진${(p.files||[]).filter(f=>f.taskId===t.id).length||''}</button><button class="btn ghost sm" data-act="dupTask" data-ti="${ti}" title="같은 공정을 다른 날짜에 한 차수 더 넣기 (일정표에는 같은 줄에 나옵니다)">한 번 더</button><button class="btn ghost sm danger" data-act="delTask" data-ti="${ti}" aria-label="삭제">✕ 삭제</button></td></tr>`).join('')
+          <td class="c-act"><button class="btn ghost sm" data-act="taskPhoto" data-ti="${ti}" title="이 공정 사진 올리기">📷 사진${(p.files||[]).filter(f=>f.taskId===t.id).length||''}</button><button class="btn ghost sm" data-act="dupTask" data-ti="${ti}" title="같은 공정을 다른 날짜에 한 차수 더 넣기 (일정표에는 같은 줄에 나옵니다)">한 번 더</button><button class="btn ghost sm" data-act="sendTask" data-tid="${esc(t.id)}" title="이 작업 날짜와 현장 주소를 작업자에게 보내기">📨 보내기</button><button class="btn ghost sm danger" data-act="delTask" data-ti="${ti}" aria-label="삭제">✕ 삭제</button></td></tr>`).join('')
           || `<tr><td colspan="7" class="muted small c-empty" style="padding:12px 8px">아래에서 공정을 눌러 일정을 추가하세요.</td></tr>`}</tbody>
       </table></div>
       <div class="proc-f"><b class="small">공정 추가</b><div class="chips">
@@ -2924,6 +2925,69 @@ function renderProject(p){
     </section>`;
 }
 const DAYW=34;               // 하루 한 칸의 너비(px)
+/* 10월 20일(월) 처럼 읽기 쉬운 날짜 */
+function fmtDay(k){ const ms=dnum(k); if(!ms) return String(k||''); const d=new Date(ms); return (d.getMonth()+1)+'월 '+d.getDate()+'일('+WD[d.getDay()]+')'; }
+function taskDateText(t){ const s=fmtDay(t.start), e=(t.end&&t.end!==t.start)?fmtDay(t.end):''; return e?s+' ~ '+e:s; }
+/* 작업자에게 보낼 문구 (현장 주소 · 날짜가 들어갑니다) */
+function taskMsg(p,t){
+  const L=['['+siteName(p)+'] '+(t.name||'작업')];
+  L.push('날짜: '+taskDateText(t));
+  if(p.address) L.push('현장 주소: '+p.address);
+  if(t.worker) L.push('담당: '+t.worker);
+  if(t.memo) L.push('메모: '+t.memo);
+  if(p.share?.on) L.push('일정 보기: '+shareUrl(p));
+  return L.join('\n');
+}
+function dayMsg(p,key,items){
+  const L=['['+siteName(p)+'] '+fmtDay(key)+' 작업'];
+  if(p.address) L.push('현장 주소: '+p.address);
+  items.forEach(t=>L.push('· '+(t.name||'')+(t.worker?' / '+t.worker:'')+(t.memo?' — '+t.memo:'')));
+  if(p.share?.on) L.push('일정 보기: '+shareUrl(p));
+  return L.join('\n');
+}
+async function copyText(s,msg){
+  if(!s){ toast('복사할 내용이 없습니다'); return; }
+  try{ await navigator.clipboard.writeText(s); toast(msg||'복사했습니다'); }
+  catch{ prompt('이 내용을 복사해서 보내세요',s); }
+}
+/* 보내기 창: 전체·주소만·날짜만 따로 복사하거나 바로 보낼 수 있습니다 */
+function openSendMsg({title,text,addr='',date=''}){
+  const box=document.createElement('div'); box.className='modal';
+  box.innerHTML='<div class="modal-b ask" style="max-width:440px">'
+    +'<h3>'+esc(title)+'</h3>'
+    +'<textarea class="f" id="sm-t" rows="7" style="font-size:13px;line-height:1.55">'+esc(text)+'</textarea>'
+    +'<div class="row" style="gap:6px;flex-wrap:wrap">'
+      +(addr?'<button class="btn sm" data-c="addr">주소만 복사</button>':'')
+      +(date?'<button class="btn sm" data-c="date">날짜만 복사</button>':'')
+    +'</div>'
+    +'<div class="row" style="justify-content:flex-end;margin-top:6px">'
+      +'<button class="btn" data-x="no">닫기</button>'
+      +'<button class="btn" data-c="all">전체 복사</button>'
+      +(navigator.share?'<button class="btn pri" data-x="share">문자·카톡으로 보내기</button>':'')
+    +'</div></div>';
+  const close=()=>{ box.remove(); document.removeEventListener('keydown',key); };
+  const key=e=>{ if(e.key==='Escape') close(); };
+  box.addEventListener('click',async e=>{
+    const c=e.target.closest('[data-c]'), x=e.target.closest('[data-x]');
+    if(c){ const k=c.dataset.c, now=box.querySelector('#sm-t').value;
+      await copyText(k==='addr'?addr:k==='date'?date:now, k==='addr'?'현장 주소를 복사했습니다':k==='date'?'날짜를 복사했습니다':'복사했습니다');
+      return; }
+    if(x){ if(x.dataset.x==='share'){ try{ await navigator.share({text:box.querySelector('#sm-t').value}); }catch{} }
+      close(); return; }
+    if(e.target===box) close();
+  });
+  document.addEventListener('keydown',key);
+  document.body.appendChild(box);
+}
+function sendTaskById(id){
+  const p=curProj(); const t=(p?.tasks||[]).find(x=>x.id===id); if(!t) return;
+  openSendMsg({title:(t.name||'작업')+' 보내기',text:taskMsg(p,t),addr:p.address||'',date:taskDateText(t)});
+}
+function sendDayMsg(key){
+  const p=curProj(); if(!p||!key) return;
+  const items=(p.tasks||[]).filter(t=>onDay(t,key));
+  openSendMsg({title:fmtDay(key)+' 작업 보내기',text:dayMsg(p,key,items),addr:p.address||'',date:fmtDay(key)});
+}
 const WD=['일','월','화','수','목','금','토'];
 let SEL_DAY=null;
 const LINE_VENDOR={};        // 공정별로 고른 업체 (자재 목록 좁히기)
@@ -2942,7 +3006,10 @@ function ganttBars(tasks,r,sel,selKey){
     groups.get(k).items.push(t);
   });
   /* 고른 공정의 기간 — 그 날짜들만 다른 색으로 보여줍니다 */
-  const pick=selKey?[...groups.values()].find(g=>g.k===selKey||g.items.some(t=>t.id===selKey)):null;
+  const one=selKey?tasks.find(t=>t.id===selKey&&dnum(t.start)):null;
+  const pick=one?{k:keyOf(one),name:baseName(one.name)||one.name,items:[one]}
+    :(selKey?[...groups.values()].find(g=>g.k===selKey):null);
+  const PICKACT=window.__viewerMode?'vTask':'selTask';
   const inPick=ms=>!!pick&&pick.items.some(t=>{const a=dnum(t.start),b=dnum(t.end)||a; return ms>=a&&ms<=b;});
   const days=[...Array(span)].map((_,i)=>{ const ms=r.from+i*DAY, d=new Date(ms); return {ms,key:dstr(ms),d}; });
   const head=`<div class="g-row g-head"><span class="g-name">날짜</span><span class="g-track" style="width:${span*DAYW}px">${
@@ -2957,12 +3024,17 @@ function ganttBars(tasks,r,sel,selKey){
       const s=(dnum(t.start)-r.from)/DAY, w=Math.max(1,(dnum(t.end)-dnum(t.start))/DAY+1), st=t.status||'예정';
       /* 막대 안에는 적어 둔 메모만 보여줍니다 */
       const inBar = t.memo || '';
-      return `<span class="g-bar ${st==='완료'?'done':st==='진행'?'now':''}" style="left:${s*DAYW}px;width:${w*DAYW}px" title="${esc(t.name)} · ${esc(t.start)} ~ ${esc(t.end)}${t.memo?' · '+esc(t.memo):''} · ${esc(t.worker||'담당 미정')}"><b>${esc(inBar)}</b></span>`;
+      return `<button class="g-bar ${st==='완료'?'done':st==='진행'?'now':''}${one&&one.id===t.id?' pickd':''}" style="left:${s*DAYW}px;width:${w*DAYW}px" data-act="${PICKACT}" data-id="${esc(t.id)}" title="${esc(t.name)} · ${esc(t.start)} ~ ${esc(t.end)}${t.memo?' · '+esc(t.memo):''} · ${esc(t.worker||'담당 미정')} — 눌러서 날짜 보기"><b>${esc(inBar)}</b></button>`;
     }).join('');
-    return `<div class="g-row${onG?' on':''}"><button class="g-name g-pick" data-act="selTask" data-id="${esc(g.k)}" title="${esc(g.name)} — 눌러서 이 공정 기간 보기">${esc(g.name)}</button>
+    return `<div class="g-row${onG?' on':''}"><button class="g-name g-pick" data-act="${PICKACT}" data-id="${esc(g.k)}" title="${esc(g.name)} — 눌러서 이 공정 기간 보기">${esc(g.name)}</button>
       <span class="g-track" style="width:${span*DAYW}px">${now}${selm}${bars}</span></div>`;
   }).join('');
-  return `<div class="gantt-scroll">${head}${rows}</div>`;
+  /* 공정(막대)을 누르든 날짜를 누르든, 그 날짜를 글자로 보여줍니다 */
+  const info=pick
+    ? `<div class="g-info on"><b>${esc(pick.name)}</b>${pick.items.map(t=>esc(taskDateText(t))+(t.memo?' · '+esc(t.memo):'')).join(' / ')}</div>`
+    : sel ? `<div class="g-info on"><b>${esc(fmtDay(sel))}</b></div>`
+    : `<div class="g-info">공정 이름이나 막대, 날짜를 누르면 그 날짜가 여기에 보입니다</div>`;
+  return `${info}<div class="gantt-scroll">${head}${rows}</div>`;
 }
 let SEL_TASK='';
 function ganttHTML(p,r){ return ganttBars(p.tasks||[],r,SEL_DAY,SEL_TASK); }
@@ -2999,7 +3071,7 @@ function dayPanel(items,key,opts={}){
   return `<div class="dayp">
     <div class="row"><b>${d.getMonth()+1}월 ${d.getDate()}일 (${WD[d.getDay()]}) 작업</b>
       <span class="muted small">${items.length?items.length+'건':'작업 없음'}</span>
-      <span class="spacer"></span><button class="btn ghost sm" data-act="selDay" data-d="">닫기</button></div>
+      <span class="spacer"></span>${opts.send?`<button class="btn sm" data-act="sendDay" data-d="${esc(key)}" title="이 날 작업을 작업자에게 보내기">📨 이 날 보내기</button>`:''}<button class="btn ghost sm" data-act="selDay" data-d="">닫기</button></div>
     ${items.length?`<ul class="dayl">${items.map(({t,p})=>`<li${opts.pick?` class="pick${VSEL_TASK===t.id?' on':''}" data-act="vTask" data-id="${esc(t.id)}" role="button" tabindex="0"`:''}>
       <span class="badge${t.status==='완료'?'':' warn'}">${esc(t.status||'예정')}</span>
       <b>${p&&opts.showProject?esc(siteName(p))+' · ':''}${esc(t.name)}</b>
@@ -3007,6 +3079,7 @@ function dayPanel(items,key,opts={}){
       <span class="muted small">${esc(t.start)}${t.end&&t.end!==t.start?' ~ '+esc(t.end):''}</span>
       ${opts.pick?`<span class="muted small pick-go">${VSEL_TASK===t.id?'▾ 열림':'사진·안내 보기 ›'}</span>`:''}
       ${t.memo&&opts.showMemo!==false&&!opts.pick?`<span class="small" style="flex-basis:100%">${esc(t.memo)}</span>`:''}
+      ${opts.send?`<button class="btn ghost sm" data-act="sendTask" data-tid="${esc(t.id)}" title="이 작업만 보내기">📨 보내기</button>`:''}
     </li>`).join('')}</ul>`:'<p class="muted small" style="margin:8px 0 0">이 날은 잡힌 작업이 없습니다.</p>'}
   </div>`;
 }
@@ -4212,6 +4285,12 @@ document.addEventListener('click',async ev=>{
       p.tasks.splice(ti+1,0,{...src,id:uid(),name:src.name.replace(/ \d+차$/,'')+` ${same+1}차`,start:st,end:addDays(st,len),status:'예정',memo:''});
       saveProj(p); render(); toast('바로 아래에 한 차수 더 넣었습니다. 날짜와 메모를 적어주세요.');
       setTimeout(()=>document.getElementById('t'+(ti+1)+'-s')?.focus(),80); break; }
+    case 'moveTask': { const p=curProj(); const i=+t.dataset.ti, d=+t.dataset.d, j=i+d;
+      if(!p?.tasks||j<0||j>=p.tasks.length) break;
+      const [row]=p.tasks.splice(i,1); p.tasks.splice(j,0,row);
+      saveProj(p); render();
+      setTimeout(()=>document.querySelector('[data-act="moveTask"][data-ti="'+j+'"][data-d="'+d+'"]')?.focus(),60);
+      break; }
     case 'sortTasks': { const p=curProj(); p.tasks.sort((a,b)=>String(a.start||'').localeCompare(String(b.start||''))); saveProj(p); render(); break; }
     case 'openSite': HUB_GALLERY=false; HOME_SEL=t.dataset.id; selectSite(t.dataset.id); VIEW='home'; ls.set('view',VIEW); render(); window.scrollTo(0,0); break;
     case 'saveTempTpl': { const p=e.processes[+t.dataset.pi];
@@ -4283,6 +4362,8 @@ document.addEventListener('click',async ev=>{
     case 'taskPhoto': { const p=curProj(); PLAN_TASK=p.tasks[+t.dataset.ti]?.id||''; PLAN_FOLDER=''; $('#filePlan').setAttribute('accept','image/*'); $('#filePlan').click(); break; }
     case 'delPlan': removePlan(curProj(),t.dataset.fid); break;
     case 'copyShare': copyShare(curProj(), t.dataset.only==='1'); break;
+    case 'sendTask': sendTaskById(t.dataset.tid||''); break;
+    case 'sendDay': sendDayMsg(t.dataset.d||SEL_DAY||''); break;
     case 'month': { if(t.dataset.d==='0'){ const d=new Date(); MONTH=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }
       else { const [y,m]=MONTH.split('-').map(Number); const d=new Date(y,m-1+ +t.dataset.d,1); MONTH=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }
       render(); break; }
@@ -4293,7 +4374,7 @@ document.addEventListener('click',async ev=>{
         g.innerHTML=ganttHTML(p,projRange(p));
         const s=g.querySelector('.gantt-scroll'); if(s) s.scrollLeft=keep; }
       break; }
-    case 'selDay': { const d=t.dataset.d||''; SEL_DAY = (!d||d===SEL_DAY) ? null : d; VSEL_TASK='';
+    case 'selDay': { const d=t.dataset.d||''; SEL_DAY = (!d||d===SEL_DAY) ? null : d; VSEL_TASK=''; SEL_TASK='';
       if(window.__viewerMode) paintViewer(); else render();
       if(SEL_DAY) setTimeout(()=>document.querySelector('.dayp')?.scrollIntoView({block:'nearest',behavior:'smooth'}),60);
       break; }
