@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.34.0';
+const APP_VERSION = '5.35.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -485,8 +485,10 @@ async function updatePill(){
      동기화 상태와 오류는 설정 화면에서 봅니다. */
   const bu=$('#btnUpdate'); if(!bu) return;
   const ready=!!swReg?.waiting;
-  bu.classList.toggle('need', ready);
-  bu.textContent = ready ? 'v'+APP_VERSION+' → 새 버전 적용' : 'v'+APP_VERSION;
+  const newer=!ready && SRV_VER && SRV_VER!==APP_VERSION;
+  bu.classList.toggle('need', ready||!!newer);
+  bu.textContent = ready ? 'v'+APP_VERSION+' → 새 버전 적용'
+    : newer ? 'v'+SRV_VER+' 받는 중…' : 'v'+APP_VERSION;
   bu.title = ready ? '눌러서 새 버전으로 바꾸기' : '눌러서 새 버전 확인 (지금 v'+APP_VERSION+')';
 }
 
@@ -4501,23 +4503,40 @@ async function registerSW(){
     showIfWaiting();
     swReg.addEventListener('updatefound',()=>{ const w=swReg.installing; w?.addEventListener('statechange',()=>{ if(w.state==='installed') showIfWaiting(); }); });
     /* 새 버전이 오면 알아서 바로 바꿉니다 (글 쓰는 중이면 끝날 때까지 기다립니다) */
-    setInterval(()=>checkUpdate(false), 3*60*1000);
+    setInterval(()=>checkUpdate(false), 60*1000);
     window.addEventListener('focus',()=>checkUpdate(false));
     let reloaded=false;
     navigator.serviceWorker.addEventListener('controllerchange',()=>{ if(reloaded) return; reloaded=true; location.reload(); });
   }catch(e){ console.warn('sw',e); }
 }
+/* 서버(인터넷)에 올라가 있는 앱 번호 — sw.js에서 바로 읽습니다 */
+let SRV_VER='';
+async function serverVersion(){
+  try{
+    const r=await fetch('sw.js?ts='+Date.now(),{cache:'no-store'});
+    if(!r.ok) return '';
+    const m=(await r.text()).match(/APP_V\s*=\s*'([^']+)'/);
+    return m?m[1]:'';
+  }catch{ return ''; }
+}
 async function checkUpdate(manual){
   if(!swReg){ if(manual) toast('이 화면에서는 업데이트 확인을 쓸 수 없습니다.'); return; }
+  if(swReg.waiting){ applyUpdate(); return; }            // 이미 받아 뒀으면 바로 바꿉니다
+  SRV_VER = await serverVersion();
   try{ await swReg.update(); }catch(e){ if(manual) toast('확인하지 못했습니다. 인터넷을 확인해주세요.'); return; }
   updatePill();
-  if(!manual) return;
-  setTimeout(()=>{
-    updatePill();
-    if(swReg.waiting) toast('새 버전이 왔습니다. 윗줄의 “새 버전 적용”을 눌러주세요.');
-    else if(swReg.installing) toast('새 버전을 받는 중입니다. 잠시 뒤 다시 눌러주세요.');
-    else toast('최신 버전입니다 (v'+APP_VERSION+')');
-  },1200);
+  if(swReg.waiting){ applyUpdate(); return; }
+  if(SRV_VER && SRV_VER!==APP_VERSION){                  // 서버에 새 버전이 있으면 받아질 때까지 기다렸다 바로 적용
+    if(manual) toast('새 버전 v'+SRV_VER+'을 받는 중입니다…');
+    waitNewVersion(10);
+    return;
+  }
+  if(manual) toast('최신 버전입니다 (v'+APP_VERSION+')');
+}
+function waitNewVersion(n){
+  if(swReg?.waiting){ applyUpdate(); return; }
+  if(n<=0){ updatePill(); toast('아직 안 왔습니다. 잠시 뒤 다시 눌러주세요.'); return; }
+  setTimeout(async()=>{ try{ await swReg.update(); }catch{} waitNewVersion(n-1); }, 1200);
 }
 /* 새 버전이 준비되면 알아서 적용합니다. 글을 쓰는 중이거나 창이 떠 있으면 끝날 때까지 기다립니다. */
 let autoTimer=null;
