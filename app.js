@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.32.0';
+const APP_VERSION = '5.33.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -3026,7 +3026,7 @@ function ganttBars(tasks,r,sel,selKey){
       const inBar = t.memo || '';
       return `<button class="g-bar ${st==='완료'?'done':st==='진행'?'now':''}${one&&one.id===t.id?' pickd':''}" style="left:${s*DAYW}px;width:${w*DAYW}px" data-act="${PICKACT}" data-id="${esc(t.id)}" title="${esc(t.name)} · ${esc(t.start)} ~ ${esc(t.end)}${t.memo?' · '+esc(t.memo):''} · ${esc(t.worker||'담당 미정')} — 눌러서 날짜 보기"><b>${esc(inBar)}</b></button>`;
     }).join('');
-    return `<div class="g-row${onG?' on':''}"><button class="g-name g-pick" data-act="${PICKACT}" data-id="${esc(g.k)}" title="${esc(g.name)} — 눌러서 이 공정 기간 보기">${esc(g.name)}</button>
+    return `<div class="g-row${onG?' on':''}"><button class="g-name g-pick${onG?' on':''}" data-act="${PICKACT}" data-id="${esc(g.k)}" title="${esc(g.name)} — 눌러서 이 공정 기간 보기">${esc(g.name)}</button>
       <span class="g-track" style="width:${span*DAYW}px">${now}${selm}${bars}</span></div>`;
   }).join('');
   /* 공정(막대)을 누르든 날짜를 누르든, 그 날짜를 글자로 보여줍니다 */
@@ -4490,9 +4490,12 @@ async function registerSW(){
   if(location.hostname==='localhost' && !location.search.includes('sw=1')) return;
   try{
     swReg=await navigator.serviceWorker.register('sw.js',{updateViaCache:'none'});
-    const showIfWaiting=()=>{ if(swReg.waiting && navigator.serviceWorker.controller) $('#updateBar').hidden=false; updatePill(); };
+    const showIfWaiting=()=>{ if(swReg.waiting && navigator.serviceWorker.controller) $('#updateBar').hidden=false; updatePill(); autoApplyUpdate(); };
     showIfWaiting();
     swReg.addEventListener('updatefound',()=>{ const w=swReg.installing; w?.addEventListener('statechange',()=>{ if(w.state==='installed') showIfWaiting(); }); });
+    /* 새 버전이 오면 알아서 바로 바꿉니다 (글 쓰는 중이면 끝날 때까지 기다립니다) */
+    setInterval(()=>checkUpdate(false), 3*60*1000);
+    window.addEventListener('focus',()=>checkUpdate(false));
     let reloaded=false;
     navigator.serviceWorker.addEventListener('controllerchange',()=>{ if(reloaded) return; reloaded=true; location.reload(); });
   }catch(e){ console.warn('sw',e); }
@@ -4508,6 +4511,19 @@ async function checkUpdate(manual){
     else if(swReg.installing) toast('새 버전을 받는 중입니다. 잠시 뒤 다시 눌러주세요.');
     else toast('최신 버전입니다 (v'+APP_VERSION+')');
   },1200);
+}
+/* 새 버전이 준비되면 알아서 적용합니다. 글을 쓰는 중이거나 창이 떠 있으면 끝날 때까지 기다립니다. */
+let autoTimer=null;
+function autoApplyUpdate(){
+  if(window.__viewerMode) return;
+  if(!swReg?.waiting || !navigator.serviceWorker.controller) return;
+  const el=document.activeElement, tag=el?el.tagName:'';
+  const busy = tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT'||(el&&el.isContentEditable)
+    || !!document.querySelector('.modal') || document.visibilityState!=='visible';
+  clearTimeout(autoTimer);
+  if(busy){ autoTimer=setTimeout(autoApplyUpdate, 4000); return; }
+  toast('새 버전을 바로 적용합니다…');
+  autoTimer=setTimeout(applyUpdate, 600);
 }
 function applyUpdate(){
   flushWrites();

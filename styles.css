@@ -197,7 +197,7 @@ details.co[open] summary{border-bottom:1px solid var(--line2)}
 .gantt-scroll{overflow:auto;max-height:min(58vh,520px);display:flex;flex-direction:column;gap:6px;padding-bottom:6px;-webkit-overflow-scrolling:touch}
 .g-row{display:flex;gap:10px;align-items:center;font-size:12px;width:max-content}
 .g-name{width:96px;flex:none;position:sticky;left:0;z-index:2;background:var(--surface);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted);padding-right:4px}
-.g-track{position:relative;height:16px;background:var(--line2);border-radius:7px;flex:none}
+.g-track{position:relative;height:20px;background:var(--line2);border-radius:7px;flex:none}
 .g-head .g-track{background:transparent;height:30px}
 .g-day{position:absolute;top:0;bottom:0;border:0;border-left:1px solid var(--line2);background:transparent;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;cursor:pointer;padding:0;color:var(--muted);line-height:1.15}
 .g-day b{font-size:11.5px;font-weight:600;color:var(--ink)}
@@ -524,13 +524,14 @@ figure.file figcaption .btn.sm{padding:4px 8px;font-size:12px}
 .vtask{border:1px solid var(--line);border-radius:10px;padding:12px;margin:10px 14px 14px;background:var(--surface)}
 
 /* 고른 공정의 기간 */
-.g-day.inr{background:#f6e2c4;border-radius:5px}
+.g-day.inr{background:#f3c87a;border-radius:5px}
 .g-day.inr b,.g-day.inr i{color:#8a5a06}
 .g-day.inr.today{background:#f0cf96}
 .g-pick{border:0;background:var(--surface);font:inherit;font-size:12px;text-align:left;cursor:pointer;padding:0 4px 0 0}
 .g-pick:hover{color:var(--ink);text-decoration:underline}
 .g-row.on .g-name{color:#8a5a06;font-weight:700}
 .g-row.on .g-bar{box-shadow:0 0 0 2px #d9922a}
+.g-row.on .g-name{background:#f6e2c4;border-radius:6px}
 
 
 
@@ -545,4 +546,11 @@ table.t td.c-ord .btn{padding:2px 5px;font-size:11px;line-height:1.2;min-width:0
 .g-info b{color:var(--ink);margin-right:6px;font-weight:700}
 .g-info.on b{color:#8a5a06}
 button.g-bar{padding:0;font:inherit;cursor:pointer;text-align:left;-webkit-appearance:none;appearance:none}
-.g-bar.pickd{box-shadow:0 0 0 2px #d9922a}
+/* 누른 막대: 주황색으로 꽉 채워 한눈에 보이게 */
+.g-bar.pickd{background:#e08c1a;border-color:#a9630a;box-shadow:0 0 0 3px #f6e2c4;z-index:3}
+.g-bar.pickd b{color:#fff;opacity:1}
+.g-bar{touch-action:manipulation}
+.g-bar b{pointer-events:none}
+/* 누른 공정의 날짜 칸 */
+.g-day.inr{background:#f3c87a}
+.g-day.inr b,.g-day.inr i{color:#6b3f03;font-weight:700}
