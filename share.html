@@ -44,7 +44,9 @@ h2{font-size:15px;margin:0 0 10px}
 .gx th.d.wk{color:#c2564c}
 .gx td.n{padding:5px 10px 5px 2px;white-space:nowrap;font-size:13px;position:sticky;left:0;background:var(--surface)}
 .gx td.c{height:26px}
-.gx td.c i{display:block;height:13px;background:var(--line2);border-radius:3px}
+.gx td.c i{display:block;height:16px;background:var(--line2);border-radius:3px;position:relative}
+.gx td.c .bl{position:absolute;left:4px;top:50%;transform:translateY(-50%);font-size:10px;font-weight:700;
+  color:#1d6b4b;white-space:nowrap;z-index:1;pointer-events:none}
 .gx td.c.on i{background:#bcd9cb}
 .gx td.c.s i{border-radius:7px 0 0 7px}
 .gx td.c.e i{border-radius:0 7px 7px 0}
@@ -162,17 +164,35 @@ body.noscroll{overflow:hidden;position:fixed;width:100%}
     else{
       var from=Math.min.apply(null,ds), to=Math.max.apply(null,ds), tN=todayN();
       var cols=[]; for(var d=from; d<=to; d+=DAY) cols.push(d);
+      /* 같은 공정은 몇 차수든 한 줄로 모읍니다 (앱 화면과 똑같이) */
+      var baseName=function(n){ return String(n||'').replace(/\s*\d+\s*차$/,'').trim(); };
+      var keyOf=function(t){ return t.proc||baseName(t.name)||t.id; };
+      var groups=[], gmap={};
+      tasks.forEach(function(t){
+        if(!dnum(t.start)) return;
+        var k=keyOf(t);
+        if(!gmap[k]){ gmap[k]={k:k,name:baseName(t.name)||t.name,items:[]}; groups.push(gmap[k]); }
+        gmap[k].items.push(t);
+      });
       h+='<div class="gx"><table><thead><tr><th></th>';
       cols.forEach(function(d){ var dt=new Date(d), w=dt.getUTCDay();
         h+='<th class="d'+(dstr(d)===SELD?' sel':'')+(w===0||w===6?' wk':'')+'" data-day="'+dstr(d)+'">'
           + dt.getUTCDate()+'<br>'+WD[w]+'</th>'; });
       h+='</tr></thead><tbody>';
-      tasks.forEach(function(t){
-        var a=dnum(t.start), b=dnum(t.end)||a;
-        h+='<tr><td class="n">'+esc(t.name)+'</td>';
+      groups.forEach(function(g){
+        h+='<tr><td class="n">'+esc(g.name)+'</td>';
         cols.forEach(function(d){
-          var on=a&&d>=a&&d<=b;
-          h+='<td class="c'+(on?' on':'')+(on&&d===a?' s':'')+(on&&d===b?' e':'')+(on&&d===tN?' today':'')+'"><i></i></td>';
+          /* 이 날에 걸친 차수를 찾습니다 */
+          var hit=null;
+          for(var i=0;i<g.items.length;i++){
+            var t=g.items[i], a=dnum(t.start), b=dnum(t.end)||a;
+            if(a&&d>=a&&d<=b){ hit={t:t,a:a,b:b}; break; }
+          }
+          if(!hit){ h+='<td class="c"><i></i></td>'; return; }
+          /* 메모를 적었으면 그 차수 막대 안에 보여줍니다 */
+          var lab=(d===hit.a&&hit.t.memo)?'<span class="bl">'+esc(hit.t.memo)+'</span>':'';
+          h+='<td class="c on'+(d===hit.a?' s':'')+(d===hit.b?' e':'')+(d===tN?' today':'')
+            +'" title="'+esc(hit.t.name)+(hit.t.memo?' · '+esc(hit.t.memo):'')+'"><i>'+lab+'</i></td>';
         });
         h+='</tr>';
       });
