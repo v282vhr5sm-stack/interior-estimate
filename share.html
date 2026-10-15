@@ -57,6 +57,9 @@ h2{font-size:15px;margin:0 0 10px}
 .gx td.c.pickd i{background:#e08c1a;box-shadow:0 0 0 2px #a9630a}
 .gx td.c.pickd .bl{color:#fff}
 .gx tr.on td.n{background:#f6e2c4;border-radius:6px}
+.gx tr.on td{background:#fff4e2}
+.gx td.c.col{background:#fbe3bd}
+.gx tr.on td.n{background:#f6e2c4}
 .gxinfo{font-size:12px;color:var(--mut);margin:0 0 8px}
 .gxinfo.on{color:#8a5a06;font-weight:700}
 /* 그날 작업 */
@@ -206,10 +209,10 @@ body.noscroll{overflow:hidden;position:fixed;width:100%}
             var t=g.items[i], a=dnum(t.start), b=dnum(t.end)||a;
             if(a&&d>=a&&d<=b){ hit={t:t,a:a,b:b}; break; }
           }
-          if(!hit){ h+='<td class="c"><i></i></td>'; return; }
+          if(!hit){ h+='<td class="c'+(inB(d)?' col':'')+'"><i></i></td>'; return; }
           /* 메모를 적었으면 그 차수 막대 안에 보여줍니다 */
           var lab=(d===hit.a&&hit.t.memo)?'<span class="bl">'+esc(hit.t.memo)+'</span>':'';
-          h+='<td class="c on'+(d===hit.a?' s':'')+(d===hit.b?' e':'')+(d===tN?' today':'')+(hit.t.id===SELB?' pickd':'')
+          h+='<td class="c on'+(d===hit.a?' s':'')+(d===hit.b?' e':'')+(d===tN?' today':'')+(hit.t.id===SELB?' pickd':'')+(inB(d)?' col':'')
             +'" data-bar="'+esc(hit.t.id)+'" title="'+esc(hit.t.name)+(hit.t.memo?' · '+esc(hit.t.memo):'')+' — 눌러서 날짜 보기"><i>'+lab+'</i></td>';
         });
         h+='</tr>';

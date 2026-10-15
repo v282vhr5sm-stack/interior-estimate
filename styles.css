@@ -532,6 +532,11 @@ figure.file figcaption .btn.sm{padding:4px 8px;font-size:12px}
 .g-row.on .g-name{color:#8a5a06;font-weight:700}
 .g-row.on .g-bar{box-shadow:0 0 0 2px #d9922a}
 .g-row.on .g-name{background:#f6e2c4;border-radius:6px}
+/* 고른 공정: 가로줄 전체 + 날짜만큼 세로 띠 */
+.g-row.on{background:#fff4e2;border-radius:8px}
+.g-row.on .g-track{background:#fbe3bd}
+.g-pin{position:absolute;top:-3px;bottom:-3px;background:#fbe3bd;border-left:2px solid #d9922a;border-right:2px solid #d9922a;border-radius:4px}
+.g-head .g-pin{top:0;bottom:0}
 
 
 

@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.33.0';
+const APP_VERSION = '5.34.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -3017,6 +3017,13 @@ function ganttBars(tasks,r,sel,selKey){
       <b>${x.d.getDate()}</b><i>${WD[x.d.getDay()]}</i></button>`).join('')}</span></div>`;
   const now=(t0>=r.from&&t0<=r.to)?`<span class="g-now" style="left:${(t0-r.from)/DAY*DAYW}px;width:${DAYW}px"></span>`:'';
   const selm=sel&&dnum(sel)>=r.from&&dnum(sel)<=r.to?`<span class="g-sel" style="left:${(dnum(sel)-r.from)/DAY*DAYW}px;width:${DAYW}px"></span>`:'';
+  /* 고른 공정의 기간만큼 세로로 띠를 깔아 어느 날짜인지 한눈에 보이게 합니다 */
+  let pinm='';
+  if(pick&&pick.items.length){
+    const a=Math.max(Math.min(...pick.items.map(t=>dnum(t.start))), r.from);
+    const b=Math.min(Math.max(...pick.items.map(t=>dnum(t.end)||dnum(t.start))), r.to);
+    if(b>=a) pinm=`<span class="g-pin" style="left:${(a-r.from)/DAY*DAYW}px;width:${((b-a)/DAY+1)*DAYW}px"></span>`;
+  }
   const rows=[...groups.values()].map(g=>{
     const onG=!!pick&&pick.k===g.k;
     /* 한 줄 안에 차수별 막대를 나란히, 메모는 그 막대 옆에 */
@@ -3027,7 +3034,7 @@ function ganttBars(tasks,r,sel,selKey){
       return `<button class="g-bar ${st==='완료'?'done':st==='진행'?'now':''}${one&&one.id===t.id?' pickd':''}" style="left:${s*DAYW}px;width:${w*DAYW}px" data-act="${PICKACT}" data-id="${esc(t.id)}" title="${esc(t.name)} · ${esc(t.start)} ~ ${esc(t.end)}${t.memo?' · '+esc(t.memo):''} · ${esc(t.worker||'담당 미정')} — 눌러서 날짜 보기"><b>${esc(inBar)}</b></button>`;
     }).join('');
     return `<div class="g-row${onG?' on':''}"><button class="g-name g-pick${onG?' on':''}" data-act="${PICKACT}" data-id="${esc(g.k)}" title="${esc(g.name)} — 눌러서 이 공정 기간 보기">${esc(g.name)}</button>
-      <span class="g-track" style="width:${span*DAYW}px">${now}${selm}${bars}</span></div>`;
+      <span class="g-track" style="width:${span*DAYW}px">${now}${selm}${pinm}${bars}</span></div>`;
   }).join('');
   /* 공정(막대)을 누르든 날짜를 누르든, 그 날짜를 글자로 보여줍니다 */
   const info=pick
