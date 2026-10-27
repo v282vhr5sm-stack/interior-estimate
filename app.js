@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.37.0';
+const APP_VERSION = '5.38.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -488,8 +488,11 @@ async function updatePill(){
   const newer=!ready && SRV_VER && SRV_VER!==APP_VERSION;
   bu.classList.toggle('need', ready||!!newer);
   bu.textContent = ready ? 'v'+APP_VERSION+' → 새 버전 적용'
+    : (newer && UPDATE_STUCK) ? 'v'+SRV_VER+' 새로 받기'
     : newer ? 'v'+SRV_VER+' 받는 중…' : 'v'+APP_VERSION;
-  bu.title = ready ? '눌러서 새 버전으로 바꾸기' : '눌러서 새 버전 확인 (지금 v'+APP_VERSION+')';
+  bu.title = ready ? '눌러서 새 버전으로 바꾸기'
+    : (newer && UPDATE_STUCK) ? '눌러서 앱을 통째로 새로 받습니다 (자료는 그대로입니다)'
+    : '눌러서 새 버전 확인 (지금 v'+APP_VERSION+')';
 }
 
 /* ---------- calculation ---------- */
@@ -4268,7 +4271,7 @@ document.addEventListener('click',async ev=>{
     case 'exportBackup': exportBackup(); break;
     case 'importBackup': $('#fileBackup').click(); break;
     case 'checkUpdate': checkUpdate(true); break;
-    case 'topUpdate': (swReg?.waiting ? applyUpdate() : checkUpdate(true)); break;
+    case 'topUpdate': (swReg?.waiting ? applyUpdate() : UPDATE_STUCK ? hardReload() : checkUpdate(true)); break;
     case 'applyUpdate': applyUpdate(); break;
     case 'schedMode': SCHED_MODE=t.dataset.m; ls.set('schedMode',SCHED_MODE); render(); break;
     case 'newProj': {
@@ -4522,7 +4525,7 @@ async function registerSW(){
   }catch(e){ console.warn('sw',e); }
 }
 /* 서버(인터넷)에 올라가 있는 앱 번호 — sw.js에서 바로 읽습니다 */
-let SRV_VER='';
+let SRV_VER='', UPDATE_STUCK=false;
 async function serverVersion(){
   try{
     const r=await fetch('sw.js?ts='+Date.now(),{cache:'no-store'});
@@ -4540,15 +4543,26 @@ async function checkUpdate(manual){
   if(swReg.waiting){ applyUpdate(); return; }
   if(SRV_VER && SRV_VER!==APP_VERSION){                  // 서버에 새 버전이 있으면 받아질 때까지 기다렸다 바로 적용
     if(manual) toast('새 버전 v'+SRV_VER+'을 받는 중입니다…');
+    UPDATE_STUCK=false; updatePill();
     waitNewVersion(10);
     return;
   }
+  UPDATE_STUCK=false;
   if(manual) toast('최신 버전입니다 (v'+APP_VERSION+')');
 }
 function waitNewVersion(n){
   if(swReg?.waiting){ applyUpdate(); return; }
-  if(n<=0){ updatePill(); toast('아직 안 왔습니다. 잠시 뒤 다시 눌러주세요.'); return; }
+  if(n<=0){ UPDATE_STUCK=true; updatePill(); toast('잘 안 받아집니다. 윗줄 버튼을 한 번 더 누르면 앱을 통째로 새로 받습니다.'); return; }
   setTimeout(async()=>{ try{ await swReg.update(); }catch{} waitNewVersion(n-1); }, 1200);
+}
+/* 마지막 수단: 저장본을 전부 지우고 앱을 통째로 새로 받습니다.
+   현장·견적 자료는 따로 보관되어 있어 지워지지 않습니다. */
+async function hardReload(){
+  flushWrites();
+  toast('앱을 통째로 새로 받는 중입니다…');
+  try{ const rs=await navigator.serviceWorker.getRegistrations(); for(const r of rs) await r.unregister(); }catch{}
+  try{ for(const k of await caches.keys()) await caches.delete(k); }catch{}
+  location.replace(location.pathname+'?v='+Date.now());
 }
 /* 새 버전이 준비되면 알아서 적용합니다. 글을 쓰는 중이거나 창이 떠 있으면 끝날 때까지 기다립니다. */
 let autoTimer=null;

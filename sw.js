@@ -1,8 +1,8 @@
 // 앱 파일(index.html, app.js, styles.css 등)을 고쳐서 다시 올릴 때는 이 숫자를 꼭 올리세요.
 // 그래야 아이폰·아이패드·노트북에 "새 버전이 있습니다" 알림이 뜨고 새 버전이 적용됩니다.
-const VERSION = 119;
+const VERSION = 120;
 // 앱 번호 (app.js의 APP_VERSION과 똑같이 맞춰 주세요)
-const APP_V = '5.37.0';
+const APP_V = '5.38.0';
 const CACHE = 'estimate-v' + VERSION;
 const SHELL = [
   './', 'index.html', 'share.html', 'styles.css', 'app.js', 'manifest.webmanifest',
@@ -12,7 +12,11 @@ const SHELL = [
 ];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)));
+  // 한 파일(특히 바깥 주소)이 안 받아져도 새 버전 설치가 통째로 실패하지 않게 합니다.
+  e.waitUntil((async () => {
+    const c = await caches.open(CACHE);
+    await Promise.all(SHELL.map(u => c.add(u).catch(err => console.warn('캐시 실패(건너뜀)', u, err))));
+  })());
 });
 self.addEventListener('activate', e => {
   e.waitUntil((async () => {
@@ -28,6 +32,8 @@ self.addEventListener('fetch', e => {
   const url = new URL(req.url);
   // 데이터·AI 요청은 항상 네트워크로
   if (url.hostname.endsWith('supabase.co') || url.hostname.endsWith('anthropic.com')) return;
+  // sw.js는 버전 확인용이라 늘 새로 받습니다
+  if (url.origin === location.origin && url.pathname.endsWith('/sw.js')) return;
   // config.js는 최신 값을 우선
   if (url.origin === location.origin && url.pathname.endsWith('/config.js')) {
     e.respondWith(fetch(req).then(r => { const copy = r.clone(); caches.open(CACHE).then(c => c.put(req, copy)); return r; }).catch(() => caches.match(req)));
