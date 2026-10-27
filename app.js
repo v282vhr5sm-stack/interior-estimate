@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.36.0';
+const APP_VERSION = '5.37.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -4004,7 +4004,12 @@ document.addEventListener('submit',async ev=>{
   AUTH.busy=true; AUTH.err=''; render();
   const {data,error}=await sb.auth.signInWithPassword({email,password});
   AUTH.busy=false;
-  if(error){ AUTH.err = /invalid/i.test(error.message)?'이메일 또는 비밀번호가 맞지 않습니다.':(!navigator.onLine?'인터넷에 연결된 상태에서 처음 로그인해주세요.':error.message); render(); return; }
+  if(error){
+    AUTH.err = /invalid/i.test(error.message) ? '이메일 또는 비밀번호가 맞지 않습니다.'
+      : !navigator.onLine ? '인터넷에 연결된 상태에서 처음 로그인해주세요.'
+      : isServerAsleep(error) ? SERVER_ASLEEP_MSG
+      : error.message;
+    render(); return; }
   ls.set('lastEmail',email); session=data.session; AUTH.skipped=false; ls.set('skipLogin',null);
   ls.set('autoLogin',auto?'1':'0');
   ls.set('autoPw',auto?btoa(unescape(encodeURIComponent(password))):null);
@@ -4489,6 +4494,13 @@ function seedExample(){
   P('paper',230,7000,0,['실크벽지','초배지·풀']);
   P('elec',0,0,450000,['LED 다운라이트'],{'LED 다운라이트':18});
   S.estimates.set(e.id,e); setCur(e.id); saveEst(e); render(); toast('예시 데이터를 넣었습니다');
+}
+
+/* 서버(Supabase)가 멈춰 있을 때 — 무료 요금제는 한동안 안 쓰면 잠듭니다 */
+const SERVER_ASLEEP_MSG = '서버가 잠자고 있습니다. supabase.com 에 로그인해서 이 프로젝트의 Restore(다시 시작)를 눌러주세요. 몇 분 뒤 다시 로그인하면 됩니다.';
+function isServerAsleep(e){
+  const m=String(e?.message||e||'');
+  return navigator.onLine && /failed to fetch|load failed|networkerror|network request failed|ERR_NAME|getaddrinfo|fetch failed/i.test(m);
 }
 
 /* ---------- service worker (offline + updates) ---------- */

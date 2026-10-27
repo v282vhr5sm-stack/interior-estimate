@@ -125,7 +125,7 @@ body.noscroll{overflow:hidden;position:fixed;width:100%}
   function show(html){ app.innerHTML=html; }
   function fail(net,msg){
     show('<div class="card"><div class="mid">'
-      + (net ? '<h1>잠시 연결이 안 됩니다</h1><p class="small">인터넷이 잠깐 끊겼을 수 있습니다.</p>'
+      + (net ? '<h1>잠시 연결이 안 됩니다</h1><p class="small">인터넷이 잠깐 끊겼거나,<br>일정 서버가 잠시 멈춰 있을 수 있습니다.<br>계속 안 열리면 보내주신 분께 알려주세요.</p>'
              : '<h1>링크를 열 수 없습니다</h1><p class="small">주소가 바뀌었거나 공유가 끝났을 수 있습니다.<br>보내주신 분께 새 링크를 요청해주세요.</p>')
       + '<p style="margin-top:14px"><button class="btn pri" onclick="location.reload()">다시 열기</button></p>'
       + (msg?'<p class="small muted" style="margin-top:10px">('+esc(msg)+')</p>':'')
