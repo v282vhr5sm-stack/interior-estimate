@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '7.0.0';
+const APP_VERSION = '7.1.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -767,7 +767,7 @@ function render(){
   const app=$('#app');
   if(VIEW==='home') app.innerHTML=renderHome();
   else if(VIEW==='sched') app.innerHTML=renderSched();
-  else if(VIEW==='vend') app.innerHTML=renderVendors();
+  else if(VIEW==='vend') app.innerHTML=renderAnalysis();   // 업체 자리를 분석(원가분석)으로 바꿨습니다
   else if(VIEW==='set') app.innerHTML=renderSettings();
   else app.innerHTML=renderEst();
   showImportPending();
@@ -1962,6 +1962,176 @@ function refreshQuote(){
   const st=document.getElementById('docStage'); if(st) st.innerHTML=quoteDocHTML(p,p.quote);
 }
 
+
+/* ===== 원가분석 — 견적 금액 대비 실제로 나간 돈 ===== */
+let ANAL_OPEN='', ANAL_ADD=false, PLAN_SPEND='';
+let ANAL_DRAFT={proc:'',date:'',who:'',amt:'',memo:''};
+function analRows(p){
+  const rows=((p.quote&&p.quote.rows)||[]).filter(r=>r[0]||num(r[2])).map(r=>({name:(r[0]||'(이름 없음)'),amt:num(r[2])}));
+  (p.spend||[]).forEach(s=>{ if(!rows.some(r=>r.name===s.proc)) rows.push({name:s.proc||'기타',amt:0}); });
+  return rows;
+}
+function analCalc(p){
+  const rows=analRows(p), sp=p.spend||[];
+  const list=rows.map(r=>{
+    const spent=sp.filter(x=>x.proc===r.name).reduce((a,x)=>a+num(x.amt),0);
+    return {name:r.name, amt:r.amt, spent, left:r.amt-spent, rate:r.amt?(r.amt-spent)/r.amt*100:0, n:sp.filter(x=>x.proc===r.name).length};
+  });
+  const sub=rows.reduce((a,r)=>a+r.amt,0);
+  const spent=sp.reduce((a,x)=>a+num(x.amt),0);
+  const total=quoteTotal(p)||sub;
+  return {list, sub, spent, total, margin:total-spent, rate:total?(total-spent)/total*100:0};
+}
+const spShots=(p,id)=>(p.files||[]).filter(f=>f.spendId===id);
+function renderAnalysis(){
+  const list=[...S.projects.values()].sort((a,b)=>(b.updated||0)-(a.updated||0));
+  if(!list.length) return `<div class="stack"><h2>원가분석</h2><div class="panel"><div class="empty">
+    <h3 style="margin-bottom:6px">아직 현장이 없습니다</h3><p>현장을 만들고 견적을 넣으면 공정별로 얼마 남았는지 바로 보입니다.</p>
+    <div class="row" style="justify-content:center;margin-top:12px"><button class="btn pri" data-act="newProj">+ 새 현장</button></div></div></div></div>`;
+  const p=curProj()||list[0];
+  const c=analCalc(p), rows=analRows(p);
+  const money=n=>(n<0?'−'+won(-n):won(n));
+  return `<div class="stack">
+    <div class="row"><h2 style="flex:1">원가분석</h2></div>
+    <section class="panel">
+      <div class="panel-h">
+        <select class="f" id="projSel" data-act-change="pickProj" style="width:auto;max-width:320px">${list.map(x=>`<option value="${x.id}" ${x.id===p.id?'selected':''}>${esc(siteAddr(x))}</option>`).join('')}</select>
+        <span class="spacer"></span>
+        <button class="btn sm" data-act="analXlsx">엑셀로 내보내기</button>
+        <span class="badge${c.margin<0?' warn':''}">${c.list.filter(x=>x.n).length}/${rows.length} 공정 지출 있음</span></div>
+      <div class="kpi">
+        <div class="kbox"><div class="l">견적 합계 (받을 돈)</div><div class="v">${won(c.total)}</div></div>
+        <div class="kbox"><div class="l">지금까지 나간 돈</div><div class="v">${won(c.spent)}</div></div>
+        <div class="kbox ${c.margin>=0?'good':'bad'}"><div class="l">남은 돈 (마진)</div><div class="v">${money(c.margin)}</div></div>
+        <div class="kbox ${c.rate>=0?'good':'bad'}"><div class="l">마진율</div><div class="v">${c.rate.toFixed(1)}%</div></div>
+        <div class="kbox"><div class="l">공정 견적 소계</div><div class="v">${won(c.sub)}</div></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-h"><h3>공정별 원가</h3><span class="muted small">공정 이름을 누르면 그 공정에 나간 돈이 펼쳐집니다</span>
+        <span class="spacer"></span><button class="btn pri sm" data-act="spAdd">+ 나간 돈 적기</button></div>
+      ${ANAL_ADD?spForm(p,rows):''}
+      ${rows.length?`<div style="overflow-x:auto"><table class="atbl">
+        <thead><tr><th style="width:150px">공정</th><th class="r" style="width:110px">견적 금액</th><th class="r" style="width:110px">나간 돈</th>
+          <th class="r" style="width:110px">남은 돈</th><th class="r" style="width:70px">마진율</th><th style="width:120px">쓴 비율</th><th class="r" style="width:60px">건수</th></tr></thead>
+        <tbody>${c.list.map(x=>{
+          const used=x.amt?Math.min(100,x.spent/x.amt*100):(x.spent?100:0);
+          const op=ANAL_OPEN===x.name;
+          return `<tr class="${op?'open':''}">
+            <td><span class="pname" data-act="spOpen" data-p="${esc(x.name)}">${esc(x.name)} ${op?'▾':'›'}</span></td>
+            <td class="r">${x.amt?won(x.amt):'—'}</td>
+            <td class="r">${x.spent?won(x.spent):'—'}</td>
+            <td class="r ${x.left<0?'minus':'plus'}">${x.spent?money(x.left):'—'}</td>
+            <td class="r ${x.left<0?'minus':'plus'}">${x.spent&&x.amt?x.rate.toFixed(0)+'%':'—'}</td>
+            <td><span class="abar ${x.spent>x.amt?'over':''}"><i style="width:${used}%"></i></span></td>
+            <td class="r">${x.n||'—'}</td></tr>
+            ${op?`<tr><td colspan="7" style="padding:0;background:var(--surface2)">${spList(p,x.name)}</td></tr>`:''}`;
+        }).join('')}</tbody>
+        <tfoot><tr class="sum"><td>합계</td><td class="r">${won(c.sub)}</td><td class="r">${won(c.spent)}</td>
+          <td class="r ${c.sub-c.spent<0?'minus':'plus'}">${money(c.sub-c.spent)}</td>
+          <td class="r ${c.sub-c.spent<0?'minus':'plus'}">${c.sub?((c.sub-c.spent)/c.sub*100).toFixed(0)+'%':'—'}</td>
+          <td></td><td class="r">${(p.spend||[]).length}</td></tr></tfoot></table></div>`
+      :`<div class="empty"><p>먼저 <b>견적</b> 화면의 <b>견적 만들기</b>에서 공정별 금액을 넣어주세요.<br>그 금액이 원가분석의 기준이 됩니다.</p>
+        <div class="row" style="justify-content:center;margin-top:12px"><button class="btn pri" data-act="goQuote">견적 만들러 가기</button></div></div>`}
+    </section>
+  </div>`;
+}
+function spForm(p,rows){
+  const d=ANAL_DRAFT;
+  const opts=[...rows.map(r=>r.name),'기타'];
+  return `<div class="spform">
+    <div class="spgrid">
+      <label class="fl">공정<select class="f" data-bind="sp:proc">${opts.map(o=>`<option ${d.proc===o?'selected':''}>${esc(o)}</option>`).join('')}</select></label>
+      <label class="fl">업체 · 내용<input class="f" data-bind="sp:who" value="${esc(d.who)}" placeholder="예: 대한철거 / 폐기물 처리"></label>
+      <label class="fl">결제일<input class="f" type="date" data-bind="sp:date" value="${esc(d.date||today())}"></label>
+      <label class="fl">금액(원)<input class="f" data-bind="sp:amt" value="${esc(d.amt)}" inputmode="numeric" style="text-align:right" placeholder="0"></label>
+      <label class="fl full">메모<input class="f" data-bind="sp:memo" value="${esc(d.memo)}" placeholder="예: 세금계산서 발행 / 현금 결제 / 추가 폐기물 1톤"></label>
+      <div class="full row">
+        <button class="btn sm" data-act="spSaveShot">📷 저장하고 사진 넣기</button>
+        <span class="muted small">견적서 · 영수증을 찍어 붙일 수 있습니다</span>
+        <span class="spacer"></span>
+        <button class="btn pri sm" data-act="spSave">저장</button>
+        <button class="btn sm" data-act="spAdd">닫기</button>
+      </div>
+    </div></div>`;
+}
+function spList(p,proc){
+  const items=(p.spend||[]).filter(s=>s.proc===proc).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
+  if(!items.length) return '<p class="muted small" style="margin:0;padding:11px">아직 나간 돈이 없습니다.</p>';
+  return `<ul class="spend">${items.map(s=>{
+    const sh=spShots(p,s.id);
+    return `<li>
+      <span class="d">${esc(String(s.date||'').slice(5).replace('-','/'))}</span>
+      <span class="w">${esc(s.who||'(업체 없음)')}</span>
+      <span class="shots">${sh.map((f,i)=>isImg(f)
+        ? `<a class="shot" href="${esc(f.url)}" target="_blank" rel="noopener"><img src="${esc(f.url)}" alt="${esc(f.name)}" loading="lazy"></a>`
+        : `<a class="shot" href="${esc(f.url)}" target="_blank" rel="noopener">파일</a>`).join('')}
+        <button class="btn ghost sm" data-act="spShot" data-id="${esc(s.id)}" title="사진 · 영수증 붙이기">📷</button></span>
+      <span class="a">${won(num(s.amt))}원</span>
+      <button class="btn ghost sm danger" data-act="spDel" data-id="${esc(s.id)}" title="이 줄 지우기">✕</button>
+      <input class="f sm m" data-bind="spend:${esc(s.id)}:memo" value="${esc(s.memo||'')}" placeholder="메모">
+    </li>`; }).join('')}</ul>`;
+}
+function spSaveDraft(){
+  const p=curProj(); if(!p) return '';
+  const d=ANAL_DRAFT, amt=num(d.amt);
+  if(!amt){ toast('금액을 넣어주세요'); return ''; }
+  const rec={id:uid(),proc:d.proc||'기타',date:d.date||today(),who:d.who||'',amt,memo:d.memo||''};
+  p.spend=p.spend||[]; p.spend.push(rec); saveProj(p);
+  ANAL_OPEN=rec.proc; ANAL_ADD=false;
+  ANAL_DRAFT={proc:rec.proc,date:rec.date,who:'',amt:'',memo:''};
+  render();
+  return rec.id;
+}
+/* 엑셀로 내보내기 */
+async function exportAnalXlsx(){
+  const p=curProj(); if(!p) return;
+  try{
+    toast('엑셀을 만드는 중입니다…');
+    if(!window.ExcelJS) await loadScript('https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js');
+    const c=analCalc(p), wb=new ExcelJS.Workbook();
+    const ws=wb.addWorksheet('원가분석');
+    ws.columns=[{width:22},{width:16},{width:16},{width:16},{width:11},{width:30}];
+    const head=(t)=>{ const r=ws.addRow([t]); r.font={bold:true,size:13}; return r; };
+    head(siteAddr(p)+' 원가분석');
+    ws.addRow(['만든 날짜', krDate(today())]);
+    ws.addRow([]);
+    ws.addRow(['견적 합계(받을 돈)',c.total]).font={bold:true};
+    ws.addRow(['지금까지 나간 돈',c.spent]);
+    ws.addRow(['남은 돈(마진)',c.margin]).font={bold:true};
+    ws.addRow(['마진율',(c.rate/100)]);
+    ws.getCell('B4').numFmt='#,##0'; ws.getCell('B5').numFmt='#,##0'; ws.getCell('B6').numFmt='#,##0'; ws.getCell('B7').numFmt='0.0%';
+    ws.addRow([]);
+    head('공정별 원가');
+    const h1=ws.addRow(['공정','견적 금액','나간 돈','남은 돈','마진율','건수']);
+    h1.font={bold:true}; h1.eachCell(cl=>{ cl.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFEFF2EF'}}; });
+    c.list.forEach(x=>{
+      const r=ws.addRow([x.name,x.amt,x.spent,x.left,x.amt?x.rate/100:null,x.n]);
+      r.getCell(2).numFmt='#,##0'; r.getCell(3).numFmt='#,##0'; r.getCell(4).numFmt='#,##0'; r.getCell(5).numFmt='0%';
+      if(x.left<0) r.font={color:{argb:'FFA23B2C'}};
+    });
+    const t1=ws.addRow(['합계',c.sub,c.spent,c.sub-c.spent,c.sub?(c.sub-c.spent)/c.sub:null,(p.spend||[]).length]);
+    t1.font={bold:true}; [2,3,4].forEach(i=>t1.getCell(i).numFmt='#,##0'); t1.getCell(5).numFmt='0%';
+    ws.addRow([]);
+    head('나간 돈 내역');
+    const h2=ws.addRow(['결제일','공정','업체 · 내용','금액','사진','메모']);
+    h2.font={bold:true}; h2.eachCell(cl=>{ cl.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFEFF2EF'}}; });
+    (p.spend||[]).slice().sort((a,b)=>String(a.date||'').localeCompare(String(b.date||''))).forEach(s=>{
+      const r=ws.addRow([s.date||'',s.proc||'',s.who||'',num(s.amt),spShots(p,s.id).length+'장',s.memo||'']);
+      r.getCell(4).numFmt='#,##0';
+    });
+    const buf=await wb.xlsx.writeBuffer();
+    const blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download='원가분석_'+(siteName(p).replace(/[\\/:*?"<>|]/g,'')||'현장')+'_'+today()+'.xlsx';
+    document.body.appendChild(a); a.click();
+    setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },1500);
+    toast('엑셀 파일을 내려받았습니다');
+  }catch(e){ toast('엑셀을 만들지 못했습니다: '+(e.message||e)); }
+}
+
 /* ── 계약서 ───────────────────────────────────────────────
    첨부해 주신 한글 계약서 양식을 그대로 옮긴 것입니다.
    빈칸만 현장·견적 내용으로 채워집니다. */
@@ -3008,7 +3178,7 @@ async function copyShare(p,urlOnly){
 
 /* 도면 파일 */
 let PLAN_FOLDER='';
-async function uploadPlans(files,p,taskId){
+async function uploadPlans(files,p,taskId,spendId){
   if(!sb||!session){ toast('로그인한 상태에서만 파일을 올릴 수 있습니다.'); return; }
   for(const f of [...files]){
     if(f.size>50*1024*1024){ toast(`${f.name}: 50MB가 넘어 올리지 못했습니다.`); continue; }
@@ -3019,7 +3189,7 @@ async function uploadPlans(files,p,taskId){
       const {error}=await sb.storage.from('plans').upload(path,f,{contentType:f.type||'application/octet-stream'});
       if(error) throw error;
       const {data}=sb.storage.from('plans').getPublicUrl(path);
-      p.files=p.files||[]; p.files.push({id:uid(),name:f.name,path,url:data.publicUrl,type:f.type||'',size:f.size,shared:true,at:Date.now(),taskId:taskId||'',folderId:PLAN_FOLDER||'',memo:''});
+      p.files=p.files||[]; p.files.push({id:uid(),name:f.name,path,url:data.publicUrl,type:f.type||'',size:f.size,shared:!spendId,at:Date.now(),taskId:taskId||'',spendId:spendId||'',folderId:PLAN_FOLDER||'',memo:spendId?'영수증·견적서':''});
       saveProj(p); render(); toast(`${f.name} 올렸습니다`);
     }catch(e){ toast(`${f.name} 올리지 못했습니다: ${e.message||e}`); }
   }
@@ -4527,6 +4697,8 @@ document.addEventListener('input',ev=>{
     if(rest[1]==='name'){ S.materials.forEach(m=>{ if(m.vendorId===v.id&&m.vendor!==val){ m.vendor=val; saveMat(m); } });
       S.estimates.forEach(e=>{ let hit=false; (e.processes||[]).forEach(p=>{ if(p.vendorId===v.id&&p.vendor!==val){ p.vendor=val; hit=true; } }); if(hit) saveEst(e); }); } }
   else if(kind==='co'){ S.company[rest[0]]=val; saveCo(); refreshDoc(); }
+  else if(kind==='sp'){ ANAL_DRAFT[rest[0]]=val; return; }
+  else if(kind==='spend'){ const p=curProj(); const s=(p?.spend||[]).find(x=>x.id===rest[0]); if(!s) return; s[rest[1]]=val; saveProj(p); }
   else if(kind==='q'){ const p=curProj(); if(!p) return; const q=ensureQuote(p); q[rest[0]]=val; saveProj(p); refreshQuote(); }
   else if(kind==='qrow'){ const p=curProj(); if(!p) return; const q=ensureQuote(p); const i=+rest[0], f=+rest[1];
     if(!q.rows[i]) return;
@@ -5062,6 +5234,17 @@ document.addEventListener('click',async ev=>{
       const n=newProject(src); src.processes.forEach((pr,i)=>{ const P=PMAP[pr.k]||PMAP.etc; const st=addDays(today(),i);
         n.tasks.push({id:uid(),proc:pr.k,name:P.n,start:st,end:st,worker:'',status:'예정',memo:''}); });
       S.projects.set(n.id,n); S.curPid=n.id; ls.set('curPid',n.id); saveProj(n); HOME_SEL=n.id; render(); toast('견적의 공정으로 현장을 만들었습니다'); break; }
+    case 'spAdd': ANAL_ADD=!ANAL_ADD; if(ANAL_ADD){ const p=curProj(); ANAL_DRAFT={proc:ANAL_OPEN||(analRows(p)[0]?.name||'기타'),date:today(),who:'',amt:'',memo:''}; } render(); break;
+    case 'spOpen': { const n=t.dataset.p||''; ANAL_OPEN = (!n||n===ANAL_OPEN)?'':n; render(); break; }
+    case 'spSave': { if(spSaveDraft()) toast('적었습니다'); break; }
+    case 'spSaveShot': { const id=spSaveDraft(); if(id){ PLAN_SPEND=id; PLAN_TASK=''; PLAN_FOLDER=''; $('#filePlan').setAttribute('accept','image/*,application/pdf'); $('#filePlan').click(); } break; }
+    case 'spShot': { PLAN_SPEND=t.dataset.id||''; PLAN_TASK=''; PLAN_FOLDER=''; $('#filePlan').setAttribute('accept','image/*,application/pdf'); $('#filePlan').click(); break; }
+    case 'spDel': { const p=curProj(); const id=t.dataset.id;
+      const sh=spShots(p,id).length;
+      if(sh && !await askConfirm({title:'이 줄을 지울까요?',lines:['붙여 둔 사진 '+sh+'장은 사진·도면 칸에 그대로 남습니다'],ok:'네, 지웁니다',cancel:'아니요',danger:true})) break;
+      p.spend=(p.spend||[]).filter(x=>x.id!==id); saveProj(p); render(); toast('지웠습니다'); break; }
+    case 'analXlsx': exportAnalXlsx(); break;
+    case 'goQuote': VIEW='est'; EST_TAB='quote'; ls.set('view',VIEW); ls.set('estTab',EST_TAB); render(); window.scrollTo(0,0); break;
     case 'startWork': startWork(curProj()); break;
     case 'endWork': endWork(curProj()); break;
     case 'reportPdf': reportPdf(curProj()); break;
@@ -5141,8 +5324,8 @@ $('#fileBackup').addEventListener('change',ev=>{ if(ev.target.files[0]) importBa
 $('#fileExcel').addEventListener('change',ev=>{ const d=PICK_DOC; PICK_DOC=''; uploadExcelFiles(ev.target.files,d); ev.target.value=''; });
 let PLAN_TASK='';
 $('#filePlan').addEventListener('change',async ev=>{ const fs=ev.target.files;
-  if(fs.length) await uploadPlans(fs,curProj(),PLAN_TASK);
-  ev.target.value=''; ev.target.removeAttribute('accept'); PLAN_TASK=''; PLAN_FOLDER=''; });
+  if(fs.length) await uploadPlans(fs,curProj(),PLAN_TASK,PLAN_SPEND);
+  ev.target.value=''; ev.target.removeAttribute('accept'); PLAN_TASK=''; PLAN_FOLDER=''; PLAN_SPEND=''; });
 document.addEventListener('dragover',ev=>{ const dz=ev.target.closest?.('#dz'); if(dz){ ev.preventDefault(); dz.classList.add('drag'); } });
 document.addEventListener('dragleave',ev=>{ ev.target.closest?.('#dz')?.classList.remove('drag'); });
 document.addEventListener('drop',ev=>{ const dz=ev.target.closest?.('#dz'); if(dz){ ev.preventDefault(); dz.classList.remove('drag'); setSheetFiles(ev.dataTransfer.files); }
