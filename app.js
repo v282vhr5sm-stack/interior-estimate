@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '5.38.0';
+const APP_VERSION = '6.0.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -759,22 +759,19 @@ function restorePlace(k){
 function render(){
   const tabs=$('#tabs');
   if(needLogin()){ tabs.hidden=true; $('#app').innerHTML=renderAuth(); updatePill(); return; }
-  if(VIEW!=='mat' && NEW_MATS.length) NEW_MATS.length=0;   // 자재 화면을 나가면 자동으로 정리됩니다
   const same = LAST_VIEW===VIEW;             // 같은 화면을 다시 그릴 때만 자리를 지킵니다
   const keep = same ? keepPlace() : null;
   tabs.hidden=false;
-  ['home','est','sched','doc','mat','vend','set'].forEach(v=>$('#tab-'+v).setAttribute('aria-selected',String(v===VIEW)));
+  if(VIEW==='mat'){ VIEW='est'; ls.set('view',VIEW); }        // 없어진 자재 화면은 견적으로 보냅니다
+  ['home','est','sched','doc','vend','set'].forEach(v=>$('#tab-'+v)?.setAttribute('aria-selected',String(v===VIEW)));
   const app=$('#app');
   if(VIEW==='home') app.innerHTML=renderHome();
   else if(VIEW==='sched') app.innerHTML=renderSched();
-  else if(VIEW==='mat') app.innerHTML=renderMat();
   else if(VIEW==='doc') app.innerHTML=renderDocView();
   else if(VIEW==='vend') app.innerHTML=renderVendors();
   else if(VIEW==='set') app.innerHTML=renderSettings();
   else app.innerHTML=renderEst();
-  if(VIEW==='est') recalc();
   showImportPending();
-  setPageMargin(VIEW==='doc' && DOC_MODE==='contract');   // 계약서를 볼 때만 종이 여백 1cm
   autoSizeAll();
   updatePill();
   LAST_VIEW=VIEW;
@@ -948,7 +945,7 @@ function renderAuth(){
   return `<div class="auth"><section class="panel">
     <div class="panel-h"><h2>로그인</h2></div>
     <form class="panel-b" id="loginForm">
-      <p class="muted small" style="margin:0">아이폰·아이패드·노트북에서 같은 계정으로 로그인하면 견적과 단가표가 자동으로 맞춰집니다.</p>
+      <p class="muted small" style="margin:0">아이폰·아이패드·노트북에서 같은 계정으로 로그인하면 현장 자료가 자동으로 맞춰집니다.</p>
       <label class="fl">이메일<input class="f" type="email" id="lg-email" name="username" autocomplete="username" required value="${esc(ls.get('lastEmail')||'')}"></label>
       <label class="fl">비밀번호<input class="f" type="password" id="lg-pw" name="password" autocomplete="current-password" required></label>
       <label class="row" style="gap:8px;font-size:13px"><input type="checkbox" id="lg-auto" ${ls.get('autoLogin')!=='0'?'checked':''}> 이 기기에서 자동 로그인</label>
@@ -975,37 +972,64 @@ function estModeBar(){
     <button class="chip" data-act="estMode" data-m="excel" aria-pressed="${EST_MODE==='excel'}">견적서 엑셀 파일</button>
   </div>`;
 }
+/* 올린 견적 파일의 종류 (엑셀 / PDF / 사진) */
+function estKind(f){
+  const n=String(f?.name||''), t=String(f?.type||'');
+  if(/\.xlsx?$|\.xlsm$/i.test(n)||/spreadsheet|excel/i.test(t)) return 'xlsx';
+  if(/\.pdf$/i.test(n)||t==='application/pdf') return 'pdf';
+  if(/^image\//.test(t)||/\.(jpe?g|png|gif|webp|heic)$/i.test(n)) return 'img';
+  return 'other';
+}
+const EST_KIND_LABEL={xlsx:'엑셀',pdf:'PDF',img:'사진',other:'파일'};
 function renderExcel(){
   const p=curProj();
-  if(!p) return `${estModeBar()}<div class="panel"><div class="empty">먼저 현장을 고르거나 만들어주세요.</div></div>`;
+  if(!p) return `<div class="panel"><div class="empty">먼저 현장을 고르거나 만들어주세요.
+    <div class="row" style="justify-content:center;margin-top:12px"><button class="btn pri" data-act="view" data-v="home">현장 고르기</button></div></div></div>`;
   const files=(p.excel||[]).slice().sort((a,b)=>(b.at||0)-(a.at||0));
   const sel=files.find(f=>f.id===EXCEL_SEL)||files[0];
-  return `<div class="stack">${estModeBar()}
+  const k=sel?estKind(sel):'';
+  return `<div class="stack">
     <section class="panel">
-      <div class="panel-h"><h3>${esc(siteName(p))} · 엑셀 견적서</h3><span class="spacer"></span>
-        <button class="btn pri" data-act="pickExcel">엑셀 파일 올리기</button></div>
+      <div class="panel-h"><h3>${esc(siteName(p))} · 견적 파일</h3><span class="spacer"></span>
+        ${projPicker()}
+        <button class="btn pri" data-act="pickExcel">+ 파일 올리기</button></div>
       <div class="panel-b">
-        ${files.length?`<p class="muted small" style="margin:0 0 8px">셀을 눌러 값을 고칠 수 있습니다. 수식 칸(연한 초록)은 자동으로 다시 계산됩니다.</p>
-        <div class="row" style="gap:8px">
+        ${files.length?`<div class="row" style="gap:8px">
           <select class="f" id="excelSel" data-act-change="excelPick" style="width:auto;max-width:320px">
             ${files.map(f=>`<option value="${f.id}" ${sel&&sel.id===f.id?'selected':''}>${esc(f.name)} · ${new Date(f.at).toLocaleDateString('ko-KR')}</option>`).join('')}
           </select>
-          <a class="btn sm" href="${esc(sel?.url||'#')}" download target="_blank" rel="noopener">원본 내려받기</a>
-          <button class="btn sm ghost" data-act="printExcel">인쇄 / PDF</button>
-          <button class="btn sm" data-act="saveXlsx">수정본 엑셀로 저장</button>
-          <button class="btn sm" data-act="officeView">엑셀 원본 그대로 보기</button>
+          <a class="btn sm" href="${esc(sel?.url||'#')}" download target="_blank" rel="noopener">내려받기</a>
+          <a class="btn sm" href="${esc(sel?.url||'#')}" target="_blank" rel="noopener">새 창에서 보기</a>
+          ${k==='xlsx'?`<button class="btn sm ghost" data-act="printExcel">인쇄 / PDF</button>
+          <button class="btn sm" data-act="saveXlsx">수정본 엑셀로 저장</button>`:''}
+          <label class="row small" style="gap:5px"><input type="checkbox" data-bind="exfile:${sel?.id||''}:shared" ${sel?.shared?'checked':''}> 고객에게 보이기</label>
           <span class="spacer"></span>
           <button class="btn ghost sm danger" data-act="delExcel" data-id="${sel?.id||''}">파일 삭제</button>
-        </div>`:'<p class="muted small" style="margin:0">엑셀로 만든 견적서를 올리면 서식 그대로 볼 수 있습니다. (.xlsx)</p>'}
+        </div>
+        ${k==='xlsx'?'<p class="muted small" style="margin:8px 0 0">셀을 눌러 값을 고칠 수 있습니다. 수식 칸(연한 초록)은 자동으로 다시 계산됩니다.</p>':''}`
+        :'<p class="muted small" style="margin:0">엑셀(.xlsx)·PDF·사진으로 된 견적서를 올리면 여기서 바로 볼 수 있습니다.</p>'}
         ${EXCEL_ERR?`<div class="status err" style="margin-top:10px">${esc(EXCEL_ERR)}</div>`:''}
         ${EXCEL_BUSY?'<div class="status" style="margin-top:10px"><span class="spin"></span> 파일을 여는 중입니다…</div>':''}
       </div>
     </section>
-    ${EXCEL_HTML?`<section class="panel"><div class="panel-b xls-stage" id="xlsStage">${EXCEL_HTML}</div></section>`:''}
+    ${k==='pdf'?`<section class="panel"><div class="panel-b"><iframe class="pdf-stage" src="${esc(sel.url)}" title="${esc(sel.name)}"></iframe>
+      <p class="muted small" style="margin:8px 0 0">화면에 안 보이면 위의 “새 창에서 보기”를 누르세요.</p></div></section>`
+     :k==='img'?`<section class="panel"><div class="panel-b"><img class="est-img" src="${esc(sel.url)}" alt="${esc(sel.name)}"></div></section>`
+     :EXCEL_HTML?`<section class="panel"><div class="panel-b xls-stage" id="xlsStage">${EXCEL_HTML}</div></section>`:''}
   </div>`;
 }
+/* 현장 고르기 (여러 화면에서 같이 씁니다) */
+function projPicker(){
+  const list=[...S.projects.values()].sort((a,b)=>(b.updated||0)-(a.updated||0));
+  const p=curProj();
+  if(list.length<2) return '';
+  return `<select class="f" id="projSel" data-act-change="pickProj" style="width:auto;max-width:240px">${
+    list.map(x=>`<option value="${x.id}" ${p&&x.id===p.id?'selected':''}>${esc(siteName(x))}</option>`).join('')}</select>`;
+}
 function renderEst(){
-  if(EST_MODE==='excel') return renderExcel();
+  return renderExcel();
+}
+function renderEstOld(){
   const e=cur();
   if(!e) return `<div class="panel"><div class="empty"><h2 style="margin-bottom:6px">아직 견적이 없습니다</h2><p>새 견적을 만들거나, 예시 견적으로 구조를 먼저 살펴보세요.</p><div class="row" style="justify-content:center;margin-top:12px"><button class="btn pri" data-act="newEst">+ 새 견적</button><button class="btn" data-act="seed">예시 데이터 넣기</button></div></div></div>`;
   const used=new Set(e.processes.map(p=>p.k));
@@ -1980,6 +2004,51 @@ function renderContractForm(e){
   </div></section>`;
 }
 function renderDocView(){
+  const p=curProj();
+  if(!p) return `<div class="panel"><div class="empty">먼저 현장을 고르거나 만들어주세요.
+    <div class="row" style="justify-content:center;margin-top:12px"><button class="btn pri" data-act="view" data-v="home">현장 고르기</button></div></div></div>`;
+  const ex=(p.excel||[]).slice().sort((a,b)=>(b.at||0)-(a.at||0));
+  const fs2=(p.files||[]).slice().sort((a,b)=>(b.at||0)-(a.at||0));
+  const onCnt=ex.filter(f=>f.shared).length+fs2.filter(f=>f.shared!==false).length;
+  const row=(f,bind,on,label)=>`<li class="cfile">
+    <label class="row" style="gap:8px;flex:1;min-width:0">
+      <input type="checkbox" data-bind="${bind}" ${on?'checked':''}>
+      <b style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.name)}</b>
+      <span class="badge">${label}</span>
+    </label>
+    <a class="btn ghost sm" href="${esc(f.url)}" target="_blank" rel="noopener">보기</a>
+  </li>`;
+  return `<div class="stack">
+    <div class="row"><h2 style="flex:1">고객용 ${esc(siteName(p))}</h2>${projPicker()}</div>
+
+    <section class="panel">
+      <div class="panel-h"><h3>공유 링크</h3><span class="muted small">체크한 파일과 공정 일정만 보입니다. 원가·업체 정보는 나가지 않습니다.</span></div>
+      <div class="panel-b">
+        <label class="row" style="gap:8px"><input type="checkbox" id="sh-on" ${p.share?.on?'checked':''} data-act-change="shareOn"> <b>공유 링크 켜기</b></label>
+        ${p.share?.on&&p.share?.token?`
+          <div class="row" style="margin-top:10px"><input class="f" id="sh-url" readonly value="${esc(shareUrl(p))}" style="flex:1;min-width:220px" onclick="this.select()">
+            <button class="btn pri" data-act="copyShare">이름과 함께 복사</button>
+            <button class="btn" data-act="copyShare" data-only="1">주소만 복사</button>
+            <a class="btn" href="${esc(shareUrl(p))}" target="_blank" rel="noopener">미리보기</a></div>
+          <label class="row small" style="gap:6px;margin-top:10px"><input type="checkbox" id="sh-memo" ${p.share?.showMemo!==false?'checked':''} data-act-change="shareMemo"> 작업 메모도 함께 보여주기</label>`
+        :'<p class="muted small" style="margin:8px 0 0">켜면 주소가 만들어져요. 그 주소를 아는 사람만 볼 수 있고, 아무것도 수정할 수 없어요.</p>'}
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-h"><h3>고객에게 보여줄 파일</h3><span class="muted small">지금 ${onCnt}개 보임</span></div>
+      <div class="panel-b">
+        <div class="eyebrow">견적 파일</div>
+        ${ex.length?`<ul class="cfiles">${ex.map(f=>row(f,`exfile:${f.id}:shared`,!!f.shared,EST_KIND_LABEL[estKind(f)])).join('')}</ul>`
+          :'<p class="muted small" style="margin:6px 0 0">견적 탭에서 엑셀·PDF를 올리면 여기에 나옵니다.</p>'}
+        <div class="eyebrow" style="margin-top:14px">사진 · 도면</div>
+        ${fs2.length?`<ul class="cfiles">${fs2.map(f=>row(f,`file:${f.id}:shared`,f.shared!==false,KIND_LABEL[fileKind(f)])).join('')}</ul>`
+          :'<p class="muted small" style="margin:6px 0 0">일정 화면에서 사진·도면을 올리면 여기에 나옵니다.</p>'}
+      </div>
+    </section>
+  </div>`;
+}
+function renderDocViewOld(){
   const e=cur();
   if(!e) return `<div class="panel"><div class="empty">먼저 견적을 만들어주세요. <button class="btn" data-act="view" data-v="est">견적 작성으로</button></div></div>`;
   const co=S.company||{};
@@ -2584,8 +2653,8 @@ function renderHub(p){
     </div></section>
 
     <div class="tiles">
-      ${e ? tile('openEst',`data-id="${e.id}"`,'🧾','견적서',`${esc(e.title||'제목 없음')} · ${won(calcEst(e).total)}원`)
-          : tile('newEstForSite','','🧾','견적서 만들기','이 현장의 견적을 새로 만듭니다')}
+      ${tile('view','data-v="est"','🧾','견적 파일','엑셀·PDF 견적서를 올리고 보기',(p.excel||[]).length||'')}
+      ${tile('view','data-v="doc"','👤','고객용','고객에게 보여줄 파일 고르기',p.share?.on?'열림':'')}
       ${tile('openSched','','📅','공정 일정','공정 추가·날짜 수정·사진 첨부',(p.tasks||[]).length||'')}
       ${p.share?.on&&p.share?.token
         ? tile('copyShare','','🔗','링크 열기','고객·작업자에게 보낼 주소 복사','열림')
@@ -2665,7 +2734,9 @@ function sharePayload(p){
       from:r?dstr(r.from):'', to:r?dstr(r.to):'', progress:projProgress(p)},
     showMemo:p.share?.showMemo!==false,
     tasks:(p.tasks||[]).map(t=>({id:t.id,name:t.name,proc:t.proc,start:t.start,end:t.end,worker:t.worker,status:t.status||'예정',memo:p.share?.showMemo!==false?(t.memo||''):''})),
-    files:(p.files||[]).filter(f=>f.shared!==false).map(f=>({name:f.name,url:f.url,type:f.type,size:f.size,taskId:f.taskId||'',memo:f.memo||''})),
+    files:[
+      ...(p.excel||[]).filter(f=>f.shared).map(f=>({name:f.name,url:f.url,type:f.type||'',size:0,taskId:'',memo:'견적 파일'})),
+      ...(p.files||[]).filter(f=>f.shared!==false).map(f=>({name:f.name,url:f.url,type:f.type,size:f.size,taskId:f.taskId||'',memo:f.memo||''}))],
     company:{name:S.company?.name||'',phone:S.company?.phone||''}};
 }
 const pubTimers={};
@@ -2807,13 +2878,13 @@ function renderSched(){
   if(!list.length) return `<div class="stack">${head}<div class="panel"><div class="empty">
     <h3 style="margin-bottom:6px">아직 현장이 없습니다</h3><p>현장을 만들면 공정별 일정과 도면을 고객·작업자에게 링크로 공유할 수 있어요.</p>
     <div class="row" style="justify-content:center;margin-top:12px"><button class="btn pri" data-act="newProj">+ 새 현장</button>
-    ${cur()?`<button class="btn" data-act="projFromEst">“${esc(cur().title)}” 견적에서 만들기</button>`:''}</div></div></div></div>`;
+    </div></div></div></div>`;
   const p=curProj()||list[0];
   return `<div class="stack">${head}
     <div class="row">
       <select class="f" id="projSel" data-act-change="pickProj" style="width:auto;max-width:280px">${list.map(x=>`<option value="${x.id}" ${x.id===p.id?'selected':''}>${esc(siteName(x))}${x.share?.on?' · 공유중':''}</option>`).join('')}</select>
       <button class="btn" data-act="newProj">+ 새 현장</button>
-      ${cur()?`<button class="btn" data-act="projFromEst">견적에서 만들기</button>`:''}
+      
       <span class="spacer"></span><button class="btn ghost danger" data-act="delProj">현장 삭제</button>
     </div>
     ${renderProject(p)}</div>`;
@@ -2915,7 +2986,7 @@ function renderProject(p){
     </section>
 
     <section class="panel">
-      <div class="panel-h"><h3>고객·작업자 공유</h3><span class="muted small">일정과 도면만 보입니다. 견적과 원가는 절대 나오지 않습니다.</span></div>
+      <div class="panel-h"><h3>고객·작업자 공유</h3><span class="muted small">자세한 설정은 “고객용” 탭에서 합니다.</span></div>
       <div class="panel-b">
         <label class="row" style="gap:8px"><input type="checkbox" id="sh-on" ${p.share?.on?'checked':''} data-act-change="shareOn"> <b>공유 링크 켜기</b></label>
         ${p.share?.on&&p.share?.token?`
@@ -3327,12 +3398,13 @@ async function uploadExcel(file){
   if(!sb||!session){ toast('로그인한 상태에서만 파일을 올릴 수 있습니다.'); return; }
   try{
     EXCEL_BUSY=true; EXCEL_ERR=''; render();
-    const path=`${session.user.id}/excel/${uid()}.xlsx`;
-    const {error}=await sb.storage.from('plans').upload(path,file,{contentType:file.type||'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+    const ext=(file.name.match(/\.[A-Za-z0-9]{1,5}$/)||['.xlsx'])[0].toLowerCase();
+    const path=`${session.user.id}/excel/${uid()}${ext}`;
+    const {error}=await sb.storage.from('plans').upload(path,file,{contentType:file.type||'application/octet-stream'});
     if(error) throw error;
     const {data}=sb.storage.from('plans').getPublicUrl(path);
     p.excel=p.excel||[];
-    const rec={id:uid(),name:file.name,url:data.publicUrl,path,at:Date.now()};
+    const rec={id:uid(),name:file.name,url:data.publicUrl,path,at:Date.now(),type:file.type||'',shared:false};
     p.excel.push(rec); saveProj(p); EXCEL_SEL=rec.id;
     await showExcel(rec);
   }catch(e){ EXCEL_ERR='파일을 올리지 못했습니다: '+(e.message||e); EXCEL_BUSY=false; render(); }
@@ -3340,6 +3412,7 @@ async function uploadExcel(file){
 let XLS=null;      // {rec, wb, sel, edits}
 async function showExcel(rec){
   if(!rec){ EXCEL_HTML=''; XLS=null; render(); return; }
+  if(estKind(rec)!=='xlsx'){ EXCEL_HTML=''; XLS=null; EXCEL_BUSY=false; EXCEL_ERR=''; render(); return; }
   EXCEL_BUSY=true; EXCEL_ERR=''; EXCEL_HTML=''; render();
   try{
     if(!window.ExcelJS) await loadScript('https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js');
@@ -3596,7 +3669,6 @@ function cellRef(ref){
 /* ---------- 업체 ---------- */
 function renderVendors(){
   const list=[...S.vendors.values()].sort((a,b)=>String(a.name).localeCompare(String(b.name),'ko'));
-  const cnt=v=>[...S.materials.values()].filter(m=>m.vendorId===v.id).length;
   const doc=(v,field,label)=>{
     const f=v[field];
     return `<div class="vdoc">
@@ -3609,14 +3681,13 @@ function renderVendors(){
   };
   return `<div class="stack">
     <div class="row"><h2 style="flex:1">업체</h2><button class="btn pri" data-act="addVendor">+ 업체 추가</button></div>
-    <p class="muted small" style="margin:0">여기 등록한 업체를 자재와 견적에서 골라 씁니다. 공정을 지정하면 그 공정에서 먼저 보입니다.</p>
+    <p class="muted small" style="margin:0">업체별로 연락처·계좌와 거래내역서를 모아 둡니다. 공정을 지정하면 일정의 담당 고르기에서 먼저 보입니다.</p>
     ${list.length?list.map(v=>`<section class="panel">
       <div class="panel-h">
         <input class="f" id="v-${v.id}-name" data-bind="vendor:${v.id}:name" value="${esc(v.name)}" placeholder="업체명" style="flex:1;min-width:160px;font-weight:700;font-size:16px">
         <select class="f" id="v-${v.id}-proc" data-bind="vendor:${v.id}:process" style="width:120px">
           <option value="all" ${!v.process||v.process==='all'?'selected':''}>전체 공정</option>
           ${PROCS.map(p=>`<option value="${p.k}" ${v.process===p.k?'selected':''}>${p.n}</option>`).join('')}</select>
-        <button class="btn ghost sm" data-act="vendorMats" data-id="${v.id}">자재 ${cnt(v)}개</button>
         <button class="btn ghost sm danger" data-act="delVendor" data-id="${v.id}">✕ 삭제</button>
       </div>
       <div class="panel-b" style="display:flex;flex-direction:column;gap:14px">
@@ -3641,17 +3712,19 @@ function renderVendors(){
           <div class="vdocs">${doc(v,'bizDoc','사업자등록증')}${doc(v,'bankDoc','통장 사본')}</div>
         </div>
         <div>
-          <div class="row"><span class="eyebrow" style="flex:1">단가표 사진 ${(v.sheets||[]).length||''}</span>
-            <button class="btn sm" data-act="vendorSheet" data-id="${v.id}">📷 단가표 넣기</button></div>
-          ${(v.sheets||[]).length?`<div class="files" style="margin-top:8px">${v.sheets.map(s=>`<figure class="file">
-            <button class="thumb-btn" data-act="vendorSheetBig" data-id="${v.id}" data-sid="${s.id}" aria-label="크게 보기"><img src="${esc(s.url)}" alt="단가표" loading="lazy"></button>
+          <div class="row"><span class="eyebrow" style="flex:1">거래내역서 ${(v.sheets||[]).length||''}</span>
+            <button class="btn sm" data-act="vendorSheet" data-id="${v.id}">+ 거래내역서 넣기</button></div>
+          ${(v.sheets||[]).length?`<div class="files" style="margin-top:8px">${v.sheets.slice().sort((a,b)=>(b.at||0)-(a.at||0)).map(s=>`<figure class="file">
+            ${/\.pdf($|\?)/i.test(s.url||'')||s.kind==='pdf'
+              ? `<a class="fi" href="${esc(s.url)}" target="_blank" rel="noopener"><span>PDF</span></a>`
+              : `<button class="thumb-btn" data-act="vendorSheetBig" data-id="${v.id}" data-sid="${s.id}" aria-label="크게 보기"><img src="${esc(s.url)}" alt="거래내역서" loading="lazy"></button>`}
             <figcaption>
-              <input class="f small" data-bind="vsheet:${v.id}:${s.id}:memo" value="${esc(s.memo||'')}" placeholder="예: 2026년 1월 단가" style="padding:3px 5px">
+              <input class="f small" data-bind="vsheet:${v.id}:${s.id}:memo" value="${esc(s.memo||'')}" placeholder="예: 2026년 1월 거래내역" style="padding:3px 5px">
               <div class="row" style="gap:6px;justify-content:space-between">
                 <span class="muted small">${new Date(s.at||Date.now()).toLocaleDateString('ko-KR')}</span>
                 <button class="btn ghost sm danger" data-act="vendorSheetDel" data-id="${v.id}" data-sid="${s.id}">삭제</button></div>
             </figcaption></figure>`).join('')}</div>`
-            :'<p class="muted small" style="margin:6px 0 0">받아온 단가표를 찍어서 여러 장 넣어두면 나중에 찾아보기 좋습니다.</p>'}
+            :'<p class="muted small" style="margin:6px 0 0">업체에서 받은 거래내역서를 찍거나 PDF로 올려 두면, 업체별로 모아서 찾아볼 수 있습니다.</p>'}
         </div>
         <label class="fl">메모<input class="f" id="v-${v.id}-memo" data-bind="vendor:${v.id}:memo" value="${esc(v.memo||'')}" placeholder="결제 조건, 담당자 등"></label>
       </div>
@@ -3667,8 +3740,18 @@ async function uploadVendorSheets(files,v){
   if(!sb||!session){ toast('로그인한 상태에서만 사진을 올릴 수 있습니다.'); return; }
   let n=0;
   for(const file of [...files]){
-    if(!file.type.startsWith('image/')) continue;
+    const isPdf = file.type==='application/pdf' || /\.pdf$/i.test(file.name);
+    if(!file.type.startsWith('image/') && !isPdf) continue;
     try{
+      if(isPdf){
+        const path=`${session.user.id}/vendors/${uid()}.pdf`;
+        const {error}=await sb.storage.from('plans').upload(path,file,{contentType:'application/pdf'});
+        if(error) throw error;
+        const {data}=sb.storage.from('plans').getPublicUrl(path);
+        v.sheets=v.sheets||[];
+        v.sheets.push({id:uid(),url:data.publicUrl,path,at:Date.now(),memo:file.name.replace(/\.pdf$/i,''),kind:'pdf'});
+        n++; continue;
+      }
       const img=await loadImage(file);
       const max=1800, s=Math.min(1,max/Math.max(img.width,img.height));
       const c=document.createElement('canvas'); c.width=Math.round(img.width*s); c.height=Math.round(img.height*s);
@@ -3720,11 +3803,11 @@ function renderSettings(){
     </div></section>
 
     <section class="panel"><div class="panel-h"><h3>휴지통</h3><span class="spacer"></span><button class="btn sm" data-act="openTrash">열기</button></div>
-      <div class="panel-b"><p class="muted small" style="margin:0">지운 견적·현장·자재·업체를 30일 동안 보관합니다. 열어서 되돌릴 수 있어요.</p>
+      <div class="panel-b"><p class="muted small" style="margin:0">지운 현장·업체를 30일 동안 보관합니다. 열어서 되돌릴 수 있어요.</p>
       <div id="trashBox"></div></div></section>
 
     <section class="panel"><div class="panel-h"><h3>백업</h3></div><div class="panel-b">
-      <p class="muted small" style="margin:0">견적·단가표·사진·업체 정보를 파일 하나로 저장합니다. 불러오면 더 최근에 고친 내용이 남습니다.</p>
+      <p class="muted small" style="margin:0">현장·일정·사진·업체 정보를 파일 하나로 저장합니다. 불러오면 더 최근에 고친 내용이 남습니다.</p>
       <div class="row"><button class="btn" data-act="exportBackup">백업 파일 만들기</button><button class="btn" data-act="importBackup">백업 불러오기</button></div>
     </div></section>
 
@@ -3737,7 +3820,7 @@ function renderSettings(){
     </div></section>
 
     <section class="panel"><div class="panel-h"><h3>앱 정보</h3></div><div class="panel-b">
-      <dl class="kv"><dt>버전</dt><dd>${APP_VERSION}</dd><dt>저장된 견적</dt><dd>${S.estimates.size}건</dd><dt>저장된 자재</dt><dd>${S.materials.size}개</dd></dl>
+      <dl class="kv"><dt>버전</dt><dd>${APP_VERSION}</dd><dt>현장</dt><dd>${S.projects.size}곳</dd><dt>업체</dt><dd>${S.vendors.size}곳</dd></dl>
       <div><button class="btn" data-act="checkUpdate">업데이트 확인</button></div>
     </div></section>
   </div></div>`;
@@ -3898,7 +3981,9 @@ document.addEventListener('input',ev=>{
     saveProj(p);
     const g=document.querySelector('.gantt'); if(g) g.innerHTML=ganttHTML(p,projRange(p)); }
   else if(kind==='file'){ const p=curProj(); const f=(p?.files||[]).find(x=>x.id===rest[0]); if(!f) return; f[rest[1]]=val; saveProj(p);
-    if(rest[1]==='folderId') render(); }
+    if(rest[1]==='folderId' || (rest[1]==='shared' && VIEW==='doc')) render(); }
+  else if(kind==='exfile'){ const p=curProj(); const f=(p?.excel||[]).find(x=>x.id===rest[0]); if(!f) return; f[rest[1]]=val; saveProj(p);
+    if(rest[1]==='shared' && VIEW==='doc') render(); }
   else if(kind==='folder'){ const p=curProj(); const fd=folderOf(p,rest[0]); if(!fd) return; fd[rest[1]]=val; saveProj(p); }
 });
 function handleSelectChange(t){
@@ -4506,6 +4591,16 @@ function isServerAsleep(e){
   return navigator.onLine && /failed to fetch|load failed|networkerror|network request failed|ERR_NAME|getaddrinfo|fetch failed/i.test(m);
 }
 
+/* 자재 기능을 없애면서, 저장돼 있던 자재 자료를 한 번만 지웁니다 */
+function purgeMaterialsOnce(){
+  if(!S.company || S.company.matPurged) return;
+  const mats=[...S.materials.keys()], shs=[...(S.sheets?.keys?.()||[])];
+  mats.forEach(id=>{ cancelWrite('materials',id); S.materials.delete(id); writeRecord('materials',id,null,true); });
+  shs.forEach(id=>{ cancelWrite('sheets',id); S.sheets.delete(id); writeRecord('sheets',id,null,true); });
+  S.company.matPurged=true; saveCo();
+  if(mats.length||shs.length) console.log('자재 자료 정리', mats.length, shs.length);
+}
+
 /* ---------- service worker (offline + updates) ---------- */
 let swReg=null;
 async function registerSW(){
@@ -4615,8 +4710,8 @@ async function connectSupabase(){
   const shareToken=new URLSearchParams(location.search).get('s');
   if(shareToken){ await renderViewer(shareToken); registerSW(); return; }
   await loadLocal();
-  loadImportDraft();            // 저장 안 한 자재 목록 되살리기
   await connectSupabase();
+  purgeMaterialsOnce();         // 자재 기능을 없애면서 남은 자재 자료를 한 번만 정리합니다
   render();
   registerSW();
   if(session) sync();

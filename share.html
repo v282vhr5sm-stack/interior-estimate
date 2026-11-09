@@ -221,6 +221,23 @@ body.noscroll{overflow:hidden;position:fixed;width:100%}
       h+= SELD ? dayPanel(tasks) : '<p class="small muted" style="margin:12px 0 0">날짜를 누르면 그날 작업과 사진을 볼 수 있습니다.</p>';
     }
     h+='</section>';
+
+    /* 받아보신 자료 — 작업에 붙지 않은 파일 (견적서, 공통 도면 등) */
+    var loose=(P.files||[]).filter(function(f){ return !f.taskId; });
+    if(loose.length){
+      h+='<section class="card"><h2>받아보신 자료</h2><div class="ph">';
+      loose.forEach(function(f,i){
+        if(isImg(f)){
+          h+='<figure><button class="shot" data-dshot="'+i+'"><img src="'+esc(f.url)+'" alt="" loading="lazy"></button>'
+            +'<figcaption class="muted">'+esc(f.name||'')+'</figcaption></figure>';
+        }else{
+          h+='<figure><a class="file" href="'+esc(f.url)+'" target="_blank" rel="noopener">열기</a>'
+            +'<figcaption class="muted">'+esc(f.name||'')+'</figcaption></figure>';
+        }
+      });
+      h+='</div></section>';
+    }
+
     h+='<p class="foot">'+esc(co.name||'')+(co.phone?' · '+esc(co.phone):'')+'<br>이 화면은 보기 전용입니다. 문의는 담당자에게 연락해주세요.</p>';
     show(h);
   }
@@ -318,6 +335,15 @@ body.noscroll{overflow:hidden;position:fixed;width:100%}
       if(k==='p'){ moveShot(-1); return; }
       if(k==='n'){ moveShot(1); return; }
       closeShot(); return;                   // ✕ 이든 배경이든 사진이든 누르면 닫힙니다
+    }
+    var dshot=t.closest?t.closest('[data-dshot]'):null;
+    if(dshot){
+      var wrapD=dshot.closest('.ph');
+      var listD=[].slice.call(wrapD.querySelectorAll('[data-dshot]')).map(function(b){
+        return {url:b.querySelector('img').src, memo:(b.parentNode.querySelector('figcaption')||{}).textContent||''};
+      });
+      openShot(listD, [].slice.call(wrapD.querySelectorAll('[data-dshot]')).indexOf(dshot));
+      return;
     }
     var shot=t.closest?t.closest('[data-shot]'):null;
     if(shot){
