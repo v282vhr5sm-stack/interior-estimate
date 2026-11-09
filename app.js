@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '6.2.2';
+const APP_VERSION = '6.3.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -986,6 +986,7 @@ function estDoc(f){ return f && f.doc==='contract' ? 'contract' : 'est'; }
 function guessDoc(name){ return /계약/.test(name||'') ? 'contract' : 'est'; }
 const EST_DOC_LABEL={est:'견적서',contract:'계약서'};
 let PICK_DOC='';
+let EST_TAB = ls.get('estTab')==='contract' ? 'contract' : 'file';   // 파일 보기 / 계약서 만들기
 function renderExcel(){
   const p=curProj();
   if(!p) return `<div class="panel"><div class="empty">먼저 현장을 고르거나 만들어주세요.
@@ -993,14 +994,13 @@ function renderExcel(){
   const files=(p.excel||[]).slice().sort((a,b)=>(b.at||0)-(a.at||0));
   const sel=files.find(f=>f.id===EXCEL_SEL)||files[0];
   const k=sel?estKind(sel):'';
-  return `<div class="stack">
+  return `
     <section class="panel">
-      <div class="panel-h"><h3>${esc(siteName(p))} · 견적서 · 계약서</h3><span class="spacer"></span>
-        ${projPicker()}
-        <button class="btn pri" data-act="pickExcel" data-doc="est">+ 견적서 올리기</button>
-        <button class="btn" data-act="pickExcel" data-doc="contract">+ 계약서 올리기</button></div>
+      <div class="panel-h">
+        <button class="btn pri sm" data-act="pickExcel" data-doc="est">+ 견적서</button>
+        <button class="btn sm" data-act="pickExcel" data-doc="contract">+ 계약서 파일</button></div>
       <div class="panel-b">
-        ${files.length?`<div class="row esttools">
+        ${files.length?`<div class="row esttools" id="edz">
           <select class="f sm" id="excelSel" data-act-change="excelPick" title="${esc(sel?.name||'')}">
             ${['est','contract'].map(d=>{ const g=files.filter(f=>estDoc(f)===d); return g.length?`<optgroup label="${EST_DOC_LABEL[d]}">${
               g.map(f=>`<option value="${f.id}" ${sel&&sel.id===f.id?'selected':''}>${esc(f.name)} · ${new Date(f.at).toLocaleDateString('ko-KR')}</option>`).join('')}</optgroup>`:''; }).join('')}
@@ -1010,21 +1010,20 @@ function renderExcel(){
             <option value="contract" ${estDoc(sel)==='contract'?'selected':''}>계약서</option>
           </select>
           <label class="row small nowrap" style="gap:4px"><input type="checkbox" data-bind="exfile:${sel?.id||''}:shared" ${sel?.shared?'checked':''}> 고객에게</label>
-          <button class="btn sm" data-act="estOpen">${EST_OPEN?'🔼 접기':'🔽 펴기'}</button>
-          <a class="btn sm ghost" href="${esc(sel?.url||'#')}" download target="_blank" rel="noopener" title="내려받기">⬇</a>
-          <a class="btn sm ghost" href="${esc(sel?.url||'#')}" target="_blank" rel="noopener" title="새 창에서 보기">↗</a>
-          ${k==='xlsx'?`<button class="btn sm ghost" data-act="printExcel" title="인쇄 / PDF">🖨</button>
-          <button class="btn sm ghost" data-act="saveXlsx" title="수정본 엑셀로 저장">💾</button>`:''}
-          <button class="btn ghost sm danger" data-act="delExcel" data-id="${sel?.id||''}" title="파일 삭제">🗑</button>
-        </div>
-        ${k==='xlsx'?'<p class="muted small" style="margin:8px 0 0">셀을 눌러 값을 고칠 수 있습니다. 수식 칸(연한 초록)은 자동으로 다시 계산됩니다.</p>':''}`
-        :'<p class="muted small" style="margin:0">엑셀(.xlsx)·PDF·사진으로 된 견적서와 계약서를 올리면 여기서 바로 볼 수 있습니다.</p>'}
-        <div class="dropzone slim" id="edz" title="엑셀·PDF·사진, 여러 개도 됩니다. 이름에 “계약”이 들어가면 계약서로 들어갑니다.">
-          <span>📄</span><b>파일을 여기로 끌어다 놓으세요</b>
-          <span class="muted small dz-hint">엑셀 · PDF · 사진</span>
-          <span class="spacer"></span>
+          <button class="btn sm" data-act="estOpen">${EST_OPEN?'접기':'펴기'}</button>
+          <a class="btn sm ghost" href="${esc(sel?.url||'#')}" download target="_blank" rel="noopener">내려받기</a>
+          <a class="btn sm ghost" href="${esc(sel?.url||'#')}" target="_blank" rel="noopener">새 창</a>
+          ${k==='xlsx'?`<button class="btn sm ghost" data-act="printExcel">인쇄</button>
+          <button class="btn sm ghost" data-act="saveXlsx">엑셀 저장</button>`:''}
+          <button class="btn ghost sm danger" data-act="delExcel" data-id="${sel?.id||''}">삭제</button>
+          <span class="dzin muted small">여기로 끌어다 놓아도 됩니다</span>
           <button class="btn sm" data-act="pickExcel" data-doc="est">찾아서 올리기</button>
         </div>
+        ${k==='xlsx'?'<p class="muted small" style="margin:8px 0 0">셀을 눌러 값을 고칠 수 있습니다. 수식 칸(연한 초록)은 자동으로 다시 계산됩니다.</p>':''}`
+        :`<div class="row esttools" id="edz">
+          <span class="dzin muted small" style="flex:1">엑셀 · PDF · 사진을 여기로 끌어다 놓으세요</span>
+          <button class="btn sm" data-act="pickExcel" data-doc="est">찾아서 올리기</button>
+        </div>`}
         ${EXCEL_ERR?`<div class="status err" style="margin-top:10px">${esc(EXCEL_ERR)}</div>`:''}
         ${EXCEL_BUSY?'<div class="status" style="margin-top:10px"><span class="spin"></span> 파일을 여는 중입니다…</div>':''}
       </div>
@@ -1032,20 +1031,64 @@ function renderExcel(){
     ${!EST_OPEN?'' :k==='pdf'?`<section class="panel"><div class="panel-b"><iframe class="pdf-stage" src="${esc(sel.url)}" title="${esc(sel.name)}"></iframe>
       <p class="muted small" style="margin:8px 0 0">화면에 안 보이면 위의 “새 창에서 보기”를 누르세요.</p></div></section>`
      :k==='img'?`<section class="panel"><div class="panel-b"><img class="est-img" src="${esc(sel.url)}" alt="${esc(sel.name)}"></div></section>`
-     :EXCEL_HTML?`<section class="panel"><div class="panel-b xls-stage" id="xlsStage">${EXCEL_HTML}</div></section>`:''}
-    ${docSections(p)}
-  </div>`;
+     :EXCEL_HTML?`<section class="panel"><div class="panel-b xls-stage" id="xlsStage">${EXCEL_HTML}</div></section>`:''}`;
 }
 /* 현장 고르기 (여러 화면에서 같이 씁니다) */
-function projPicker(){
+function projPicker(wide){
   const list=[...S.projects.values()].sort((a,b)=>(b.updated||0)-(a.updated||0));
   const p=curProj();
-  if(list.length<2) return '';
-  return `<select class="f" id="projSel" data-act-change="pickProj" style="width:auto;max-width:240px">${
+  if(!list.length) return '';
+  if(list.length<2 && !wide) return '';
+  return `<select class="f${wide?' estsite':''}" id="projSel" data-act-change="pickProj"${wide?'':' style="width:auto;max-width:240px"'}>${
     list.map(x=>`<option value="${x.id}" ${p&&x.id===p.id?'selected':''}>${esc(siteName(x))}</option>`).join('')}</select>`;
 }
 function renderEst(){
-  return renderExcel();
+  const p=curProj();
+  if(!p) return `<div class="panel"><div class="empty">먼저 현장을 고르거나 만들어주세요.
+    <div class="row" style="justify-content:center;margin-top:12px"><button class="btn pri" data-act="view" data-v="home">현장 고르기</button></div></div></div>`;
+  const ct = EST_TAB==='contract';
+  return `<div class="stack">
+    <div class="row esthead no-print">
+      ${projPicker(true)}
+      <div class="seg">
+        <button class="btn${ct?'':' pri'}" data-act="estTab" data-m="file">파일</button>
+        <button class="btn${ct?' pri':''}" data-act="estTab" data-m="contract">계약서 만들기</button>
+      </div>
+    </div>
+    ${ct ? renderContract(p) : renderExcel()+docSections(p)}
+  </div>`;
+}
+/* 이 현장에 딸린 견적(계약서가 값을 꺼내 쓰는 자리)을 없으면 만들어 둡니다 */
+function ensureEst(p){
+  let e = p.estimateId ? S.estimates.get(p.estimateId) : null;
+  if(!e){
+    e=newEstimate();
+    e.title=siteName(p);
+    e.client={name:p.client||'',phone:p.phone||'',address:p.address||'',size:''};
+    e.pid=p.id;
+    S.estimates.set(e.id,e); saveEst(e);
+    p.estimateId=e.id; saveProj(p);
+  }
+  if(e.pid!==p.id){ e.pid=p.id; saveEst(e); }
+  if(S.curId!==e.id) setCur(e.id);
+  return e;
+}
+/* 예전 계약서 작성 화면 그대로 */
+function renderContract(p){
+  const e=ensureEst(p);
+  DOC_MODE='contract';
+  const co=S.company||{};
+  const f=(k,l,ph='')=>`<label class="fl">${l}<input class="f" ${k==='phone'?'type="tel"':''} id="co-${k}" data-bind="co:${k}" value="${esc(co[k]||'')}" placeholder="${ph}"></label>`;
+  return `
+    <details class="co panel no-print" ${co.name?'':'open'}><summary>우리 업체 정보 ${co.name?'· '+esc(co.name):'(계약서 시공자란에 들어갑니다)'}</summary>
+      <div class="panel-b co-grid">${f('name','상호','○○인테리어')}${f('ceo','대표자')}${f('bizNo','사업자등록번호','000-00-00000')}${f('phone','연락처')}${f('email','이메일')}${f('address','주소')}${f('bankName','입금 은행','국민은행')}${f('bankNo','계좌번호','000000-00-000000')}${f('bankHolder','예금주','홍길동')}
+      <label class="fl">대표 도장 <span class="muted">((인) 자리에 찍힙니다)</span>
+        <div class="row">${co.stamp?`<img src="${esc(co.stamp)}" alt="도장" class="stamp-prev">`:''}
+          <button class="btn sm" data-act="pickStamp">${co.stamp?'바꾸기':'도장 사진 넣기'}</button>
+          ${co.stamp?'<button class="btn ghost sm danger" data-act="clearStamp">지우기</button>':''}</div></label>
+      </div></details>
+    ${renderContractForm(e)}
+    <div class="doc-stage" id="docStage">${contractHTML(e)}</div>`;
 }
 function renderEstOld(){
   const e=cur();
@@ -1984,9 +2027,10 @@ function renderContractForm(e){
   const d=ctData(e);
   const t=(k,l,ph='')=>`<label class="fl">${l}<input class="f" id="ct-${k}" data-bind="est:contract.${k}" value="${esc(d[k]||'')}" placeholder="${esc(ph)}"></label>`;
   const dt=(k,l)=>`<label class="fl">${l}<input class="f" type="date" id="ct-${k}" data-bind="est:contract.${k}" value="${esc(d[k]||'')}"></label>`;
-  const money=(k,l)=>`<label class="fl">${l}<input class="f num" type="number" inputmode="numeric" step="10000" id="ct-${k}" data-bind="est:contract.${k}" data-num value="${esc(d[k]??'')}"></label>`;
+  const blankZero=v=>(v===0||v==='0'||v==null)?'':v;   // 0은 빈칸으로 둡니다
+  const money=(k,l)=>`<label class="fl">${l}<input class="f num" type="number" inputmode="numeric" step="10000" id="ct-${k}" data-bind="est:contract.${k}" data-num value="${esc(blankZero(d[k]))}"></label>`;
   const payRow=({k,label,pct})=>`<div class="client-grid">
-    <label class="fl">${label} 금액(원)${pct?` · ${pct}%`:''}<input class="f num" type="number" inputmode="numeric" step="10000" id="ct-${k}-a" data-bind="est:contract.pay.${k}.amount" data-num value="${esc(d.pay[k].amount??'')}"></label>
+    <label class="fl">${label} 금액(원)${pct?` · ${pct}%`:''}<input class="f num" type="number" inputmode="numeric" step="10000" id="ct-${k}-a" data-bind="est:contract.pay.${k}.amount" data-num value="${esc(blankZero(d.pay[k].amount))}"></label>
     <label class="fl">${label} 지급일<input class="f" type="date" id="ct-${k}-d" data-bind="est:contract.pay.${k}.date" value="${esc(d.pay[k].date||'')}"></label>
   </div>`;
   const sum=PAYKEYS.reduce((a,{k})=>a+num(d.pay[k].amount),0);
@@ -3964,7 +4008,7 @@ document.addEventListener('input',ev=>{
   const [kind,...rest]=b.split(':');
   if(kind==='est'){ const e=cur(); setPath(e,rest[0],val); saveEst(e);
     if(rest[0]==='client.size'){ const el=document.getElementById('o-size-conv'); if(el) el.textContent=sizeHint(val); }
-    if(VIEW==='doc') refreshDoc(); else { recalc(); if(rest[0]==='title'){ const o=document.querySelector(`#estSel option[value="${e.id}"]`); if(o) o.textContent=`${e.title} · ${e.client.name||''}`; } } }
+    if(VIEW==='doc'||(VIEW==='est'&&EST_TAB==='contract')) refreshDoc(); else { recalc(); if(rest[0]==='title'){ const o=document.querySelector(`#estSel option[value="${e.id}"]`); if(o) o.textContent=`${e.title} · ${e.client.name||''}`; } } }
   else if(kind==='proc'){ const e=cur(); e.processes[+rest[0]][rest[1]]=val; saveEst(e); recalc(); }
   else if(kind==='line'){ const e=cur(), p=e.processes[+rest[0]], l=p.lines[+rest[1]];
     l[rest[2]]=val; if(rest[2]==='qty') l.autoQty=false; saveEst(e); recalc();
@@ -4300,7 +4344,7 @@ document.addEventListener('click',async ev=>{
     case 'toggleAllProcs': { const e=cur(); if(!e) break;
       const close=!e.processes.every(p=>isProcClosed(e,p));
       e.processes.forEach(p=>setProcClosed(e,p,close)); render(); break; }
-    case 'print': if(VIEW==='doc') prepPrint(); flushWrites(); window.print(); break;
+    case 'print': if(VIEW==='doc'||(VIEW==='est'&&EST_TAB==='contract')) prepPrint(); flushWrites(); window.print(); break;
     case 'printPreview': showPrintPreview(); break;
     case 'download': downloadDoc(); break;
     case 'syncNow': if(!sb||!session){ VIEW='set'; render(); } else sync(); break;
@@ -4362,6 +4406,7 @@ document.addEventListener('click',async ev=>{
     case 'printExcel': { const st=document.getElementById('xlsStage'); if(!st){ toast('먼저 파일을 고르세요.'); break; }
       document.body.classList.add('printing-xls'); setTimeout(()=>{ window.print(); setTimeout(()=>document.body.classList.remove('printing-xls'),600); },80); break; }
     case 'estOpen': EST_OPEN=!EST_OPEN; ls.set('estOpen',EST_OPEN?'1':'0'); render(); break;
+    case 'estTab': EST_TAB = t.dataset.m==='contract'?'contract':'file'; ls.set('estTab',EST_TAB); render(); window.scrollTo(0,0); break;
     case 'delExcel': { const p=curProj(); const f=(p?.excel||[]).find(x=>x.id===t.dataset.id); if(!f) break;
       if(await askConfirm({title:`“${f.name}”을(를) 지울까요?`,lines:['이 현장에서 사라집니다'],ok:'네, 지웁니다',cancel:'아니요'})){
         try{ await sb?.storage.from('plans').remove([f.path]); }catch(err){ console.warn(err); }

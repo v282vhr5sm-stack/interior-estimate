@@ -576,7 +576,13 @@ button.g-bar{padding:0;font:inherit;cursor:pointer;text-align:left;-webkit-appea
 /* 견적 파일 줄 : 한 줄로 */
 .esttools{gap:6px;flex-wrap:nowrap;overflow-x:auto;padding-bottom:2px}
 .esttools>*{flex:none}
-.esttools #excelSel{flex:1 1 150px;min-width:110px;max-width:260px;width:auto}
+.esttools #excelSel{flex:0 1 150px;min-width:110px;max-width:220px;width:auto}
+.esttools .dzin{flex:none;white-space:nowrap;padding-left:4px;border-left:1px dashed var(--line);padding:4px 0 4px 10px}
+.esttools.drag{outline:2px dashed var(--accent);outline-offset:3px;border-radius:9px}
+.esthead{gap:8px;align-items:center}
+.esthead .estsite{flex:1 1 auto;min-width:160px;font-weight:600}
+.seg{display:flex;gap:4px;flex:none}
+.seg .btn{padding:7px 12px}
 .esttools .estdoc{width:auto;flex:none}
 .esttools .btn.sm{padding:5px 9px}
 .nowrap{white-space:nowrap}
