@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '6.3.0';
+const APP_VERSION = '6.3.1';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -4136,6 +4136,7 @@ document.addEventListener('change',ev=>{
   if(a==='revVendor'){ const v=t.value.trim(); IMPORT.items.forEach(x=>{ if(x.on) x.vendor=v; }); saveImportDraft(true); render(); }
   if(a==='revProc'&&t.value){ IMPORT.items.forEach(x=>{ if(x.on) x.process=t.value; }); saveImportDraft(true); render(); }
   if(a==='revUnitAll'&&t.value){ IMPORT.items.forEach((x,i)=>{ if(x.on){ x.unit=t.value; CUSTOM_UNIT_REV.delete(i); } }); saveImportDraft(true); render(); }
+  if(t.id==='ct-amount'){ render(); return; }   // 공사대금을 고치면 지급 일정도 다시 나눠 보여줍니다
   if(a==='pickProj'){ selectSite(t.value); render(); }
   if(a==='excelPick'){ const p=curProj(); const f=(p?.excel||[]).find(x=>x.id===t.value); EXCEL_SEL=t.value; showExcel(f); }
   if(a==='autoLogin'){ ls.set('autoLogin',t.checked?'1':'0'); if(!t.checked) ls.set('autoPw',null);
