@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '6.0.0';
+const APP_VERSION = '6.1.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -762,12 +762,11 @@ function render(){
   const same = LAST_VIEW===VIEW;             // 같은 화면을 다시 그릴 때만 자리를 지킵니다
   const keep = same ? keepPlace() : null;
   tabs.hidden=false;
-  if(VIEW==='mat'){ VIEW='est'; ls.set('view',VIEW); }        // 없어진 자재 화면은 견적으로 보냅니다
-  ['home','est','sched','doc','vend','set'].forEach(v=>$('#tab-'+v)?.setAttribute('aria-selected',String(v===VIEW)));
+  if(VIEW==='mat'||VIEW==='doc'){ VIEW='est'; ls.set('view',VIEW); }   // 자재·고객용 화면은 견적 안으로 합쳤습니다
+  ['home','est','sched','vend','set'].forEach(v=>$('#tab-'+v)?.setAttribute('aria-selected',String(v===VIEW)));
   const app=$('#app');
   if(VIEW==='home') app.innerHTML=renderHome();
   else if(VIEW==='sched') app.innerHTML=renderSched();
-  else if(VIEW==='doc') app.innerHTML=renderDocView();
   else if(VIEW==='vend') app.innerHTML=renderVendors();
   else if(VIEW==='set') app.innerHTML=renderSettings();
   else app.innerHTML=renderEst();
@@ -1008,6 +1007,12 @@ function renderExcel(){
         </div>
         ${k==='xlsx'?'<p class="muted small" style="margin:8px 0 0">셀을 눌러 값을 고칠 수 있습니다. 수식 칸(연한 초록)은 자동으로 다시 계산됩니다.</p>':''}`
         :'<p class="muted small" style="margin:0">엑셀(.xlsx)·PDF·사진으로 된 견적서를 올리면 여기서 바로 볼 수 있습니다.</p>'}
+        <div class="dropzone" id="edz" style="margin-top:12px">
+          <div class="dz-icon">📄</div>
+          <div style="flex:1;min-width:180px"><b>여기로 파일을 끌어다 놓으세요</b>
+            <p class="muted small" style="margin:3px 0 0">엑셀(.xlsx) · PDF · 사진 · 여러 개 한꺼번에도 됩니다</p></div>
+          <button class="btn" data-act="pickExcel">찾아서 올리기</button>
+        </div>
         ${EXCEL_ERR?`<div class="status err" style="margin-top:10px">${esc(EXCEL_ERR)}</div>`:''}
         ${EXCEL_BUSY?'<div class="status" style="margin-top:10px"><span class="spin"></span> 파일을 여는 중입니다…</div>':''}
       </div>
@@ -1016,6 +1021,7 @@ function renderExcel(){
       <p class="muted small" style="margin:8px 0 0">화면에 안 보이면 위의 “새 창에서 보기”를 누르세요.</p></div></section>`
      :k==='img'?`<section class="panel"><div class="panel-b"><img class="est-img" src="${esc(sel.url)}" alt="${esc(sel.name)}"></div></section>`
      :EXCEL_HTML?`<section class="panel"><div class="panel-b xls-stage" id="xlsStage">${EXCEL_HTML}</div></section>`:''}
+    ${docSections(p)}
   </div>`;
 }
 /* 현장 고르기 (여러 화면에서 같이 씁니다) */
@@ -1071,7 +1077,7 @@ function renderEstOld(){
     <div class="est-side">
     <aside class="panel summary est-sum${SUM_OPEN?'':' slim'}">
       <div class="panel-h"><h3>합계</h3>${SUM_OPEN?'':`<b class="v sum-peek" id="o-total"></b>`}<span class="spacer"></span>
-        ${SUM_OPEN?'<button class="btn sm" data-act="view" data-v="doc">고객용 보기 →</button>':''}
+        ${SUM_OPEN?'<button class="btn sm" data-act="view" data-v="est">견적 보기 →</button>':''}
         <button class="btn ghost sm" data-act="toggleSum">${SUM_OPEN?'숨기기':'펼치기'}</button></div>
       ${SUM_OPEN?`<div class="panel-b">
         <div class="sum-rows">
@@ -2003,10 +2009,8 @@ function renderContractForm(e){
       </div></details>
   </div></section>`;
 }
-function renderDocView(){
-  const p=curProj();
-  if(!p) return `<div class="panel"><div class="empty">먼저 현장을 고르거나 만들어주세요.
-    <div class="row" style="justify-content:center;margin-top:12px"><button class="btn pri" data-act="view" data-v="home">현장 고르기</button></div></div></div>`;
+function docSections(p){
+  if(!p) return '';
   const ex=(p.excel||[]).slice().sort((a,b)=>(b.at||0)-(a.at||0));
   const fs2=(p.files||[]).slice().sort((a,b)=>(b.at||0)-(a.at||0));
   const onCnt=ex.filter(f=>f.shared).length+fs2.filter(f=>f.shared!==false).length;
@@ -2018,11 +2022,9 @@ function renderDocView(){
     </label>
     <a class="btn ghost sm" href="${esc(f.url)}" target="_blank" rel="noopener">보기</a>
   </li>`;
-  return `<div class="stack">
-    <div class="row"><h2 style="flex:1">고객용 ${esc(siteName(p))}</h2>${projPicker()}</div>
-
+  return `
     <section class="panel">
-      <div class="panel-h"><h3>공유 링크</h3><span class="muted small">체크한 파일과 공정 일정만 보입니다. 원가·업체 정보는 나가지 않습니다.</span></div>
+      <div class="panel-h"><h3>고객 공유 링크</h3><span class="muted small">체크한 파일과 공정 일정만 보입니다. 원가·업체 정보는 나가지 않습니다.</span></div>
       <div class="panel-b">
         <label class="row" style="gap:8px"><input type="checkbox" id="sh-on" ${p.share?.on?'checked':''} data-act-change="shareOn"> <b>공유 링크 켜기</b></label>
         ${p.share?.on&&p.share?.token?`
@@ -2045,8 +2047,7 @@ function renderDocView(){
         ${fs2.length?`<ul class="cfiles">${fs2.map(f=>row(f,`file:${f.id}:shared`,f.shared!==false,KIND_LABEL[fileKind(f)])).join('')}</ul>`
           :'<p class="muted small" style="margin:6px 0 0">일정 화면에서 사진·도면을 올리면 여기에 나옵니다.</p>'}
       </div>
-    </section>
-  </div>`;
+    </section>`;
 }
 function renderDocViewOld(){
   const e=cur();
@@ -2653,8 +2654,7 @@ function renderHub(p){
     </div></section>
 
     <div class="tiles">
-      ${tile('view','data-v="est"','🧾','견적 파일','엑셀·PDF 견적서를 올리고 보기',(p.excel||[]).length||'')}
-      ${tile('view','data-v="doc"','👤','고객용','고객에게 보여줄 파일 고르기',p.share?.on?'열림':'')}
+      ${tile('view','data-v="est"','🧾','견적 · 고객용','파일 올리고 고객에게 보여주기',(p.excel||[]).length||'')}
       ${tile('openSched','','📅','공정 일정','공정 추가·날짜 수정·사진 첨부',(p.tasks||[]).length||'')}
       ${p.share?.on&&p.share?.token
         ? tile('copyShare','','🔗','링크 열기','고객·작업자에게 보낼 주소 복사','열림')
@@ -3392,7 +3392,13 @@ async function view3d(i){
 }
 function loadScript(src){ return new Promise((res,rej)=>{ const s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=()=>rej(new Error('불러오지 못함: '+src)); document.head.appendChild(s); }); }
 
-/* ---------- 엑셀 견적서 ---------- */
+/* ---------- 견적 파일 (엑셀·PDF·사진) ---------- */
+async function uploadExcelFiles(list){
+  const files=[...(list||[])];
+  if(!files.length) return;
+  for(const f of files) await uploadExcel(f);
+  if(files.length>1) toast(files.length+'개를 올렸습니다');
+}
 async function uploadExcel(file){
   const p=curProj(); if(!p){ toast('현장을 먼저 고르세요.'); return; }
   if(!sb||!session){ toast('로그인한 상태에서만 파일을 올릴 수 있습니다.'); return; }
@@ -3981,9 +3987,9 @@ document.addEventListener('input',ev=>{
     saveProj(p);
     const g=document.querySelector('.gantt'); if(g) g.innerHTML=ganttHTML(p,projRange(p)); }
   else if(kind==='file'){ const p=curProj(); const f=(p?.files||[]).find(x=>x.id===rest[0]); if(!f) return; f[rest[1]]=val; saveProj(p);
-    if(rest[1]==='folderId' || (rest[1]==='shared' && VIEW==='doc')) render(); }
+    if(rest[1]==='folderId' || rest[1]==='shared') render(); }
   else if(kind==='exfile'){ const p=curProj(); const f=(p?.excel||[]).find(x=>x.id===rest[0]); if(!f) return; f[rest[1]]=val; saveProj(p);
-    if(rest[1]==='shared' && VIEW==='doc') render(); }
+    if(rest[1]==='shared') render(); }
   else if(kind==='folder'){ const p=curProj(); const fd=folderOf(p,rest[0]); if(!fd) return; fd[rest[1]]=val; saveProj(p); }
 });
 function handleSelectChange(t){
@@ -4445,7 +4451,7 @@ document.addEventListener('click',async ev=>{
     case 'openFiles': VIEW='sched'; SCHED_MODE='site'; ls.set('view',VIEW); render();
       setTimeout(()=>document.querySelector('.files')?.scrollIntoView({block:'center',behavior:'smooth'})||document.getElementById('pdz')?.scrollIntoView({block:'center'}),80); break;
     case 'openEst': if(t.dataset.id){ setCur(t.dataset.id); } VIEW='est'; ls.set('view',VIEW); render(); window.scrollTo(0,0); break;
-    case 'openDoc': if(t.dataset.id){ setCur(t.dataset.id); } VIEW='doc'; ls.set('view',VIEW); render(); window.scrollTo(0,0); break;
+    case 'openDoc': if(t.dataset.id){ setCur(t.dataset.id); } VIEW='est'; ls.set('view',VIEW); render(); window.scrollTo(0,0); break;
     case 'newEstForSite': { const p=curProj(); const n=newEstimate();
       n.title=siteName(p); n.client={name:p.client||'',phone:p.phone||'',address:p.address||'',size:''};
       S.estimates.set(n.id,n); setCur(n.id); saveEst(n); p.estimateId=n.id; saveProj(p);
@@ -4519,7 +4525,7 @@ $('#fileVendorSheet').addEventListener('change',async ev=>{
   ev.target.value='';
 });
 $('#fileBackup').addEventListener('change',ev=>{ if(ev.target.files[0]) importBackup(ev.target.files[0]); ev.target.value=''; });
-$('#fileExcel').addEventListener('change',ev=>{ if(ev.target.files[0]) uploadExcel(ev.target.files[0]); ev.target.value=''; });
+$('#fileExcel').addEventListener('change',ev=>{ uploadExcelFiles(ev.target.files); ev.target.value=''; });
 let PLAN_TASK='';
 $('#filePlan').addEventListener('change',async ev=>{ const fs=ev.target.files;
   if(fs.length) await uploadPlans(fs,curProj(),PLAN_TASK);
@@ -4529,6 +4535,11 @@ document.addEventListener('dragleave',ev=>{ ev.target.closest?.('#dz')?.classLis
 document.addEventListener('drop',ev=>{ const dz=ev.target.closest?.('#dz'); if(dz){ ev.preventDefault(); dz.classList.remove('drag'); setSheetFiles(ev.dataTransfer.files); }
   const pdz=ev.target.closest?.('#pdz'); if(pdz){ ev.preventDefault(); pdz.classList.remove('drag'); uploadPlans(ev.dataTransfer.files,curProj()); } });
 document.addEventListener('dragover',ev=>{ const pdz=ev.target.closest?.('#pdz'); if(pdz){ ev.preventDefault(); pdz.classList.add('drag'); } });
+/* 견적 파일: 칸에 끌어다 놓기 */
+document.addEventListener('dragover',ev=>{ const z=ev.target.closest?.('#edz'); if(z){ ev.preventDefault(); z.classList.add('drag'); } });
+document.addEventListener('dragleave',ev=>{ ev.target.closest?.('#edz')?.classList.remove('drag'); });
+document.addEventListener('drop',ev=>{ const z=ev.target.closest?.('#edz'); if(!z) return;
+  ev.preventDefault(); z.classList.remove('drag'); uploadExcelFiles(ev.dataTransfer.files); });
 document.addEventListener('paste',ev=>{ if(VIEW!=='mat') return; const fs=[...(ev.clipboardData?.files||[])]; if(fs.length){ ev.preventDefault(); setSheetFiles(fs); } });
 document.addEventListener('visibilitychange',()=>{ if(window.__viewerMode) return; if(document.visibilityState==='hidden') flushWrites(); else { wakeSync(); checkUpdate(false); } });
 /* 아이폰·아이패드는 앱을 내렸다 올릴 때 알려주는 신호가 제각각이라 여러 개를 다 듣습니다 */
