@@ -566,3 +566,20 @@ button.g-bar{padding:0;font:inherit;cursor:pointer;text-align:left;-webkit-appea
 .cfiles{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
 .cfile{display:flex;align-items:center;gap:8px;padding:7px 10px;border:1px solid var(--line);border-radius:9px;background:var(--surface)}
 .cfile b{font-weight:600;font-size:13px}
+
+/* 고객에게 보여줄 파일 목록 */
+.cthumb{width:46px;height:46px;flex:none;object-fit:cover;border-radius:7px;border:1px solid var(--line);background:var(--surface2);display:block}
+.cthumb.ci{display:grid;place-items:center;font-size:11px;font-weight:700;color:var(--accent);background:var(--accent-weak);border-color:transparent}
+.cfile.on{border-color:var(--accent);background:var(--accent-weak)}
+.cfiles.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:7px}
+
+/* 견적 파일 줄 : 한 줄로 */
+.esttools{gap:6px;flex-wrap:nowrap;overflow-x:auto;padding-bottom:2px}
+.esttools>*{flex:none}
+.esttools #excelSel{flex:1 1 150px;min-width:110px;max-width:260px;width:auto}
+.esttools .estdoc{width:auto;flex:none}
+.esttools .btn.sm{padding:5px 9px}
+.nowrap{white-space:nowrap}
+.dropzone.slim{padding:8px 12px;gap:9px;flex-wrap:nowrap;overflow:hidden;margin-top:10px;align-items:center}
+.dropzone.slim b{font-size:13px;white-space:nowrap}
+@media(max-width:640px){ .dropzone.slim .dz-hint{display:none} }

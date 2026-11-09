@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '6.1.0';
+const APP_VERSION = '6.2.1';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -965,6 +965,7 @@ function estPicker(){
 
 let EST_MODE=ls.get('estMode','form');     // form = 직접 작성, excel = 엑셀 파일 보기
 let EXCEL_SEL=null, EXCEL_HTML='', EXCEL_BUSY=false, EXCEL_ERR='';
+let EST_OPEN = ls.get('estOpen','1')!=='0';   // 올린 파일을 크게 볼지, 접어둘지
 function estModeBar(){
   return `<div class="chips" style="margin-bottom:2px">
     <button class="chip" data-act="estMode" data-m="form" aria-pressed="${EST_MODE==='form'}">견적 만들기</button>
@@ -980,6 +981,11 @@ function estKind(f){
   return 'other';
 }
 const EST_KIND_LABEL={xlsx:'엑셀',pdf:'PDF',img:'사진',other:'파일'};
+/* 올린 파일이 견적서인지 계약서인지 */
+function estDoc(f){ return f && f.doc==='contract' ? 'contract' : 'est'; }
+function guessDoc(name){ return /계약/.test(name||'') ? 'contract' : 'est'; }
+const EST_DOC_LABEL={est:'견적서',contract:'계약서'};
+let PICK_DOC='';
 function renderExcel(){
   const p=curProj();
   if(!p) return `<div class="panel"><div class="empty">먼저 현장을 고르거나 만들어주세요.
@@ -989,35 +995,41 @@ function renderExcel(){
   const k=sel?estKind(sel):'';
   return `<div class="stack">
     <section class="panel">
-      <div class="panel-h"><h3>${esc(siteName(p))} · 견적 파일</h3><span class="spacer"></span>
+      <div class="panel-h"><h3>${esc(siteName(p))} · 견적서 · 계약서</h3><span class="spacer"></span>
         ${projPicker()}
-        <button class="btn pri" data-act="pickExcel">+ 파일 올리기</button></div>
+        <button class="btn pri" data-act="pickExcel" data-doc="est">+ 견적서 올리기</button>
+        <button class="btn" data-act="pickExcel" data-doc="contract">+ 계약서 올리기</button></div>
       <div class="panel-b">
-        ${files.length?`<div class="row" style="gap:8px">
-          <select class="f" id="excelSel" data-act-change="excelPick" style="width:auto;max-width:320px">
-            ${files.map(f=>`<option value="${f.id}" ${sel&&sel.id===f.id?'selected':''}>${esc(f.name)} · ${new Date(f.at).toLocaleDateString('ko-KR')}</option>`).join('')}
+        ${files.length?`<div class="row esttools">
+          <select class="f sm" id="excelSel" data-act-change="excelPick" title="${esc(sel?.name||'')}">
+            ${['est','contract'].map(d=>{ const g=files.filter(f=>estDoc(f)===d); return g.length?`<optgroup label="${EST_DOC_LABEL[d]}">${
+              g.map(f=>`<option value="${f.id}" ${sel&&sel.id===f.id?'selected':''}>${esc(f.name)} · ${new Date(f.at).toLocaleDateString('ko-KR')}</option>`).join('')}</optgroup>`:''; }).join('')}
           </select>
-          <a class="btn sm" href="${esc(sel?.url||'#')}" download target="_blank" rel="noopener">내려받기</a>
-          <a class="btn sm" href="${esc(sel?.url||'#')}" target="_blank" rel="noopener">새 창에서 보기</a>
-          ${k==='xlsx'?`<button class="btn sm ghost" data-act="printExcel">인쇄 / PDF</button>
-          <button class="btn sm" data-act="saveXlsx">수정본 엑셀로 저장</button>`:''}
-          <label class="row small" style="gap:5px"><input type="checkbox" data-bind="exfile:${sel?.id||''}:shared" ${sel?.shared?'checked':''}> 고객에게 보이기</label>
-          <span class="spacer"></span>
-          <button class="btn ghost sm danger" data-act="delExcel" data-id="${sel?.id||''}">파일 삭제</button>
+          <select class="f sm estdoc" data-bind="exfile:${sel?.id||''}:doc" title="이 파일의 종류">
+            <option value="est" ${estDoc(sel)==='est'?'selected':''}>견적서</option>
+            <option value="contract" ${estDoc(sel)==='contract'?'selected':''}>계약서</option>
+          </select>
+          <label class="row small nowrap" style="gap:4px"><input type="checkbox" data-bind="exfile:${sel?.id||''}:shared" ${sel?.shared?'checked':''}> 고객에게</label>
+          <button class="btn sm" data-act="estOpen">${EST_OPEN?'🔼 접기':'🔽 펴기'}</button>
+          <a class="btn sm ghost" href="${esc(sel?.url||'#')}" download target="_blank" rel="noopener" title="내려받기">⬇</a>
+          <a class="btn sm ghost" href="${esc(sel?.url||'#')}" target="_blank" rel="noopener" title="새 창에서 보기">↗</a>
+          ${k==='xlsx'?`<button class="btn sm ghost" data-act="printExcel" title="인쇄 / PDF">🖨</button>
+          <button class="btn sm ghost" data-act="saveXlsx" title="수정본 엑셀로 저장">💾</button>`:''}
+          <button class="btn ghost sm danger" data-act="delExcel" data-id="${sel?.id||''}" title="파일 삭제">🗑</button>
         </div>
         ${k==='xlsx'?'<p class="muted small" style="margin:8px 0 0">셀을 눌러 값을 고칠 수 있습니다. 수식 칸(연한 초록)은 자동으로 다시 계산됩니다.</p>':''}`
-        :'<p class="muted small" style="margin:0">엑셀(.xlsx)·PDF·사진으로 된 견적서를 올리면 여기서 바로 볼 수 있습니다.</p>'}
-        <div class="dropzone" id="edz" style="margin-top:12px">
-          <div class="dz-icon">📄</div>
-          <div style="flex:1;min-width:180px"><b>여기로 파일을 끌어다 놓으세요</b>
-            <p class="muted small" style="margin:3px 0 0">엑셀(.xlsx) · PDF · 사진 · 여러 개 한꺼번에도 됩니다</p></div>
-          <button class="btn" data-act="pickExcel">찾아서 올리기</button>
+        :'<p class="muted small" style="margin:0">엑셀(.xlsx)·PDF·사진으로 된 견적서와 계약서를 올리면 여기서 바로 볼 수 있습니다.</p>'}
+        <div class="dropzone slim" id="edz" title="엑셀·PDF·사진, 여러 개도 됩니다. 이름에 “계약”이 들어가면 계약서로 들어갑니다.">
+          <span>📄</span><b>파일을 여기로 끌어다 놓으세요</b>
+          <span class="muted small dz-hint">엑셀 · PDF · 사진</span>
+          <span class="spacer"></span>
+          <button class="btn sm" data-act="pickExcel" data-doc="est">찾아서 올리기</button>
         </div>
         ${EXCEL_ERR?`<div class="status err" style="margin-top:10px">${esc(EXCEL_ERR)}</div>`:''}
         ${EXCEL_BUSY?'<div class="status" style="margin-top:10px"><span class="spin"></span> 파일을 여는 중입니다…</div>':''}
       </div>
     </section>
-    ${k==='pdf'?`<section class="panel"><div class="panel-b"><iframe class="pdf-stage" src="${esc(sel.url)}" title="${esc(sel.name)}"></iframe>
+    ${!EST_OPEN?'' :k==='pdf'?`<section class="panel"><div class="panel-b"><iframe class="pdf-stage" src="${esc(sel.url)}" title="${esc(sel.name)}"></iframe>
       <p class="muted small" style="margin:8px 0 0">화면에 안 보이면 위의 “새 창에서 보기”를 누르세요.</p></div></section>`
      :k==='img'?`<section class="panel"><div class="panel-b"><img class="est-img" src="${esc(sel.url)}" alt="${esc(sel.name)}"></div></section>`
      :EXCEL_HTML?`<section class="panel"><div class="panel-b xls-stage" id="xlsStage">${EXCEL_HTML}</div></section>`:''}
@@ -2012,13 +2024,19 @@ function renderContractForm(e){
 function docSections(p){
   if(!p) return '';
   const ex=(p.excel||[]).slice().sort((a,b)=>(b.at||0)-(a.at||0));
+  const exE=ex.filter(f=>estDoc(f)==='est'), exC=ex.filter(f=>estDoc(f)==='contract');
   const fs2=(p.files||[]).slice().sort((a,b)=>(b.at||0)-(a.at||0));
   const onCnt=ex.filter(f=>f.shared).length+fs2.filter(f=>f.shared!==false).length;
-  const row=(f,bind,on,label)=>`<li class="cfile">
-    <label class="row" style="gap:8px;flex:1;min-width:0">
+  const isImg=f=>/^image\//.test(f.type||'')||/\.(jpe?g|png|gif|webp|heic|heif)$/i.test(f.name||'');
+  const row=(f,bind,on,label)=>`<li class="cfile ${on?'on':''}">
+    <label class="row" style="gap:9px;flex:1;min-width:0">
       <input type="checkbox" data-bind="${bind}" ${on?'checked':''}>
-      <b style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.name)}</b>
-      <span class="badge">${label}</span>
+      ${isImg(f)?`<img class="cthumb" src="${esc(f.url)}" alt="" loading="lazy">`
+        :`<span class="cthumb ci">${esc(label)}</span>`}
+      <span style="flex:1;min-width:0">
+        <b style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.name)}</b>
+        <span class="muted small">${label} · ${new Date(f.at||Date.now()).toLocaleDateString('ko-KR')}</span>
+      </span>
     </label>
     <a class="btn ghost sm" href="${esc(f.url)}" target="_blank" rel="noopener">보기</a>
   </li>`;
@@ -2040,11 +2058,14 @@ function docSections(p){
     <section class="panel">
       <div class="panel-h"><h3>고객에게 보여줄 파일</h3><span class="muted small">지금 ${onCnt}개 보임</span></div>
       <div class="panel-b">
-        <div class="eyebrow">견적 파일</div>
-        ${ex.length?`<ul class="cfiles">${ex.map(f=>row(f,`exfile:${f.id}:shared`,!!f.shared,EST_KIND_LABEL[estKind(f)])).join('')}</ul>`
-          :'<p class="muted small" style="margin:6px 0 0">견적 탭에서 엑셀·PDF를 올리면 여기에 나옵니다.</p>'}
+        <div class="eyebrow">견적서</div>
+        ${exE.length?`<ul class="cfiles">${exE.map(f=>row(f,`exfile:${f.id}:shared`,!!f.shared,EST_KIND_LABEL[estKind(f)])).join('')}</ul>`
+          :'<p class="muted small" style="margin:6px 0 0">위에서 견적서를 올리면 여기에 나옵니다.</p>'}
+        <div class="eyebrow" style="margin-top:14px">계약서</div>
+        ${exC.length?`<ul class="cfiles">${exC.map(f=>row(f,`exfile:${f.id}:shared`,!!f.shared,EST_KIND_LABEL[estKind(f)])).join('')}</ul>`
+          :'<p class="muted small" style="margin:6px 0 0">위에서 계약서를 올리면 여기에 나옵니다.</p>'}
         <div class="eyebrow" style="margin-top:14px">사진 · 도면</div>
-        ${fs2.length?`<ul class="cfiles">${fs2.map(f=>row(f,`file:${f.id}:shared`,f.shared!==false,KIND_LABEL[fileKind(f)])).join('')}</ul>`
+        ${fs2.length?`<ul class="cfiles grid">${fs2.map(f=>row(f,`file:${f.id}:shared`,f.shared!==false,KIND_LABEL[fileKind(f)])).join('')}</ul>`
           :'<p class="muted small" style="margin:6px 0 0">일정 화면에서 사진·도면을 올리면 여기에 나옵니다.</p>'}
       </div>
     </section>`;
@@ -2654,7 +2675,7 @@ function renderHub(p){
     </div></section>
 
     <div class="tiles">
-      ${tile('view','data-v="est"','🧾','견적 · 고객용','파일 올리고 고객에게 보여주기',(p.excel||[]).length||'')}
+      ${tile('view','data-v="est"','🧾','견적서 · 계약서','파일 올리고 고객에게 보여주기',(p.excel||[]).length||'')}
       ${tile('openSched','','📅','공정 일정','공정 추가·날짜 수정·사진 첨부',(p.tasks||[]).length||'')}
       ${p.share?.on&&p.share?.token
         ? tile('copyShare','','🔗','링크 열기','고객·작업자에게 보낼 주소 복사','열림')
@@ -2735,7 +2756,7 @@ function sharePayload(p){
     showMemo:p.share?.showMemo!==false,
     tasks:(p.tasks||[]).map(t=>({id:t.id,name:t.name,proc:t.proc,start:t.start,end:t.end,worker:t.worker,status:t.status||'예정',memo:p.share?.showMemo!==false?(t.memo||''):''})),
     files:[
-      ...(p.excel||[]).filter(f=>f.shared).map(f=>({name:f.name,url:f.url,type:f.type||'',size:0,taskId:'',memo:'견적 파일'})),
+      ...(p.excel||[]).filter(f=>f.shared).map(f=>({name:f.name,url:f.url,type:f.type||'',size:0,taskId:'',memo:EST_DOC_LABEL[estDoc(f)]})),
       ...(p.files||[]).filter(f=>f.shared!==false).map(f=>({name:f.name,url:f.url,type:f.type,size:f.size,taskId:f.taskId||'',memo:f.memo||''}))],
     company:{name:S.company?.name||'',phone:S.company?.phone||''}};
 }
@@ -3393,13 +3414,13 @@ async function view3d(i){
 function loadScript(src){ return new Promise((res,rej)=>{ const s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=()=>rej(new Error('불러오지 못함: '+src)); document.head.appendChild(s); }); }
 
 /* ---------- 견적 파일 (엑셀·PDF·사진) ---------- */
-async function uploadExcelFiles(list){
+async function uploadExcelFiles(list,docTag){
   const files=[...(list||[])];
   if(!files.length) return;
-  for(const f of files) await uploadExcel(f);
+  for(const f of files) await uploadExcel(f,docTag);
   if(files.length>1) toast(files.length+'개를 올렸습니다');
 }
-async function uploadExcel(file){
+async function uploadExcel(file,docTag){
   const p=curProj(); if(!p){ toast('현장을 먼저 고르세요.'); return; }
   if(!sb||!session){ toast('로그인한 상태에서만 파일을 올릴 수 있습니다.'); return; }
   try{
@@ -3410,7 +3431,8 @@ async function uploadExcel(file){
     if(error) throw error;
     const {data}=sb.storage.from('plans').getPublicUrl(path);
     p.excel=p.excel||[];
-    const rec={id:uid(),name:file.name,url:data.publicUrl,path,at:Date.now(),type:file.type||'',shared:false};
+    const rec={id:uid(),name:file.name,url:data.publicUrl,path,at:Date.now(),type:file.type||'',shared:false,
+      doc:docTag||PICK_DOC||guessDoc(file.name)};
     p.excel.push(rec); saveProj(p); EXCEL_SEL=rec.id;
     await showExcel(rec);
   }catch(e){ EXCEL_ERR='파일을 올리지 못했습니다: '+(e.message||e); EXCEL_BUSY=false; render(); }
@@ -3989,7 +4011,7 @@ document.addEventListener('input',ev=>{
   else if(kind==='file'){ const p=curProj(); const f=(p?.files||[]).find(x=>x.id===rest[0]); if(!f) return; f[rest[1]]=val; saveProj(p);
     if(rest[1]==='folderId' || rest[1]==='shared') render(); }
   else if(kind==='exfile'){ const p=curProj(); const f=(p?.excel||[]).find(x=>x.id===rest[0]); if(!f) return; f[rest[1]]=val; saveProj(p);
-    if(rest[1]==='shared') render(); }
+    if(rest[1]==='shared'||rest[1]==='doc') render(); }
   else if(kind==='folder'){ const p=curProj(); const fd=folderOf(p,rest[0]); if(!fd) return; fd[rest[1]]=val; saveProj(p); }
 });
 function handleSelectChange(t){
@@ -4289,7 +4311,7 @@ document.addEventListener('click',async ev=>{
     case 'estMode': EST_MODE=t.dataset.m; ls.set('estMode',EST_MODE); VIEW='est'; ls.set('view',VIEW); render();
       if(EST_MODE==='excel'){ const p=curProj(); const f=(p?.excel||[]).slice().sort((a,b)=>(b.at||0)-(a.at||0))[0]; if(f&&!EXCEL_HTML) showExcel(f); }
       break;
-    case 'pickExcel': $('#fileExcel').click(); break;
+    case 'pickExcel': PICK_DOC=t.dataset.doc||''; $('#fileExcel').click(); break;
     case 'xlsTab': { if(!XLS) break; XLS.sel=+t.dataset.i; paintExcel(); break; }
     case 'xlsUndo': undoExcel(); break;
     case 'xlsZoom': { const z=t.dataset.z;
@@ -4339,6 +4361,7 @@ document.addEventListener('click',async ev=>{
       }catch(e){ toast('내려받지 못했습니다: '+(e.message||e)); } break; }
     case 'printExcel': { const st=document.getElementById('xlsStage'); if(!st){ toast('먼저 파일을 고르세요.'); break; }
       document.body.classList.add('printing-xls'); setTimeout(()=>{ window.print(); setTimeout(()=>document.body.classList.remove('printing-xls'),600); },80); break; }
+    case 'estOpen': EST_OPEN=!EST_OPEN; ls.set('estOpen',EST_OPEN?'1':'0'); render(); break;
     case 'delExcel': { const p=curProj(); const f=(p?.excel||[]).find(x=>x.id===t.dataset.id); if(!f) break;
       if(await askConfirm({title:`“${f.name}”을(를) 지울까요?`,lines:['이 현장에서 사라집니다'],ok:'네, 지웁니다',cancel:'아니요'})){
         try{ await sb?.storage.from('plans').remove([f.path]); }catch(err){ console.warn(err); }
@@ -4525,7 +4548,7 @@ $('#fileVendorSheet').addEventListener('change',async ev=>{
   ev.target.value='';
 });
 $('#fileBackup').addEventListener('change',ev=>{ if(ev.target.files[0]) importBackup(ev.target.files[0]); ev.target.value=''; });
-$('#fileExcel').addEventListener('change',ev=>{ uploadExcelFiles(ev.target.files); ev.target.value=''; });
+$('#fileExcel').addEventListener('change',ev=>{ const d=PICK_DOC; PICK_DOC=''; uploadExcelFiles(ev.target.files,d); ev.target.value=''; });
 let PLAN_TASK='';
 $('#filePlan').addEventListener('change',async ev=>{ const fs=ev.target.files;
   if(fs.length) await uploadPlans(fs,curProj(),PLAN_TASK);
