@@ -579,8 +579,8 @@ button.g-bar{padding:0;font:inherit;cursor:pointer;text-align:left;-webkit-appea
 .esttools #excelSel{flex:0 1 150px;min-width:110px;max-width:220px;width:auto}
 .esttools .dzin{flex:none;white-space:nowrap;padding-left:4px;border-left:1px dashed var(--line);padding:4px 0 4px 10px}
 .esttools.drag{outline:2px dashed var(--accent);outline-offset:3px;border-radius:9px}
-.esthead{gap:8px;align-items:center}
-.esthead .estsite{flex:1 1 auto;min-width:160px;font-weight:600}
+.esthead{gap:8px;align-items:center;flex-wrap:nowrap}
+.esthead .estsite{flex:1 1 auto;width:auto;min-width:90px;font-weight:600}
 .seg{display:flex;gap:4px;flex:none}
 .seg .btn{padding:7px 12px}
 .esttools .estdoc{width:auto;flex:none}

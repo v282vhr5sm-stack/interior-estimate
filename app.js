@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '6.3.1';
+const APP_VERSION = '6.3.2';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -996,9 +996,6 @@ function renderExcel(){
   const k=sel?estKind(sel):'';
   return `
     <section class="panel">
-      <div class="panel-h">
-        <button class="btn pri sm" data-act="pickExcel" data-doc="est">+ 견적서</button>
-        <button class="btn sm" data-act="pickExcel" data-doc="contract">+ 계약서 파일</button></div>
       <div class="panel-b">
         ${files.length?`<div class="row esttools" id="edz">
           <select class="f sm" id="excelSel" data-act-change="excelPick" title="${esc(sel?.name||'')}">
