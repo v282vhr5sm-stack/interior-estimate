@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '7.1.0';
+const APP_VERSION = '7.1.1';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -1822,7 +1822,7 @@ function docHTML(e){
 const QEX_DEF=[
   {name:'공과잡비',base:'sub',mode:'%',v:3},
   {name:'기업이윤',base:'sub',mode:'%',v:10},
-  {name:'단수조정',base:'run',mode:'won',v:0},
+  {name:'단수조정',base:'run',mode:'-won',v:0},
   {name:'부가세',base:'run',mode:'%',v:10}];
 let QPASTE=false;
 function ensureQuote(p){
@@ -1836,12 +1836,18 @@ function ensureQuote(p){
   if(!Array.isArray(q.extras)) q.extras=clone(QEX_DEF);
   return q;
 }
+/* 방식: '%' 비율 더하기 · '-%' 비율 빼기 · 'won' 금액 더하기 · '-won' 금액 빼기 */
+const QMODES=[['%','비율 % 더하기'],['-%','비율 % 빼기'],['won','금액 원 더하기'],['-won','금액 원 빼기']];
 function quoteCalc(q){
   const sub=(q&&q.rows||[]).reduce((a,r)=>a+num(r[2]),0);
   let run=sub;
   const lines=(q&&q.extras||[]).map(x=>{
+    const mode=String(x.mode||'%');
+    const sign=mode.charAt(0)==='-'?-1:1;
+    const pct=mode.indexOf('%')>=0;
     const basis = x.base==='sub' ? sub : run;
-    const amt = x.mode==='%' ? Math.round(basis*num(x.v)/100) : Math.round(num(x.v));
+    const mag = pct ? Math.round(basis*Math.abs(num(x.v))/100) : Math.round(Math.abs(num(x.v)));
+    const amt = sign*mag;
     run+=amt; return {name:x.name,amt};
   });
   return {sub,lines,total:run};
@@ -1888,18 +1894,18 @@ function renderQuote(p){
 
         <div class="eyebrow">공정 소계 아래에 붙는 항목 <span style="font-weight:500">— 이름 · 기준 · 값 모두 고칠 수 있습니다</span></div>
         <table class="qtbl"><thead><tr>
-          <th class="qno">No</th><th>항목 이름</th><th style="width:120px">기준</th><th style="width:110px">방식</th><th class="r" style="width:100px">값</th><th class="r" style="width:140px">금액(원)</th><th style="width:34px"></th>
+          <th class="qno">No</th><th>항목 이름</th><th style="width:120px">기준</th><th style="width:150px">방식</th><th class="r" style="width:100px">값</th><th class="r" style="width:140px">금액(원)</th><th style="width:34px"></th>
         </tr></thead><tbody>${q.extras.map((x,i)=>`<tr>
           <td class="qno">${i+1}</td>
           <td><input value="${esc(x.name||'')}" data-bind="qex:${i}:name" placeholder="항목 이름"></td>
           <td><select data-bind="qex:${i}:base"><option value="sub"${x.base==='sub'?' selected':''}>공정 소계</option><option value="run"${x.base==='run'?' selected':''}>직전 누계</option></select></td>
-          <td><select data-bind="qex:${i}:mode"><option value="%"${x.mode==='%'?' selected':''}>비율 %</option><option value="won"${x.mode==='won'?' selected':''}>금액 원</option></select></td>
-          <td><input class="won" value="${x.mode==='%'?esc(x.v):won(num(x.v))}" data-bind="qex:${i}:v" inputmode="numeric"></td>
+          <td><select data-bind="qex:${i}:mode">${QMODES.map(([v,l])=>`<option value="${v}"${x.mode===v?' selected':''}>${l}</option>`).join('')}</select></td>
+          <td><input class="won" value="${String(x.mode||'').indexOf('%')>=0?esc(Math.abs(num(x.v))):won(Math.abs(num(x.v)))}" data-bind="qex:${i}:v" inputmode="numeric"></td>
           <td class="r qout" data-qex="${i}">${won(c.lines[i]?.amt||0)}</td>
           <td><button class="qx" data-act="qDelEx" data-i="${i}" title="이 줄 지우기">✕</button></td>
         </tr>`).join('')}</tbody></table>
         <div class="row" style="margin-top:8px"><button class="btn sm" data-act="qAddEx">+ 항목 추가</button>
-          <span class="muted small">기준 = 비율을 무엇에 곱할지 · 방식 = 비율(%)인지 금액(원)인지 · 금액은 빼기(−)도 됩니다</span></div>
+          <span class="muted small">기준 = 비율을 무엇에 곱할지 · 방식 = 더할지 뺄지 · 값은 그냥 양수로 넣으면 됩니다 (단수조정은 빼기로 되어 있습니다)</span></div>
       </div>
       <div class="qsum"><span class="muted small">합계</span><span class="big" id="qTotal">${won(c.total)}원</span>
         <span class="spacer"></span><span class="muted small" id="qWords">금 ${krWords(c.total)}원정</span></div>
