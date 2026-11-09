@@ -589,3 +589,14 @@ button.g-bar{padding:0;font:inherit;cursor:pointer;text-align:left;-webkit-appea
 .dropzone.slim{padding:8px 12px;gap:9px;flex-wrap:nowrap;overflow:hidden;margin-top:10px;align-items:center}
 .dropzone.slim b{font-size:13px;white-space:nowrap}
 @media(max-width:640px){ .dropzone.slim .dz-hint{display:none} }
+
+/* 고객에게 보여줄 사진 · 도면 (크게) */
+.cphotos{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px}
+.cphoto{border:1px solid var(--line);border-radius:11px;overflow:hidden;background:var(--surface)}
+.cphoto.on{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-weak)}
+.cph-img{display:block;background:var(--surface2)}
+.cph-img img{width:100%;aspect-ratio:4/3;object-fit:cover;display:block}
+.cph-ic{display:grid;place-items:center;width:100%;aspect-ratio:4/3;font-size:15px;font-weight:700;color:var(--accent);background:var(--accent-weak)}
+.cph-cap{display:flex;align-items:center;gap:8px;padding:9px 10px;cursor:pointer}
+.cph-cap b{flex:1;min-width:0;font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media(max-width:480px){ .cphotos{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:9px} }

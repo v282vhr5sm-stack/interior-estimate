@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '6.3.2';
+const APP_VERSION = '6.4.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -2065,10 +2065,20 @@ function renderContractForm(e){
 function docSections(p){
   if(!p) return '';
   const ex=(p.excel||[]).slice().sort((a,b)=>(b.at||0)-(a.at||0));
-  const exE=ex.filter(f=>estDoc(f)==='est'), exC=ex.filter(f=>estDoc(f)==='contract');
   const fs2=(p.files||[]).slice().sort((a,b)=>(b.at||0)-(a.at||0));
-  const onCnt=ex.filter(f=>f.shared).length+fs2.filter(f=>f.shared!==false).length;
+  const exOn=ex.filter(f=>f.shared).length;
+  const onCnt=exOn+fs2.filter(f=>f.shared!==false).length;
   const isImg=f=>/^image\//.test(f.type||'')||/\.(jpe?g|png|gif|webp|heic|heif)$/i.test(f.name||'');
+  const prow=f=>{ const on=f.shared!==false, label=KIND_LABEL[fileKind(f)];
+    return `<li class="cphoto ${on?'on':''}">
+      <a class="cph-img" href="${esc(f.url)}" target="_blank" rel="noopener">
+        ${isImg(f)?`<img src="${esc(f.url)}" alt="${esc(f.name)}" loading="lazy">`:`<span class="cph-ic">${esc(label)}</span>`}
+      </a>
+      <label class="cph-cap">
+        <input type="checkbox" data-bind="file:${f.id}:shared" ${on?'checked':''}>
+        <b>${esc(f.name)}</b>
+      </label>
+    </li>`; };
   const row=(f,bind,on,label)=>`<li class="cfile ${on?'on':''}">
     <label class="row" style="gap:9px;flex:1;min-width:0">
       <input type="checkbox" data-bind="${bind}" ${on?'checked':''}>
@@ -2097,17 +2107,10 @@ function docSections(p){
     </section>
 
     <section class="panel">
-      <div class="panel-h"><h3>고객에게 보여줄 파일</h3><span class="muted small">지금 ${onCnt}개 보임</span></div>
+      <div class="panel-h"><h3>고객에게 보여줄 사진 · 도면</h3><span class="muted small">지금 ${onCnt}개 보임${exOn?' (견적서·계약서 '+exOn+'개 포함)':''}</span></div>
       <div class="panel-b">
-        <div class="eyebrow">견적서</div>
-        ${exE.length?`<ul class="cfiles">${exE.map(f=>row(f,`exfile:${f.id}:shared`,!!f.shared,EST_KIND_LABEL[estKind(f)])).join('')}</ul>`
-          :'<p class="muted small" style="margin:6px 0 0">위에서 견적서를 올리면 여기에 나옵니다.</p>'}
-        <div class="eyebrow" style="margin-top:14px">계약서</div>
-        ${exC.length?`<ul class="cfiles">${exC.map(f=>row(f,`exfile:${f.id}:shared`,!!f.shared,EST_KIND_LABEL[estKind(f)])).join('')}</ul>`
-          :'<p class="muted small" style="margin:6px 0 0">위에서 계약서를 올리면 여기에 나옵니다.</p>'}
-        <div class="eyebrow" style="margin-top:14px">사진 · 도면</div>
-        ${fs2.length?`<ul class="cfiles grid">${fs2.map(f=>row(f,`file:${f.id}:shared`,f.shared!==false,KIND_LABEL[fileKind(f)])).join('')}</ul>`
-          :'<p class="muted small" style="margin:6px 0 0">일정 화면에서 사진·도면을 올리면 여기에 나옵니다.</p>'}
+        ${fs2.length?`<ul class="cphotos">${fs2.map(f=>prow(f)).join('')}</ul>`
+          :'<p class="muted small" style="margin:0">일정 화면에서 사진·도면을 올리면 여기에 나옵니다.</p>'}
       </div>
     </section>`;
 }
