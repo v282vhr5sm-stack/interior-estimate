@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '6.5.0';
+const APP_VERSION = '6.6.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -2977,11 +2977,12 @@ function renderProject(p){
       <div class="sh-scroll">${schedTable(p)}</div>
       <div class="rowtools no-print">
         <button class="btn sm" data-act="schedRowAdd" data-ri="${rows.length-1}">+ 공정 줄 추가</button>
-        <span class="small muted">빈 칸을 <b>옆으로 끌면</b> 일정이 생깁니다 · 막대 아래에 <b>업체 이름</b>을 적습니다 · 줄 이름 옆 <b>+ ✕</b> 로 줄을 넣고 뺍니다</span>
+        ${SEL_ROW!=null&&rows[SEL_ROW]!==undefined?`<button class="btn ghost sm danger" data-act="schedRowDel" data-ri="${SEL_ROW}">✕ “${esc(rows[SEL_ROW]||'빈 줄')}” 줄 지우기</button>`:''}
+        <span class="small muted">빈 칸을 <b>옆으로 끌면</b> 일정이 생깁니다 · 막대 아래에 <b>업체 이름</b>을 적습니다 · 왼쪽 <b>번호를 끌면</b> 줄 순서가 바뀌고, 번호를 누르면 그 줄을 고릅니다 · 고른 일정은 <b>Del</b> 로 지웁니다</span>
       </div>
       ${schedTaskPanel(p)}
       ${SEL_DAY?`<div class="panel-b" style="padding-top:0">${dayPanel((p.tasks||[]).filter(t=>onDay(t,SEL_DAY)).map(t=>({t,p})),SEL_DAY,{send:true})}</div>`:''}
-      <div class="panel-b small muted" style="border-top:1px solid var(--line2)">고객 링크에는 <b>파란색 시공</b>만 나갑니다. 실측 · 점검 · 발주 · 양중은 우리만 봅니다.</div>
+      <div class="panel-b small muted" style="border-top:1px solid var(--line2)">고객 링크에는 <b>파란색 ${esc(kindLabel("시공"))}</b>만 나갑니다. ${SKINDS.filter(x=>x.k!=="시공").map(x=>esc(kindLabel(x.k))).join(" · ")}은 우리만 봅니다.</div>
     </section>
 
     <section class="panel">
@@ -3064,6 +3065,15 @@ function renderProject(p){
 const SKINDS=[{k:'실측',c:'#F5A623'},{k:'점검',c:'#F5E400'},{k:'발주',c:'#8CC57E'},{k:'양중',c:'#E8322B'},{k:'시공',c:'#1A7AC4'}];
 const SKMAP=Object.fromEntries(SKINDS.map(x=>[x.k,x.c]));
 let SKIND=ls.get('skind','시공'); if(!SKMAP[SKIND]) SKIND='시공';
+let SEL_ROW=null;                                 /* 번호를 눌러 고른 공정 줄 */
+/* 색 이름은 사장님이 고칠 수 있습니다 (바탕 이름은 그대로 두고 보이는 글자만 바꿉니다) */
+const kindLabel=k=>((S.company&&S.company.kinds&&S.company.kinds[k])||k);
+function kindPal(id,cur){
+  return SKINDS.map(x=>`<span class="sw${cur===x.k?' on':''}">
+    <button class="swdot" data-act="schedKind" data-k="${x.k}"${id?` data-id="${esc(id)}"`:''} title="이 색으로 ${esc(kindLabel(x.k))}"><i style="background:${x.c}"></i></button>
+    <input class="swn" data-skn="${x.k}" value="${esc(kindLabel(x.k))}" size="${Math.max(2,kindLabel(x.k).length)}" title="눌러서 이름을 고칩니다">
+  </span>`).join('');
+}
 const DEF_ROWS=['기초 공사','철거 공사','설비·방수','샤시공사','목공사','타일공사','도장공사','필름공사','도배공사','바닥공사','전기공사','가구공사','기타'];
 const sBase=n=>String(n||'').replace(/\s*\d+\s*차$/,'').trim();
 let SCHED_SX=0;                                  /* 표를 좌우로 민 자리를 지켜 둡니다 */
@@ -3135,9 +3145,9 @@ function schedTable(p,view){
   let n=0;
   (rows.length?rows:['']).forEach((nm,ri)=>{
     const num=String(nm||'').trim()?++n:'';
-    h+=`<tr><td class="no">${num}</td><td class="nm">${view
+    h+=`<tr${!view&&SEL_ROW===ri?' class="rowon"':''}><td class="no${!view&&SEL_ROW===ri?' on':''}"${view?'':` data-rno="${ri}" title="끌어서 줄 순서를 바꿉니다 · 누르면 이 줄을 고릅니다"`}>${num}</td><td class="nm">${view
       ? `<span class="nmv">${esc(nm||'')}</span>`
-      : `<span class="nmwrap"><input value="${esc(nm||'')}" data-srow="${ri}" placeholder="공정 이름"><button class="rowx" data-act="schedRowAdd" data-ri="${ri}" title="이 줄 아래에 새 줄 넣기">+</button><button class="rowx del" data-act="schedRowDel" data-ri="${ri}" title="이 줄 지우기">✕</button></span>`}</td>`;
+      : `<span class="nmwrap"><input value="${esc(nm||'')}" data-srow="${ri}" placeholder="공정 이름"></span>`}</td>`;
     h+=D.map(x=>`<td class="cell${sWd(x.wd)}${x.key===SEL_DAY?' seld':''}" data-r="${ri}" data-c="${x.i}">${schedBarsAt(p,ri,x.i,W,view)}</td>`).join('');
     h+='</tr>';
   });
@@ -3148,7 +3158,7 @@ function schedTools(p){
   const W=schedWin(p);
   return `<div class="panel-h sh-tools no-print">
     <span class="small muted" style="font-weight:600">새 일정 색</span>
-    <div class="pal">${SKINDS.map(x=>`<button class="sw" data-act="schedKind" data-k="${x.k}" aria-pressed="${SKIND===x.k}"><i style="background:${x.c}"></i>${x.k}</button>`).join('')}</div>
+    <div class="pal">${kindPal('',SKIND)}</div>
     <span class="spacer"></span>
     <label class="row small" style="gap:5px">시작<input class="f sm" type="date" data-act-change="schedFrom" value="${dstr(W.s)}" style="width:auto"></label>
     <label class="row small" style="gap:5px">일수<input class="f sm" type="number" min="7" max="150" data-act-change="schedDays" value="${W.n}" style="width:70px"></label>
@@ -3164,7 +3174,7 @@ function schedTaskPanel(p){
       <span class="muted small">${esc(taskDateText(t))}</span>
       <span class="spacer"></span>
       <button class="btn ghost sm" data-act="selTask" data-id="">닫기</button></div>
-    <div class="pal" style="margin-top:9px">${SKINDS.map(x=>`<button class="sw" data-act="schedKind" data-k="${x.k}" data-id="${esc(t.id)}" aria-pressed="${t.kind===x.k}"><i style="background:${x.c}"></i>${x.k}</button>`).join('')}</div>
+    <div class="pal" style="margin-top:9px">${kindPal(t.id,t.kind)}</div>
     <div class="sbar-grid">
       <label class="fl">업체 이름<input class="f" data-bind="task:${ti}:name" value="${esc(t.name||'')}" placeholder="예: 가온"></label>
       <label class="fl">담당<input class="f" data-bind="task:${ti}:worker" value="${esc(t.worker||'')}" placeholder="이름 · 연락처"></label>
@@ -3210,8 +3220,60 @@ async function schedRowDel(ri){
   if(n && !await askConfirm({title:`“${p.rows[ri]||'이름 없는 줄'}” 줄을 지울까요?`,
       lines:[`이 줄에 들어 있는 일정 ${n}개도 함께 지워집니다`], ok:'네, 지웁니다', cancel:'아니요', danger:true})) return;
   p.tasks=(p.tasks||[]).filter(t=>(t.row|0)!==ri).map(t=>((t.row|0)>ri?{...t,row:t.row-1}:t));
-  p.rows.splice(ri,1); SEL_TASK=''; saveProj(p); render();
+  p.rows.splice(ri,1); SEL_TASK=''; SEL_ROW=null; saveProj(p); render();
 }
+/* 줄 순서 바꾸기 (번호 칸을 끌어서) */
+function moveRow(i,j){
+  const p=curProj(); if(!p) return; ensureRows(p);
+  if(i===j||i<0||j<0||i>=p.rows.length||j>=p.rows.length) return;
+  const nm=p.rows.splice(i,1)[0]; p.rows.splice(j,0,nm);
+  (p.tasks||[]).forEach(t=>{ let r=t.row|0;
+    if(r===i) r=j;
+    else if(i<j && r>i && r<=j) r--;
+    else if(i>j && r>=j && r<i) r++;
+    t.row=r; });
+  SEL_ROW=j; saveProj(p); render();
+}
+let RDRAG=null;
+function paintRDrag(){
+  document.querySelectorAll('.sh tr.rdrag,.sh tr.rdrop').forEach(x=>x.classList.remove('rdrag','rdrop'));
+  if(!RDRAG) return;
+  const row=n=>document.querySelector('.sh td.no[data-rno="'+n+'"]')?.parentElement;
+  row(RDRAG.from)?.classList.add('rdrag');
+  if(RDRAG.to!==RDRAG.from) row(RDRAG.to)?.classList.add('rdrop');
+}
+document.addEventListener('pointerdown',ev=>{
+  if(window.__viewerMode) return;
+  const td=ev.target.closest?.('.sh td.no'); if(!td||td.dataset.rno===undefined) return;
+  RDRAG={from:+td.dataset.rno,to:+td.dataset.rno,moved:false};
+  paintRDrag(); ev.preventDefault();
+});
+document.addEventListener('pointermove',ev=>{
+  if(!RDRAG) return;
+  const tr=document.elementFromPoint(ev.clientX,ev.clientY)?.closest?.('.sh tr');
+  const no=tr?.querySelector('td.no[data-rno]'); if(!no) return;
+  const to=+no.dataset.rno;
+  if(!isNaN(to)&&to!==RDRAG.to){ RDRAG.to=to; RDRAG.moved=true; paintRDrag(); }
+});
+document.addEventListener('pointerup',()=>{
+  if(!RDRAG) return;
+  const d=RDRAG; RDRAG=null; paintRDrag();
+  if(d.moved&&d.to!==d.from) moveRow(d.from,d.to);
+  else { SEL_ROW=(SEL_ROW===d.from)?null:d.from; render(); }
+});
+/* 고른 일정은 Del 로 지웁니다 */
+document.addEventListener('keydown',ev=>{
+  if(window.__viewerMode) return;
+  if(ev.key!=='Delete'&&ev.key!=='Backspace') return;
+  if(!SEL_TASK||!document.querySelector('.sh')) return;
+  const a=document.activeElement, inField=a&&/INPUT|TEXTAREA|SELECT/.test(a.tagName);
+  const emptyLab=inField&&a.classList.contains('lab')&&a.dataset.slab===SEL_TASK&&!a.value;
+  if(inField&&!emptyLab) return;
+  const p=curProj(); if(!p) return;
+  const i=(p.tasks||[]).findIndex(x=>x.id===SEL_TASK); if(i<0) return;
+  ev.preventDefault();
+  p.tasks.splice(i,1); SEL_TASK=''; saveProj(p); render(); toast('일정을 지웠습니다');
+});
 /* 칸을 끌어서 새 일정 만들기 */
 let SDRAG=null, SJUST=false;
 function paintSDrag(){
@@ -4191,6 +4253,14 @@ document.addEventListener('input',ev=>{
     const hint=document.getElementById(`o-p${pi}-unit`); if(hint) hint.textContent=areaHint(t.value);
     recalc(); return;
   }
+  if(t.dataset?.skn!==undefined){                   // 색 이름 (실측 · 점검 …)
+    const k=t.dataset.skn;
+    S.company=S.company||{}; S.company.kinds=S.company.kinds||{};
+    S.company.kinds[k]=t.value; saveCo();
+    t.size=Math.max(2,t.value.length);
+    document.querySelectorAll('.swn[data-skn="'+k+'"]').forEach(x=>{ if(x!==t){ x.value=t.value; x.size=Math.max(2,t.value.length); } });
+    return;
+  }
   if(t.dataset?.srow!==undefined){                  // 공정 줄 이름
     const p=curProj(); if(p){ ensureRows(p); p.rows[+t.dataset.srow]=t.value; saveProj(p); renumberSched(); }
     return;
@@ -4671,11 +4741,11 @@ document.addEventListener('click',async ev=>{
       saveProj(p); render();
       setTimeout(()=>document.querySelector('[data-act="moveTask"][data-ti="'+j+'"][data-d="'+d+'"]')?.focus(),60);
       break; }
-    case 'schedRowAdd': schedRowAdd(+t.dataset.ri); break;
+    case 'schedRowAdd': schedRowAdd(SEL_ROW!=null?SEL_ROW:+t.dataset.ri); break;
     case 'schedRowDel': await schedRowDel(+t.dataset.ri); break;
     case 'schedKind': { const id=t.dataset.id||'', k=t.dataset.k;
-      if(id){ const p=curProj(); const tk=(p?.tasks||[]).find(x=>x.id===id); if(tk){ tk.kind=k; saveProj(p); render(); } }
-      else { SKIND=k; ls.set('skind',k); render(); }
+      if(id){ const p=curProj(); const tk=(p?.tasks||[]).find(x=>x.id===id); if(tk){ tk.kind=(tk.kind===k&&k!=='시공')?'시공':k; saveProj(p); render(); } }
+      else { SKIND=(SKIND===k&&k!=='시공')?'시공':k; ls.set('skind',SKIND); render(); }
       break; }
     case 'sortTasks': { const p=curProj(); p.tasks.sort((a,b)=>String(a.start||'').localeCompare(String(b.start||''))); saveProj(p); render(); break; }
     case 'openSite': HUB_GALLERY=false; HOME_SEL=t.dataset.id; selectSite(t.dataset.id); VIEW='home'; ls.set('view',VIEW); render(); window.scrollTo(0,0); break;
@@ -4755,13 +4825,14 @@ document.addEventListener('click',async ev=>{
       render(); break; }
     case 'selTask': { const id=t.dataset.id||'';
       SEL_TASK = (!id||id===SEL_TASK) ? '' : id;
+      if(SEL_TASK){ SEL_DAY=null; SEL_ROW=null; }
       const g=document.querySelector('.gantt'), p=curProj();
       if(g&&p){ const keep=g.querySelector('.gantt-scroll')?.scrollLeft||0;
         g.innerHTML=ganttHTML(p,projRange(p));
         const s=g.querySelector('.gantt-scroll'); if(s) s.scrollLeft=keep; }
       else render();
       break; }
-    case 'selDay': { const d=t.dataset.d||''; SEL_DAY = (!d||d===SEL_DAY) ? null : d; VSEL_TASK=''; SEL_TASK='';
+    case 'selDay': { const d=t.dataset.d||''; SEL_DAY = (!d||d===SEL_DAY) ? null : d; VSEL_TASK=''; SEL_TASK=''; SEL_ROW=null;
       if(window.__viewerMode) paintViewer(); else render();
       if(SEL_DAY) setTimeout(()=>document.querySelector('.dayp')?.scrollIntoView({block:'nearest',behavior:'smooth'}),60);
       break; }
