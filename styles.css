@@ -670,14 +670,22 @@ button.g-bar{padding:0;font:inherit;cursor:pointer;text-align:left;-webkit-appea
 
 /* 전체 달력 — 그날 작업 */
 .cal-i .kd{width:7px;height:7px;border-radius:2px;margin-right:3px;vertical-align:middle}
-.monl{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:7px}
-.monl li{border:1px solid var(--line);border-radius:10px;overflow:hidden}
-.monl li.on{border-color:var(--accent)}
-.mpick{display:flex;align-items:center;gap:8px;width:100%;border:0;background:transparent;font:inherit;font-size:13px;text-align:left;padding:9px 11px;cursor:pointer;color:var(--ink);flex-wrap:wrap}
-.mpick:hover{background:rgba(0,0,0,.04)}
-.mproc{font-weight:600}
-.mkind{font-size:11.5px;font-weight:700;padding:1px 7px;border-radius:999px;background:var(--surface);border:1px solid var(--line)}
-.monl .mbox{margin:0 10px 10px;background:var(--surface)}
+.cal-s{display:flex;align-items:center;gap:4px;font-size:10.5px;line-height:1.4;padding:2px 5px;border-radius:5px;color:var(--ink)}
+.cal-s b{flex:1;min-width:0;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cal-s .n{flex:none;font-weight:800;opacity:.75}
+.msite{border:1px solid var(--line);border-radius:11px;overflow:hidden;margin-top:9px;background:var(--surface)}
+.msite-h{display:flex;align-items:center;gap:8px;padding:9px 11px;font-weight:700;font-size:13.5px}
+.msite-h .ad{flex:1;min-width:0}
+.msite-h .cnt{flex:none;font-size:12px;color:var(--muted)}
+.jobs{list-style:none;margin:0;padding:0}
+.jobs li{border-top:1px solid var(--line2)}
+.jobs li.on{background:var(--accent-weak)}
+.jpick{display:flex;align-items:center;gap:9px;width:100%;border:0;background:transparent;font:inherit;font-size:13px;text-align:left;padding:8px 11px;cursor:pointer;color:var(--ink);flex-wrap:wrap}
+.jpick:hover{background:var(--surface2)}
+.jno{flex:none;width:17px;color:var(--muted);font-size:11.5px;font-weight:700}
+.jproc{font-weight:700}
+.jkind{font-size:11.5px;font-weight:700;padding:1px 7px;border-radius:999px;background:var(--surface2);border:1px solid var(--line)}
+.jobs .mbox{margin:0 11px 11px;background:var(--surface)}
 
 /* 고객 화면 — 누른 막대의 글씨만 */
 .sh .lab.vlab{background:var(--surface);border:1px solid var(--line);border-radius:4px;padding:1px 5px;box-shadow:0 1px 4px rgba(0,0,0,.14)}

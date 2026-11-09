@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '6.8.0';
+const APP_VERSION = '6.9.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -2748,6 +2748,7 @@ const dstr = d => { const x=new Date(d); return isNaN(x)?'':x.getFullYear()+'-'+
 const dnum = s => { const x=new Date(s+'T00:00:00'); return isNaN(x)?null:x.getTime(); };
 const addDays = (s,n) => dstr(new Date(dnum(s)+n*DAY));
 const STATUS = {예정:'#8a949013',진행:'var(--accent)',완료:'var(--muted)'};
+const siteAddr = p => ((p && p.address || '').trim() || siteName(p));
 const siteName = p => (p && p.name || '').trim() || (p && p.address || '').trim() || ((p && p.client || '').trim() ? p.client + ' 고객님 현장' : '') || '이름 없는 현장';
 function newProject(from){
   const p={id:uid(),name:from?.title||'',client:from?.client?.name||'',phone:from?.client?.phone||'',address:from?.client?.address||'',
@@ -3506,23 +3507,28 @@ let MON_SEL='';
 /* 전체 달력에서 그날 작업 — 현장 색으로 묶고, 여기서 바로 고칩니다 (공정 줄 이름은 못 고칩니다) */
 function monthDayPanel(items,key){
   const d=new Date(dnum(key));
+  const groups=[], map={};
+  items.forEach(({t,p,pi})=>{ if(!map[p.id]){ map[p.id]={p,pi,items:[]}; groups.push(map[p.id]); } map[p.id].items.push(t); });
   return `<div class="dayp">
     <div class="row"><b>${d.getMonth()+1}월 ${d.getDate()}일 (${WD[d.getDay()]}) 작업</b>
-      <span class="muted small">${items.length?items.length+'건':'작업 없음'}</span>
+      <span class="muted small">${groups.length?`현장 ${groups.length}곳 · ${items.length}건`:'작업 없음'}</span>
       <span class="spacer"></span><button class="btn ghost sm" data-act="selDay" data-d="">닫기</button></div>
-    ${items.length?`<ul class="monl">${items.map(({t,p,pi})=>`<li class="c${pi%6}${MON_SEL===t.id?' on':''}">
-      <button class="mpick" data-act="monTask" data-id="${esc(t.id)}" data-pid="${esc(p.id)}">
-        <i class="kd" style="background:${SKMAP[t.kind]||SKMAP['시공']}"></i>
-        <b>${esc(siteName(p))}</b>
-        <span class="mproc">${esc((p.rows||[])[t.row|0]||'공정 없음')}</span>
-        <span class="mkind">${esc(kindLabel(t.kind||'시공'))}</span>
-        ${t.name?`<span>${esc(t.name)}</span>`:''}
-        <span class="spacer"></span>
-        <span class="muted small">${esc(taskDateText(t))}</span>
-        <span class="muted small">${MON_SEL===t.id?'▾':'고치기 ›'}</span>
-      </button>
-      ${MON_SEL===t.id?monBox(p,t):''}
-    </li>`).join('')}</ul>`:'<p class="muted small" style="margin:8px 0 0">이 날은 잡힌 작업이 없습니다.</p>'}
+    ${groups.length?groups.map(g=>`<div class="msite">
+      <div class="msite-h c${g.pi%6}"><span class="ad">${esc(siteAddr(g.p))}</span><span class="cnt">공정 ${g.items.length}개</span></div>
+      <ul class="jobs">${g.items.map((t,i)=>`<li${MON_SEL===t.id?' class="on"':''}>
+        <button class="jpick" data-act="monTask" data-id="${esc(t.id)}" data-pid="${esc(g.p.id)}">
+          <span class="jno">${i+1}</span>
+          <i class="kd" style="background:${SKMAP[t.kind]||SKMAP['시공']}"></i>
+          <span class="jproc">${esc((g.p.rows||[])[t.row|0]||'공정 없음')}</span>
+          <span class="jkind">${esc(kindLabel(t.kind||'시공'))}</span>
+          ${t.name?`<span class="muted">${esc(t.name)}</span>`:''}
+          <span class="spacer"></span>
+          <span class="muted small">${esc(taskDateText(t))}</span>
+          <span class="muted small">${MON_SEL===t.id?'▾':'고치기 ›'}</span>
+        </button>
+        ${MON_SEL===t.id?monBox(g.p,t):''}
+      </li>`).join('')}</ul>
+    </div>`).join(''):'<p class="muted small" style="margin:10px 0 0">이 날은 잡힌 작업이 없습니다.</p>'}
   </div>`;
 }
 function monBox(p,t){
@@ -3568,16 +3574,18 @@ function renderMonth(){
       <span class="spacer"></span><button class="btn sm" data-act="month" data-d="0">이번 달</button></div>
     <div class="cal">
       ${['일','월','화','수','목','금','토'].map((d,i)=>`<div class="cal-h${i===0?' sun':i===6?' sat':''}">${d}</div>`).join('')}
-      ${cells.map(c=>`<div class="cal-d${c.other?' out':''}${c.key===todayKey?' today':''}${c.key===SEL_DAY?' sel':''}" data-act="selDay" data-d="${c.key}">
+      ${cells.map(c=>{
+        const per=[], pm={};
+        c.items.forEach(({p,pi})=>{ if(!pm[p.id]){ pm[p.id]={p,pi,n:0}; per.push(pm[p.id]); } pm[p.id].n++; });
+        return `<div class="cal-d${c.other?' out':''}${c.key===todayKey?' today':''}${c.key===SEL_DAY?' sel':''}" data-act="selDay" data-d="${c.key}">
         <span class="cal-n">${c.d.getDate()}</span>
-        ${c.items.slice(0,4).map(({p,task,pi})=>{ const rn=(p.rows||[])[task.row|0]||'', kl=kindLabel(task.kind||'시공');
-          return `<span class="cal-i c${pi%6}" title="${esc(siteName(p))} · ${esc(rn)} · ${esc(kl)}${task.name?' · '+esc(task.name):''}"><i class="kd" style="background:${SKMAP[task.kind]||SKMAP['시공']}"></i>${esc(siteName(p))} ${esc(rn||task.name)}</span>`; }).join('')}
-        ${c.items.length>4?`<span class="cal-i more">+${c.items.length-4}</span>`:''}
-      </div>`).join('')}
+        ${per.slice(0,3).map(x=>`<span class="cal-s c${x.pi%6}" title="${esc(siteAddr(x.p))} · 공정 ${x.n}개"><b>${esc(siteAddr(x.p))}</b><span class="n">+${x.n}</span></span>`).join('')}
+        ${per.length>3?`<span class="cal-i more">현장 +${per.length-3}</span>`:''}
+      </div>`; }).join('')}
     </div>
     ${SEL_DAY?`<div class="panel-b" style="padding-top:12px">${monthDayPanel(
       projs.flatMap((p,pi)=>(p.tasks||[]).filter(t=>onDay(t,SEL_DAY)).map(t=>({t,p,pi}))),SEL_DAY)}</div>`:''}
-    ${projs.length?`<div class="panel-b row small">${projs.map((p,i)=>`<span class="legend c${i%6}">${esc(siteName(p))}</span>`).join('')}</div>`:'<div class="empty">현장을 먼저 만들어주세요.</div>'}
+    ${projs.length?`<div class="panel-b row small">${projs.map((p,i)=>`<span class="legend c${i%6}">${esc(siteAddr(p))}</span>`).join('')}</div>`:'<div class="empty">현장을 먼저 만들어주세요.</div>'}
   </section>`;
 }
 
