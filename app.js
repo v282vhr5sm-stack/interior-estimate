@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '6.4.0';
+const APP_VERSION = '6.5.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -775,6 +775,7 @@ function render(){
   updatePill();
   LAST_VIEW=VIEW;
   if(keep) restorePlace(keep);
+  const shs=document.querySelector('.sh-scroll'); if(shs&&SCHED_SX) shs.scrollLeft=SCHED_SX;
 }
 let renderDeferred=false;
 function safeRender(){
@@ -2793,12 +2794,17 @@ const shareBase = () => location.origin + location.pathname.replace(/[^/]*$/,'')
 /* 현장별 안내 파일이 만들어져 있으면 그 주소를 씁니다 (미리보기에 현장 이름이 나옵니다) */
 const shareUrl = p => (typeof p==='string') ? shareBase()+p : shareBase()+(p?.share?.token||'');
 function sharePayload(p){
-  const r=projRange(p);
-  return {v:1, updatedAt:new Date().toISOString(),
+  /* 고객에게는 파란색 “시공”만 내보냅니다 (실측·점검·발주·양중은 우리만 봅니다) */
+  const vis=(p.tasks||[]).filter(t=>(t.kind||'시공')==='시공');
+  const r=projRange({tasks:vis});
+  const fin=vis.filter(t=>t.status==='완료').length;
+  return {v:2, updatedAt:new Date().toISOString(),
     site:{name:siteName(p),address:p.address,note:p.note,client:p.client,
-      from:r?dstr(r.from):'', to:r?dstr(r.to):'', progress:projProgress(p)},
+      from:r?dstr(r.from):'', to:r?dstr(r.to):'', progress:vis.length?Math.round(fin/vis.length*100):0},
     showMemo:p.share?.showMemo!==false,
-    tasks:(p.tasks||[]).map(t=>({id:t.id,name:t.name,proc:t.proc,start:t.start,end:t.end,worker:t.worker,status:t.status||'예정',memo:p.share?.showMemo!==false?(t.memo||''):''})),
+    rows:(p.rows||[]).slice(),
+    schedStart:p.schedStart||'', schedDays:+p.schedDays||0,
+    tasks:vis.map(t=>({id:t.id,name:t.name,proc:t.proc,row:t.row|0,kind:'시공',start:t.start,end:t.end,worker:t.worker,status:t.status||'예정',memo:p.share?.showMemo!==false?(t.memo||''):''})),
     files:[
       ...(p.excel||[]).filter(f=>f.shared).map(f=>({name:f.name,url:f.url,type:f.type||'',size:0,taskId:'',memo:EST_DOC_LABEL[estDoc(f)]})),
       ...(p.files||[]).filter(f=>f.shared!==false).map(f=>({name:f.name,url:f.url,type:f.type,size:f.size,taskId:f.taskId||'',memo:f.memo||''}))],
@@ -2955,7 +2961,7 @@ function renderSched(){
     ${renderProject(p)}</div>`;
 }
 function renderProject(p){
-  const r=projRange(p), prog=projProgress(p), used=new Set((p.tasks||[]).map(t=>t.proc));
+  const r=projRange(p), prog=projProgress(p), rows=ensureRows(p);
   return `<section class="panel"><div class="panel-b client-grid">
       <label class="fl span2">현장 이름<input class="f" id="pj-name" data-bind="proj:name" value="${esc(p.name)}" placeholder="현장 이름"></label>
       <label class="fl">고객명<input class="f" id="pj-client" data-bind="proj:client" value="${esc(p.client)}"></label>
@@ -2965,28 +2971,17 @@ function renderProject(p){
     </div></section>
 
     <section class="panel">
-      <div class="panel-h"><h3>공정 일정</h3><span class="muted small">${r?`${dstr(r.from)} ~ ${dstr(r.to)} · ${Math.round((r.to-r.from)/DAY)+1}일`:'일정 없음'}</span>
+      <div class="panel-h"><h3>공정 일정표</h3><span class="muted small">${r?`${dstr(r.from)} ~ ${dstr(r.to)} · ${Math.round((r.to-r.from)/DAY)+1}일`:'아직 일정이 없습니다'}</span>
         <span class="spacer"></span><span class="badge">진행률 ${prog}%</span></div>
-      ${(p.tasks||[]).length?`<div class="gantt">${ganttHTML(p,r)}</div>
-      ${SEL_DAY?dayPanel((p.tasks||[]).filter(t=>onDay(t,SEL_DAY)).map(t=>({t,p})),SEL_DAY,{send:true}):''}`:''}
-      <div class="tbl-wrap"><table class="t resp">
-        <thead><tr><th class="w-ord">순서</th><th class="w-name">작업</th><th>담당</th><th>시작</th><th>종료</th><th>상태</th><th>작업 메모</th><th></th></tr></thead>
-        <tbody>${(p.tasks||[]).map((t,ti)=>`<tr>
-          <td class="c-ord" data-l="순서"><button class="btn ghost sm" data-act="moveTask" data-ti="${ti}" data-d="-1" title="위로" ${ti===0?'disabled':''}>▲</button><button class="btn ghost sm" data-act="moveTask" data-ti="${ti}" data-d="1" title="아래로" ${ti===(p.tasks||[]).length-1?'disabled':''}>▼</button></td>
-          <td class="c-name"><input class="f" id="t${ti}-name" data-bind="task:${ti}:name" value="${esc(t.name)}" placeholder="작업 이름" style="font-weight:500"></td>
-          <td data-l="담당">${workerCell(t,ti)}</td>
-          <td data-l="시작"><input class="f" type="date" id="t${ti}-s" data-bind="task:${ti}:start" value="${esc(t.start||'')}"></td>
-          <td data-l="종료"><input class="f" type="date" id="t${ti}-e" data-bind="task:${ti}:end" value="${esc(t.end||'')}" min="${esc(t.start||'')}"></td>
-          <td data-l="상태"><select class="f" id="t${ti}-st" data-bind="task:${ti}:status">${['예정','진행','완료'].map(s=>`<option ${s===(t.status||'예정')?'selected':''}>${s}</option>`).join('')}</select></td>
-          <td data-l="작업 메모"><input class="f" id="t${ti}-m" data-bind="task:${ti}:memo" value="${esc(t.memo||'')}" placeholder="작업자에게 전할 말"></td>
-          <td class="c-act"><button class="btn ghost sm" data-act="taskPhoto" data-ti="${ti}" title="이 공정 사진 올리기">📷 사진${(p.files||[]).filter(f=>f.taskId===t.id).length||''}</button><button class="btn ghost sm" data-act="dupTask" data-ti="${ti}" title="같은 공정을 다른 날짜에 한 차수 더 넣기 (일정표에는 같은 줄에 나옵니다)">한 번 더</button><button class="btn ghost sm" data-act="sendTask" data-tid="${esc(t.id)}" title="이 작업 날짜와 현장 주소를 작업자에게 보내기">📨 보내기</button><button class="btn ghost sm danger" data-act="delTask" data-ti="${ti}" aria-label="삭제">✕ 삭제</button></td></tr>`).join('')
-          || `<tr><td colspan="7" class="muted small c-empty" style="padding:12px 8px">아래에서 공정을 눌러 일정을 추가하세요.</td></tr>`}</tbody>
-      </table></div>
-      <div class="proc-f"><b class="small">공정 추가</b><div class="chips">
-        ${PROCS.map(x=>`<button class="chip${used.has(x.k)?' used':''}" data-act="addTask" data-k="${x.k}">+ ${x.n}</button>`).join('')}
-        <button class="chip" data-act="addTask" data-k="">+ 직접 입력</button></div>
-        <span class="spacer"></span>
-        ${(p.tasks||[]).length>1?`<button class="btn ghost sm" data-act="sortTasks">날짜순 정렬</button>`:''}</div>
+      ${schedTools(p)}
+      <div class="sh-scroll">${schedTable(p)}</div>
+      <div class="rowtools no-print">
+        <button class="btn sm" data-act="schedRowAdd" data-ri="${rows.length-1}">+ 공정 줄 추가</button>
+        <span class="small muted">빈 칸을 <b>옆으로 끌면</b> 일정이 생깁니다 · 막대 아래에 <b>업체 이름</b>을 적습니다 · 줄 이름 옆 <b>+ ✕</b> 로 줄을 넣고 뺍니다</span>
+      </div>
+      ${schedTaskPanel(p)}
+      ${SEL_DAY?`<div class="panel-b" style="padding-top:0">${dayPanel((p.tasks||[]).filter(t=>onDay(t,SEL_DAY)).map(t=>({t,p})),SEL_DAY,{send:true})}</div>`:''}
+      <div class="panel-b small muted" style="border-top:1px solid var(--line2)">고객 링크에는 <b>파란색 시공</b>만 나갑니다. 실측 · 점검 · 발주 · 양중은 우리만 봅니다.</div>
     </section>
 
     <section class="panel">
@@ -3065,6 +3060,199 @@ function renderProject(p){
       </div>
     </section>`;
 }
+/* ===== 공정 일정표 (엑셀 모양 · 칸을 끌어서 적습니다) ===== */
+const SKINDS=[{k:'실측',c:'#F5A623'},{k:'점검',c:'#F5E400'},{k:'발주',c:'#8CC57E'},{k:'양중',c:'#E8322B'},{k:'시공',c:'#1A7AC4'}];
+const SKMAP=Object.fromEntries(SKINDS.map(x=>[x.k,x.c]));
+let SKIND=ls.get('skind','시공'); if(!SKMAP[SKIND]) SKIND='시공';
+const DEF_ROWS=['기초 공사','철거 공사','설비·방수','샤시공사','목공사','타일공사','도장공사','필름공사','도배공사','바닥공사','전기공사','가구공사','기타'];
+const sBase=n=>String(n||'').replace(/\s*\d+\s*차$/,'').trim();
+let SCHED_SX=0;                                  /* 표를 좌우로 민 자리를 지켜 둡니다 */
+document.addEventListener('scroll',ev=>{ if(ev.target?.classList?.contains('sh-scroll')) SCHED_SX=ev.target.scrollLeft; },true);
+
+/* 예전 자료를 줄(공정) + 막대(일정)로 옮깁니다 — 한 번만 */
+function ensureRows(p,view){
+  if(!p) return [];
+  if(view) return p.rows||[];
+  if(!Array.isArray(p.rows)||!p.rows.length){
+    const rows=[], map={};
+    (p.tasks||[]).forEach(t=>{
+      const key=(t.proc&&PMAP[t.proc]?PMAP[t.proc].n:t.proc)||sBase(t.name)||'공정';
+      if(!(key in map)){ map[key]=rows.length; rows.push(key); }
+      t.row=map[key]; if(!t.kind) t.kind='시공';
+    });
+    p.rows = rows.length?rows:DEF_ROWS.slice();
+    saveProj(p);
+  }
+  let fix=false;
+  (p.tasks||[]).forEach(t=>{
+    if(typeof t.row!=='number'||t.row<0||t.row>=p.rows.length){ t.row=0; fix=true; }
+    if(!SKMAP[t.kind]){ t.kind='시공'; fix=true; }
+  });
+  if(fix) saveProj(p);
+  return p.rows;
+}
+/* 표에 보일 기간 (시작일 · 며칠) */
+function schedWin(p,view){
+  const r=projRange(p);
+  let s=p.schedStart?dnum(p.schedStart):null;
+  if(!s) s=(r?r.from:dnum(today()))-2*DAY;
+  let n=+p.schedDays||0;
+  if(!n) n=r?Math.round((r.to-s)/DAY)+3:33;
+  n=Math.max(7,Math.min(150,n));
+  if(!view && (p.schedStart!==dstr(s) || +p.schedDays!==n)){ p.schedStart=dstr(s); p.schedDays=n; saveProj(p); }
+  return {s,n};
+}
+const sWd=w=>w===0?' sun':w===6?' sat':'';
+/* 이 칸에서 시작하는 막대들 */
+function schedBarsAt(p,ri,ci,W,view){
+  let h='';
+  (p.tasks||[]).forEach(t=>{
+    if((t.row|0)!==ri) return;
+    const a=dnum(t.start); if(!a) return;
+    const b=dnum(t.end)||a;
+    const s=Math.round((a-W.s)/DAY), e=Math.round((b-W.s)/DAY);
+    if(e<0||s>W.n-1) return;
+    const s2=Math.max(0,s), e2=Math.min(W.n-1,e);
+    if(s2!==ci) return;
+    const w=e2-s2+1, col=SKMAP[t.kind]||SKMAP['시공'];
+    const tip=[t.name||'일정',taskDateText(t),t.worker||'',t.memo||''].filter(Boolean).join(' · ');
+    h+=`<button class="bar${SEL_TASK===t.id?' on':''}${t.status==='완료'?' done':''}" style="width:calc(${w*100}% + ${w-1}px);background:${col}" data-act="${view?'vTask':'selTask'}" data-id="${esc(t.id)}" title="${esc(tip)}"></button>`;
+    h+= view
+      ? (t.name?`<span class="lab">${esc(t.name)}</span>`:'')
+      : `<input class="lab" value="${esc(t.name||'')}" data-slab="${esc(t.id)}" size="${Math.max(4,String(t.name||'').length)}" placeholder="업체" title="업체 이름을 적습니다">`;
+  });
+  return h;
+}
+/* 표 전체 */
+function schedTable(p,view){
+  const rows=ensureRows(p,view), W=schedWin(p,view);
+  const D=[...Array(W.n)].map((_,i)=>{ const d=new Date(W.s+i*DAY); return {i,d,wd:d.getDay(),key:dstr(d)}; });
+  const tk=today();
+  let h='<colgroup><col class="cno"><col class="cname">'+D.map(()=>'<col class="cday">').join('')+'</colgroup>';
+  h+='<tr><th class="hcorner" rowspan="2" colspan="2">공 정 내 용</th>'+D.map(x=>
+    `<th class="hday${sWd(x.wd)}${x.key===tk?' tdy':''}${x.key===SEL_DAY?' seld':''}" data-act="selDay" data-d="${x.key}" title="${esc(fmtDay(x.key))}">${x.i===0||x.d.getDate()===1?(x.d.getMonth()+1)+'.'+x.d.getDate():x.d.getDate()}</th>`).join('')+'</tr>';
+  h+='<tr>'+D.map(x=>`<th class="hwd${sWd(x.wd)}${x.key===SEL_DAY?' seld':''}" data-act="selDay" data-d="${x.key}">${WD[x.wd]}</th>`).join('')+'</tr>';
+  let n=0;
+  (rows.length?rows:['']).forEach((nm,ri)=>{
+    const num=String(nm||'').trim()?++n:'';
+    h+=`<tr><td class="no">${num}</td><td class="nm">${view
+      ? `<span class="nmv">${esc(nm||'')}</span>`
+      : `<span class="nmwrap"><input value="${esc(nm||'')}" data-srow="${ri}" placeholder="공정 이름"><button class="rowx" data-act="schedRowAdd" data-ri="${ri}" title="이 줄 아래에 새 줄 넣기">+</button><button class="rowx del" data-act="schedRowDel" data-ri="${ri}" title="이 줄 지우기">✕</button></span>`}</td>`;
+    h+=D.map(x=>`<td class="cell${sWd(x.wd)}${x.key===SEL_DAY?' seld':''}" data-r="${ri}" data-c="${x.i}">${schedBarsAt(p,ri,x.i,W,view)}</td>`).join('');
+    h+='</tr>';
+  });
+  return '<table class="sh">'+h+'</table>';
+}
+/* 색 고르기 · 기간 */
+function schedTools(p){
+  const W=schedWin(p);
+  return `<div class="panel-h sh-tools no-print">
+    <span class="small muted" style="font-weight:600">새 일정 색</span>
+    <div class="pal">${SKINDS.map(x=>`<button class="sw" data-act="schedKind" data-k="${x.k}" aria-pressed="${SKIND===x.k}"><i style="background:${x.c}"></i>${x.k}</button>`).join('')}</div>
+    <span class="spacer"></span>
+    <label class="row small" style="gap:5px">시작<input class="f sm" type="date" data-act-change="schedFrom" value="${dstr(W.s)}" style="width:auto"></label>
+    <label class="row small" style="gap:5px">일수<input class="f sm" type="number" min="7" max="150" data-act-change="schedDays" value="${W.n}" style="width:70px"></label>
+  </div>`;
+}
+/* 고른 막대 고치기 (사진 · 보내기도 여기 있습니다) */
+function schedTaskPanel(p){
+  const t=(p.tasks||[]).find(x=>x.id===SEL_TASK); if(!t) return '';
+  const ti=(p.tasks||[]).indexOf(t);
+  const nph=(p.files||[]).filter(f=>f.taskId===t.id).length;
+  return `<div class="panel-b sbar no-print">
+    <div class="row"><b>${esc((p.rows||[])[t.row|0]||'공정')}</b>
+      <span class="muted small">${esc(taskDateText(t))}</span>
+      <span class="spacer"></span>
+      <button class="btn ghost sm" data-act="selTask" data-id="">닫기</button></div>
+    <div class="pal" style="margin-top:9px">${SKINDS.map(x=>`<button class="sw" data-act="schedKind" data-k="${x.k}" data-id="${esc(t.id)}" aria-pressed="${t.kind===x.k}"><i style="background:${x.c}"></i>${x.k}</button>`).join('')}</div>
+    <div class="sbar-grid">
+      <label class="fl">업체 이름<input class="f" data-bind="task:${ti}:name" value="${esc(t.name||'')}" placeholder="예: 가온"></label>
+      <label class="fl">담당<input class="f" data-bind="task:${ti}:worker" value="${esc(t.worker||'')}" placeholder="이름 · 연락처"></label>
+      <label class="fl">시작<input class="f" type="date" id="st${ti}-s" data-bind="task:${ti}:start" value="${esc(t.start||'')}"></label>
+      <label class="fl">종료<input class="f" type="date" id="st${ti}-e" data-bind="task:${ti}:end" value="${esc(t.end||'')}" min="${esc(t.start||'')}"></label>
+      <label class="fl">상태<select class="f" data-bind="task:${ti}:status">${['예정','진행','완료'].map(s=>`<option ${s===(t.status||'예정')?'selected':''}>${s}</option>`).join('')}</select></label>
+      <label class="fl span2">메모<input class="f" data-bind="task:${ti}:memo" value="${esc(t.memo||'')}" placeholder="작업자에게 전할 말"></label>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn sm" data-act="taskPhoto" data-ti="${ti}">📷 이 일정 사진${nph?' ('+nph+')':''}</button>
+      <button class="btn sm" data-act="sendTask" data-tid="${esc(t.id)}">📨 작업자에게 보내기</button>
+      <span class="spacer"></span>
+      <button class="btn ghost sm danger" data-act="delTask" data-ti="${ti}">✕ 이 일정 지우기</button>
+    </div></div>`;
+}
+/* 표만 다시 그립니다 (글 쓰던 자리를 지킵니다) */
+function repaintSched(){
+  const sc=document.querySelector('.sh-scroll'), p=curProj();
+  if(!sc||!p) return;
+  const x=sc.scrollLeft; sc.innerHTML=schedTable(p); sc.scrollLeft=x;
+}
+function renumberSched(){
+  const tb=document.querySelector('.sh'); if(!tb) return;
+  let n=0;
+  tb.querySelectorAll('tr').forEach(tr=>{
+    const no=tr.querySelector('td.no'), inp=tr.querySelector('input[data-srow]');
+    if(!no||!inp) return;
+    no.textContent = inp.value.trim()? ++n : '';
+  });
+}
+/* 줄 넣기 · 빼기 */
+function schedRowAdd(ri){
+  const p=curProj(); if(!p) return; ensureRows(p);
+  p.rows.splice(ri+1,0,'');
+  (p.tasks||[]).forEach(t=>{ if((t.row|0)>ri) t.row++; });
+  saveProj(p); render();
+  setTimeout(()=>document.querySelector('.sh input[data-srow="'+(ri+1)+'"]')?.focus(),70);
+}
+async function schedRowDel(ri){
+  const p=curProj(); if(!p) return; ensureRows(p);
+  if(p.rows.length<=1){ toast('마지막 줄은 지울 수 없습니다'); return; }
+  const n=(p.tasks||[]).filter(t=>(t.row|0)===ri).length;
+  if(n && !await askConfirm({title:`“${p.rows[ri]||'이름 없는 줄'}” 줄을 지울까요?`,
+      lines:[`이 줄에 들어 있는 일정 ${n}개도 함께 지워집니다`], ok:'네, 지웁니다', cancel:'아니요', danger:true})) return;
+  p.tasks=(p.tasks||[]).filter(t=>(t.row|0)!==ri).map(t=>((t.row|0)>ri?{...t,row:t.row-1}:t));
+  p.rows.splice(ri,1); SEL_TASK=''; saveProj(p); render();
+}
+/* 칸을 끌어서 새 일정 만들기 */
+let SDRAG=null, SJUST=false;
+function paintSDrag(){
+  document.querySelectorAll('.sh td.cell.drag').forEach(x=>x.classList.remove('drag'));
+  if(!SDRAG) return;
+  const s=Math.min(SDRAG.a,SDRAG.b), e=Math.max(SDRAG.a,SDRAG.b);
+  for(let i=s;i<=e;i++) document.querySelector('.sh td.cell[data-r="'+SDRAG.r+'"][data-c="'+i+'"]')?.classList.add('drag');
+}
+function newBar(r,s,e){
+  const p=curProj(); if(!p) return;
+  ensureRows(p); const W=schedWin(p);
+  const t={id:uid(),row:r,proc:'',kind:SKIND,name:'',start:dstr(W.s+Math.min(s,e)*DAY),end:dstr(W.s+Math.max(s,e)*DAY),worker:'',status:'예정',memo:''};
+  p.tasks=p.tasks||[]; p.tasks.push(t); SEL_TASK=t.id; saveProj(p); render();
+  setTimeout(()=>{ const el=document.querySelector('.sh .lab[data-slab="'+t.id+'"]'); if(el){ el.focus(); el.select?.(); } },70);
+}
+document.addEventListener('pointerdown',ev=>{
+  if(window.__viewerMode) return;
+  const td=ev.target.closest?.('.sh td.cell'); if(!td) return;
+  if(ev.target.closest('.bar')||ev.target.closest('.lab')) return;
+  if(ev.pointerType==='touch') return;                 /* 손가락은 표를 밀 수 있게 둡니다 */
+  SDRAG={r:+td.dataset.r,a:+td.dataset.c,b:+td.dataset.c};
+  paintSDrag(); ev.preventDefault();
+});
+document.addEventListener('pointermove',ev=>{
+  if(!SDRAG) return;
+  const td=document.elementFromPoint(ev.clientX,ev.clientY)?.closest?.('.sh td.cell');
+  if(td && +td.dataset.r===SDRAG.r && +td.dataset.c!==SDRAG.b){ SDRAG.b=+td.dataset.c; paintSDrag(); }
+});
+document.addEventListener('pointerup',()=>{
+  if(!SDRAG) return;
+  const d=SDRAG; SDRAG=null;
+  document.querySelectorAll('.sh td.cell.drag').forEach(x=>x.classList.remove('drag'));
+  SJUST=true; setTimeout(()=>{ SJUST=false; },400);
+  newBar(d.r,d.a,d.b);
+});
+document.addEventListener('click',ev=>{                /* 손가락으로 한 번 누르면 하루 일정 */
+  if(window.__viewerMode||SJUST||SDRAG) return;
+  const td=ev.target.closest?.('.sh td.cell'); if(!td) return;
+  if(ev.target.closest('.bar')||ev.target.closest('.lab')) return;
+  newBar(+td.dataset.r,+td.dataset.c,+td.dataset.c);
+});
 const DAYW=34;               // 하루 한 칸의 너비(px)
 /* 10월 20일(월) 처럼 읽기 쉬운 날짜 */
 function fmtDay(k){ const ms=dnum(k); if(!ms) return String(k||''); const d=new Date(ms); return (d.getMonth()+1)+'월 '+d.getDate()+'일('+WD[d.getDay()]+')'; }
@@ -3402,7 +3590,9 @@ function paintViewer(){
     </div></section>
 
     <section class="panel"><div class="panel-h"><h3>공정 일정</h3><span class="muted small">보기 전용입니다</span></div>
-      ${r?`<div class="gantt">${ganttBars(tasks,r,SEL_DAY,VSEL_TASK)}</div>
+      ${r?`${(payload.rows||[]).length
+        ?`<div class="sh-scroll">${schedTable({rows:payload.rows,tasks:tasks,schedStart:payload.schedStart,schedDays:payload.schedDays},true)}</div>`
+        :`<div class="gantt">${ganttBars(tasks,r,SEL_DAY,VSEL_TASK)}</div>`}
       ${SEL_DAY?dayPanel(tasks.filter(t=>onDay(t,SEL_DAY)).map(t=>({t})),SEL_DAY,{showMemo:payload.showMemo,pick:true}):''}
       ${vTaskPanel(payload)}`
       :'<div class="panel-b"><p class="muted small" style="margin:0">아직 등록된 일정이 없습니다.</p></div>'}
@@ -4001,6 +4191,15 @@ document.addEventListener('input',ev=>{
     const hint=document.getElementById(`o-p${pi}-unit`); if(hint) hint.textContent=areaHint(t.value);
     recalc(); return;
   }
+  if(t.dataset?.srow!==undefined){                  // 공정 줄 이름
+    const p=curProj(); if(p){ ensureRows(p); p.rows[+t.dataset.srow]=t.value; saveProj(p); renumberSched(); }
+    return;
+  }
+  if(t.dataset?.slab!==undefined){                  // 막대 아래 업체 이름
+    const p=curProj(); const tk=(p?.tasks||[]).find(x=>x.id===t.dataset.slab);
+    if(tk){ tk.name=t.value; t.size=Math.max(4,t.value.length); saveProj(p); }
+    return;
+  }
   const b=t.dataset?.bind; if(!b) return;
   let val = t.type==='checkbox' ? t.checked : t.value;
   if('num' in t.dataset) val=num(val);
@@ -4051,7 +4250,9 @@ document.addEventListener('input',ev=>{
       toast('종료일은 시작일보다 앞설 수 없습니다');
     }
     saveProj(p);
-    const g=document.querySelector('.gantt'); if(g) g.innerHTML=ganttHTML(p,projRange(p)); }
+    const g=document.querySelector('.gantt'); if(g) g.innerHTML=ganttHTML(p,projRange(p));
+    if(rest[1]==='name'){ const lb=document.querySelector('.sh .lab[data-slab="'+t.id+'"]'); if(lb&&lb!==ev.target) lb.value=val; }
+    else if(['start','end','status'].includes(rest[1])) repaintSched(); }
   else if(kind==='file'){ const p=curProj(); const f=(p?.files||[]).find(x=>x.id===rest[0]); if(!f) return; f[rest[1]]=val; saveProj(p);
     if(rest[1]==='folderId' || rest[1]==='shared') render(); }
   else if(kind==='exfile'){ const p=curProj(); const f=(p?.excel||[]).find(x=>x.id===rest[0]); if(!f) return; f[rest[1]]=val; saveProj(p);
@@ -4137,6 +4338,8 @@ document.addEventListener('change',ev=>{
   if(a==='revProc'&&t.value){ IMPORT.items.forEach(x=>{ if(x.on) x.process=t.value; }); saveImportDraft(true); render(); }
   if(a==='revUnitAll'&&t.value){ IMPORT.items.forEach((x,i)=>{ if(x.on){ x.unit=t.value; CUSTOM_UNIT_REV.delete(i); } }); saveImportDraft(true); render(); }
   if(t.id==='ct-amount'){ render(); return; }   // 공사대금을 고치면 지급 일정도 다시 나눠 보여줍니다
+  if(a==='schedFrom'){ const p=curProj(); if(p&&t.value){ p.schedStart=t.value; saveProj(p); render(); } return; }
+  if(a==='schedDays'){ const p=curProj(); if(p){ p.schedDays=Math.max(7,Math.min(150,+t.value||33)); saveProj(p); render(); } return; }
   if(a==='pickProj'){ selectSite(t.value); render(); }
   if(a==='excelPick'){ const p=curProj(); const f=(p?.excel||[]).find(x=>x.id===t.value); EXCEL_SEL=t.value; showExcel(f); }
   if(a==='autoLogin'){ ls.set('autoLogin',t.checked?'1':'0'); if(!t.checked) ls.set('autoPw',null);
@@ -4468,6 +4671,12 @@ document.addEventListener('click',async ev=>{
       saveProj(p); render();
       setTimeout(()=>document.querySelector('[data-act="moveTask"][data-ti="'+j+'"][data-d="'+d+'"]')?.focus(),60);
       break; }
+    case 'schedRowAdd': schedRowAdd(+t.dataset.ri); break;
+    case 'schedRowDel': await schedRowDel(+t.dataset.ri); break;
+    case 'schedKind': { const id=t.dataset.id||'', k=t.dataset.k;
+      if(id){ const p=curProj(); const tk=(p?.tasks||[]).find(x=>x.id===id); if(tk){ tk.kind=k; saveProj(p); render(); } }
+      else { SKIND=k; ls.set('skind',k); render(); }
+      break; }
     case 'sortTasks': { const p=curProj(); p.tasks.sort((a,b)=>String(a.start||'').localeCompare(String(b.start||''))); saveProj(p); render(); break; }
     case 'openSite': HUB_GALLERY=false; HOME_SEL=t.dataset.id; selectSite(t.dataset.id); VIEW='home'; ls.set('view',VIEW); render(); window.scrollTo(0,0); break;
     case 'saveTempTpl': { const p=e.processes[+t.dataset.pi];
@@ -4550,6 +4759,7 @@ document.addEventListener('click',async ev=>{
       if(g&&p){ const keep=g.querySelector('.gantt-scroll')?.scrollLeft||0;
         g.innerHTML=ganttHTML(p,projRange(p));
         const s=g.querySelector('.gantt-scroll'); if(s) s.scrollLeft=keep; }
+      else render();
       break; }
     case 'selDay': { const d=t.dataset.d||''; SEL_DAY = (!d||d===SEL_DAY) ? null : d; VSEL_TASK=''; SEL_TASK='';
       if(window.__viewerMode) paintViewer(); else render();

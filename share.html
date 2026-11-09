@@ -99,6 +99,34 @@ body.noscroll{overflow:hidden;position:fixed;width:100%}
   .gx td.c i{background:#26322d}.gx td.c.on i{background:#39614f}
   .note,.det{background:#1e2823}
 }
+/* 공정 일정표 (엑셀 모양) */
+.shw{overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:10px}
+table.sh{border-collapse:collapse;table-layout:fixed}
+table.sh th,table.sh td{border:1px solid var(--line2);padding:0;text-align:center;font-size:12px}
+table.sh th.hcorner{background:#FBE9D8;color:#8A5A20;font-weight:700;font-size:12.5px}
+table.sh col.cno{width:30px} table.sh col.cname{width:132px} table.sh col.cday{width:32px}
+table.sh th.hday{background:var(--surface);font-weight:700;height:22px;cursor:pointer}
+table.sh th.hwd{height:19px;font-weight:700;color:var(--mut);cursor:pointer}
+table.sh th.sat,table.sh td.sat{background:#DCEBF7}
+table.sh th.sun,table.sh td.sun{background:#F8DEDA}
+table.sh th.sat,table.sh th.sun{color:#1B2220}
+table.sh th.tdy{box-shadow:inset 0 -3px 0 var(--accent)}
+table.sh th.seld{background:var(--accent);color:#fff}
+table.sh td.cell{height:32px;position:relative;background:var(--surface)}
+table.sh tr:nth-child(even) td.cell{background:rgba(0,0,0,.025)}
+table.sh td.no{background:var(--surface);font-weight:700;color:var(--mut)}
+table.sh td.nm{background:var(--surface);text-align:left;padding:5px 7px;font-weight:600;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+table.sh .bar{position:absolute;left:0;top:3px;height:9px;border-radius:2px;background:#1A7AC4;z-index:2;cursor:pointer}
+table.sh .bar.done{opacity:.45}
+table.sh .bar.on{box-shadow:0 0 0 2px var(--ink,#1B2220)}
+table.sh .lab{position:absolute;top:13px;left:1px;z-index:2;font-size:11px;font-weight:700;white-space:nowrap;padding:1px 2px}
+@media(prefers-color-scheme:dark){
+  table.sh th.hcorner{background:#3a2f22;color:#e8c89a}
+  table.sh th.sat,table.sh td.sat{background:#1e2c38}
+  table.sh th.sun,table.sh td.sun{background:#36231f}
+  table.sh th.sat,table.sh th.sun{color:#e7ece9}
+  table.sh tr:nth-child(even) td.cell{background:rgba(255,255,255,.03)}
+}
 </style>
 </head>
 <body>
@@ -150,6 +178,55 @@ body.noscroll{overflow:hidden;position:fixed;width:100%}
     xhr.send(JSON.stringify({p_token:token}));
   }
 
+  /* 공정 일정표 — 보내주신 그대로, 보기만 됩니다 */
+  function shTable(tasks){
+    var rows=P.rows||[], i, ds=[];
+    tasks.forEach(function(t){ var a=dnum(t.start); if(a) ds.push(a); var b=dnum(t.end); if(b) ds.push(b); });
+    if(!ds.length) return '';
+    var from=Math.min.apply(null,ds), to=Math.max.apply(null,ds);
+    var st=P.schedStart?dnum(P.schedStart):0; if(!st) st=from-2*DAY;
+    var n=+P.schedDays||0; if(!n) n=Math.round((to-st)/DAY)+3;
+    if(n<7) n=7; if(n>150) n=150;
+    var D=[]; for(i=0;i<n;i++){ var d=new Date(st+i*DAY); D.push({i:i,d:d,wd:d.getUTCDay(),key:dstr(st+i*DAY)}); }
+    var tN=todayN(), tKey=dstr(tN);
+    var wc=function(w){ return w===0?' sun':w===6?' sat':''; };
+    var h='<colgroup><col class="cno"><col class="cname">';
+    for(i=0;i<n;i++) h+='<col class="cday">';
+    h+='</colgroup>';
+    h+='<tr><th class="hcorner" rowspan="2" colspan="2">공 정 내 용</th>';
+    D.forEach(function(x){
+      h+='<th class="hday'+wc(x.wd)+(x.key===tKey?' tdy':'')+(x.key===SELD?' seld':'')+'" data-day="'+x.key+'">'
+        + ((x.i===0||x.d.getUTCDate()===1)?(x.d.getUTCMonth()+1)+'.'+x.d.getUTCDate():x.d.getUTCDate())+'</th>';
+    });
+    h+='</tr><tr>';
+    D.forEach(function(x){ h+='<th class="hwd'+wc(x.wd)+(x.key===SELD?' seld':'')+'" data-day="'+x.key+'">'+WD[x.wd]+'</th>'; });
+    h+='</tr>';
+    var num=0;
+    (rows.length?rows:['']).forEach(function(nm,ri){
+      var no=String(nm||'').replace(/^\s+|\s+$/g,'')?++num:'';
+      h+='<tr><td class="no">'+no+'</td><td class="nm">'+esc(nm||'')+'</td>';
+      D.forEach(function(x){
+        var inner='';
+        tasks.forEach(function(t){
+          if((t.row|0)!==ri) return;
+          var a=dnum(t.start); if(!a) return;
+          var b=dnum(t.end)||a;
+          var s0=Math.round((a-st)/DAY), e0=Math.round((b-st)/DAY);
+          if(e0<0||s0>n-1) return;
+          var s2=Math.max(0,s0), e2=Math.min(n-1,e0);
+          if(s2!==x.i) return;
+          var w=e2-s2+1;
+          inner+='<span class="bar'+(t.status==='완료'?' done':'')+(t.id===SELB?' on':'')
+            +'" style="width:calc('+(w*100)+'% + '+(w-1)+'px)" data-bar="'+esc(t.id)+'" title="'+esc(t.name||'')+'"></span>';
+          if(t.name) inner+='<span class="lab" data-bar="'+esc(t.id)+'">'+esc(t.name)+'</span>';
+        });
+        h+='<td class="cell'+wc(x.wd)+'" data-day="'+x.key+'">'+inner+'</td>';
+      });
+      h+='</tr>';
+    });
+    return '<div class="shw"><table class="sh">'+h+'</table></div>';
+  }
+
   function paint(){
     if(P.closed){
       show('<div class="card"><div class="mid"><h1>공사가 끝났습니다</h1>'
@@ -172,6 +249,10 @@ body.noscroll{overflow:hidden;position:fixed;width:100%}
     var ds=tasks.map(function(t){return dnum(t.start);}).filter(Boolean)
       .concat(tasks.map(function(t){return dnum(t.end);}).filter(Boolean));
     if(!ds.length){ h+='<p class="small muted">아직 등록된 일정이 없습니다.</p>'; }
+    else if((P.rows||[]).length){
+      h+=shTable(tasks);
+      h+= SELD ? dayPanel(tasks) : '<p class="small muted" style="margin:12px 0 0">날짜를 누르면 그날 작업과 사진을 볼 수 있습니다.</p>';
+    }
     else{
       var from=Math.min.apply(null,ds), to=Math.max.apply(null,ds), tN=todayN();
       var cols=[]; for(var d=from; d<=to; d+=DAY) cols.push(d);
@@ -254,7 +335,7 @@ body.noscroll{overflow:hidden;position:fixed;width:100%}
       items.forEach(function(t){
         h+='<li class="'+(SELT===t.id?'on':'')+'" data-task="'+esc(t.id)+'"><div class="row">'
           +'<span class="badge'+(t.status==='완료'?' good':' warn')+'">'+esc(t.status||'예정')+'</span>'
-          +'<b>'+esc(t.name)+'</b>'
+          +'<b>'+esc(((P.rows||[])[t.row|0]||'')+(t.name?' · '+t.name:''))+'</b>'
           +'<span class="small muted">'+esc(t.worker||'담당 미정')+'</span>'
           +'<span class="go">'+(SELT===t.id?'▾':'사진·안내 ›')+'</span></div>'
           + (SELT===t.id?detail(t):'') +'</li>';
