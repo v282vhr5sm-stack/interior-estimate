@@ -183,10 +183,10 @@ table.sh .lab{position:absolute;top:13px;left:1px;z-index:2;font-size:11px;font-
     var rows=P.rows||[], i, ds=[];
     tasks.forEach(function(t){ var a=dnum(t.start); if(a) ds.push(a); var b=dnum(t.end); if(b) ds.push(b); });
     if(!ds.length) return '';
+    /* 일정이 있는 날짜만 — 앞뒤 빈 칸은 안 보입니다 */
     var from=Math.min.apply(null,ds), to=Math.max.apply(null,ds);
-    var st=P.schedStart?dnum(P.schedStart):0; if(!st) st=from-2*DAY;
-    var n=+P.schedDays||0; if(!n) n=Math.round((to-st)/DAY)+3;
-    if(n<7) n=7; if(n>150) n=150;
+    var st=from, n=Math.round((to-from)/DAY)+1;
+    if(n<1) n=1; if(n>400) n=400;
     var D=[]; for(i=0;i<n;i++){ var d=new Date(st+i*DAY); D.push({i:i,d:d,wd:d.getUTCDay(),key:dstr(st+i*DAY)}); }
     var tN=todayN(), tKey=dstr(tN);
     var wc=function(w){ return w===0?' sun':w===6?' sat':''; };
@@ -218,13 +218,13 @@ table.sh .lab{position:absolute;top:13px;left:1px;z-index:2;font-size:11px;font-
           var w=e2-s2+1;
           inner+='<span class="bar'+(t.status==='완료'?' done':'')+(t.id===SELB?' on':'')
             +'" style="width:calc('+(w*100)+'% + '+(w-1)+'px)" data-bar="'+esc(t.id)+'" title="'+esc(t.name||'')+'"></span>';
-          if(t.name) inner+='<span class="lab" data-bar="'+esc(t.id)+'">'+esc(t.name)+'</span>';
+          if(t.name&&t.id===SELB) inner+='<span class="lab" data-bar="'+esc(t.id)+'">'+esc(t.name)+'</span>';
         });
         h+='<td class="cell'+wc(x.wd)+'" data-day="'+x.key+'">'+inner+'</td>';
       });
       h+='</tr>';
     });
-    return '<div class="shw"><table class="sh">'+h+'</table></div>';
+    return '<div class="shw"><p class="small muted" style="margin:0 0 7px">색 막대를 누르면 어느 업체인지 보입니다.</p><table class="sh">'+h+'</table></div>';
   }
 
   function paint(){
@@ -334,7 +334,7 @@ table.sh .lab{position:absolute;top:13px;left:1px;z-index:2;font-size:11px;font-
       h+='<ul class="tl">';
       items.forEach(function(t){
         h+='<li class="'+(SELT===t.id?'on':'')+'" data-task="'+esc(t.id)+'"><div class="row">'
-          +'<span class="badge'+(t.status==='완료'?' good':' warn')+'">'+esc(t.status||'예정')+'</span>'
+          
           +'<b>'+esc(((P.rows||[])[t.row|0]||'')+(t.name?' · '+t.name:''))+'</b>'
           +(t.worker?'<span class="small muted">'+esc(t.worker)+'</span>':'')
           +'<span class="go">'+(SELT===t.id?'▾':'사진·안내 ›')+'</span></div>'

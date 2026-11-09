@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '6.7.0';
+const APP_VERSION = '6.8.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -3106,6 +3106,8 @@ function ensureRows(p,view){
 /* 표에 보일 기간 (시작일 · 며칠) */
 function schedWin(p,view){
   const r=projRange(p);
+  /* 고객 화면은 일정이 있는 칸만 — 앞뒤 빈 날짜는 안 보입니다 */
+  if(view) return r ? {s:r.from, n:Math.max(1,Math.min(400,Math.round((r.to-r.from)/DAY)+1))} : {s:dnum(today()),n:1};
   let s=p.schedStart?dnum(p.schedStart):null;
   if(!s) s=(r?r.from:dnum(today()))-2*DAY;
   let n=+p.schedDays||0;
@@ -3131,7 +3133,7 @@ function schedBarsAt(p,ri,ci,W,view){
     const tip=[t.name||'일정',taskDateText(t),t.worker||'',t.memo||''].filter(Boolean).join(' · ');
     h+=`<button class="bar${SEL_TASK===t.id?' on':''}${past?' done':''}" style="width:calc(${w*100}% + ${w-1}px);background:${col}" data-act="${view?'vTask':'selTask'}" data-id="${esc(t.id)}" title="${esc(tip)}"></button>`;
     h+= view
-      ? (t.name?`<span class="lab">${esc(t.name)}</span>`:'')
+      ? (t.name&&VSEL_TASK===t.id?`<span class="lab vlab">${esc(t.name)}</span>`:'')
       : `<input class="lab" value="${esc(t.name||'')}" data-slab="${esc(t.id)}" size="${Math.max(4,String(t.name||'').length)}" placeholder="업체" title="업체 이름을 적습니다">`;
   });
   return h;
@@ -3159,9 +3161,10 @@ function schedTable(p,view){
 /* 색 고르기 · 기간 */
 function schedTools(p){
   const W=schedWin(p);
+  const sel=(p.tasks||[]).find(x=>x.id===SEL_TASK);
   return `<div class="panel-h sh-tools no-print">
-    <span class="small muted" style="font-weight:600">새 일정 색</span>
-    <div class="pal">${kindPal('',SKIND)}</div>
+    <span class="small muted" style="font-weight:600">${sel?'이 일정 색':'새 일정 색'}</span>
+    <div class="pal">${kindPal('',sel?sel.kind:SKIND)}</div>
     <span class="spacer"></span>
     <label class="row small" style="gap:5px">시작<input class="f sm" type="date" data-act-change="schedFrom" value="${dstr(W.s)}" style="width:auto"></label>
     <label class="row small" style="gap:5px">일수<input class="f sm" type="number" min="7" max="150" data-act-change="schedDays" value="${W.n}" style="width:70px"></label>
@@ -3173,16 +3176,20 @@ function schedTaskPanel(p){
   const ti=(p.tasks||[]).indexOf(t);
   const nph=(p.files||[]).filter(f=>f.taskId===t.id).length;
   return `<div class="panel-b sbar no-print"><div class="sbox">
-      <b class="sbox-t">${esc((p.rows||[])[t.row|0]||'공정')}</b>
-      <input class="f sm sbox-nm" data-bind="task:${ti}:name" value="${esc(t.name||'')}" placeholder="업체 이름">
-      <input class="f sm sbox-d" type="date" data-bind="task:${ti}:start" value="${esc(t.start||'')}">
-      <span class="muted">~</span>
-      <input class="f sm sbox-d" type="date" data-bind="task:${ti}:end" value="${esc(t.end||'')}" min="${esc(t.start||'')}">
-      <input class="f sm sbox-m" data-bind="task:${ti}:memo" value="${esc(t.memo||'')}" placeholder="메모">
-      <button class="btn sm" data-act="taskPhoto" data-ti="${ti}">📷 사진${nph?' '+nph:''}</button>
-      <button class="btn sm" data-act="sendTask" data-tid="${esc(t.id)}">📨 보내기</button>
-      <button class="btn ghost sm danger" data-act="delTask" data-ti="${ti}">✕ 지우기</button>
-      <button class="btn ghost sm" data-act="selTask" data-id="">닫기</button>
+      <div class="sbox-r">
+        <b class="sbox-t"><i class="kd" style="background:${SKMAP[t.kind]||SKMAP['시공']}"></i>${esc((p.rows||[])[t.row|0]||'공정')}</b>
+        <input class="f sm sbox-nm" data-bind="task:${ti}:name" value="${esc(t.name||'')}" placeholder="업체 이름">
+        <input class="f sm sbox-d" type="date" data-bind="task:${ti}:start" value="${esc(t.start||'')}">
+        <span class="muted">~</span>
+        <input class="f sm sbox-d" type="date" data-bind="task:${ti}:end" value="${esc(t.end||'')}" min="${esc(t.start||'')}">
+        <button class="btn ghost sm danger" data-act="delTask" data-ti="${ti}">✕ 지우기</button>
+        <button class="btn ghost sm" data-act="selTask" data-id="">닫기</button>
+      </div>
+      <div class="sbox-r">
+        <input class="f sm sbox-m" data-bind="task:${ti}:memo" value="${esc(t.memo||'')}" placeholder="메모">
+        <button class="btn sm" data-act="taskPhoto" data-ti="${ti}">📷 사진${nph?' '+nph:''}</button>
+        <button class="btn sm" data-act="sendTask" data-tid="${esc(t.id)}">📨 보내기</button>
+      </div>
     </div></div>`;
 }
 /* 표만 다시 그립니다 (글 쓰던 자리를 지킵니다) */
@@ -3274,6 +3281,16 @@ document.addEventListener('keydown',ev=>{
   ev.preventDefault();
   p.tasks.splice(i,1); SEL_TASK=''; saveProj(p); render(); toast('일정을 지웠습니다');
 });
+/* 이 칸에 이미 들어 있는 일정 */
+function barCover(p,r,ci,W){
+  return (p.tasks||[]).find(t=>{
+    if((t.row|0)!==r) return null;
+    const a=dnum(t.start); if(!a) return null;
+    const b=dnum(t.end)||a;
+    const s=Math.round((a-W.s)/DAY), e=Math.round((b-W.s)/DAY);
+    return ci>=s&&ci<=e;
+  })||null;
+}
 /* 칸을 끌어서 새 일정 만들기 */
 let SDRAG=null, SJUST=false;
 function paintSDrag(){
@@ -3285,8 +3302,13 @@ function paintSDrag(){
 function newBar(r,s,e){
   const p=curProj(); if(!p) return;
   ensureRows(p); const W=schedWin(p);
-  const t={id:uid(),row:r,proc:'',kind:SKIND,name:'',start:dstr(W.s+Math.min(s,e)*DAY),end:dstr(W.s+Math.max(s,e)*DAY),worker:'',status:'예정',memo:''};
-  p.tasks=p.tasks||[]; p.tasks.push(t); SEL_TASK=t.id; saveProj(p); render();
+  let a=Math.min(s,e), b=Math.max(s,e);
+  /* 이미 일정이 있으면 덮어쓰지 않고 그 일정을 고릅니다 */
+  const hit=barCover(p,r,a,W);
+  if(hit){ SEL_TASK=hit.id; SEL_DAY=null; SEL_ROW=null; render(); return; }
+  for(let i=a+1;i<=b;i++){ if(barCover(p,r,i,W)){ b=i-1; break; } }
+  const t={id:uid(),row:r,proc:'',kind:SKIND,name:'',start:dstr(W.s+a*DAY),end:dstr(W.s+b*DAY),worker:'',status:'예정',memo:''};
+  p.tasks=p.tasks||[]; p.tasks.push(t); SEL_TASK=t.id; SEL_DAY=null; SEL_ROW=null; saveProj(p); render();
   setTimeout(()=>{ const el=document.querySelector('.sh .lab[data-slab="'+t.id+'"]'); if(el){ el.focus(); el.select?.(); } },70);
 }
 document.addEventListener('pointerdown',ev=>{
@@ -3480,6 +3502,52 @@ function dayPanel(items,key,opts={}){
     </li>`).join('')}</ul>`:'<p class="muted small" style="margin:8px 0 0">이 날은 잡힌 작업이 없습니다.</p>'}
   </div>`;
 }
+let MON_SEL='';
+/* 전체 달력에서 그날 작업 — 현장 색으로 묶고, 여기서 바로 고칩니다 (공정 줄 이름은 못 고칩니다) */
+function monthDayPanel(items,key){
+  const d=new Date(dnum(key));
+  return `<div class="dayp">
+    <div class="row"><b>${d.getMonth()+1}월 ${d.getDate()}일 (${WD[d.getDay()]}) 작업</b>
+      <span class="muted small">${items.length?items.length+'건':'작업 없음'}</span>
+      <span class="spacer"></span><button class="btn ghost sm" data-act="selDay" data-d="">닫기</button></div>
+    ${items.length?`<ul class="monl">${items.map(({t,p,pi})=>`<li class="c${pi%6}${MON_SEL===t.id?' on':''}">
+      <button class="mpick" data-act="monTask" data-id="${esc(t.id)}" data-pid="${esc(p.id)}">
+        <i class="kd" style="background:${SKMAP[t.kind]||SKMAP['시공']}"></i>
+        <b>${esc(siteName(p))}</b>
+        <span class="mproc">${esc((p.rows||[])[t.row|0]||'공정 없음')}</span>
+        <span class="mkind">${esc(kindLabel(t.kind||'시공'))}</span>
+        ${t.name?`<span>${esc(t.name)}</span>`:''}
+        <span class="spacer"></span>
+        <span class="muted small">${esc(taskDateText(t))}</span>
+        <span class="muted small">${MON_SEL===t.id?'▾':'고치기 ›'}</span>
+      </button>
+      ${MON_SEL===t.id?monBox(p,t):''}
+    </li>`).join('')}</ul>`:'<p class="muted small" style="margin:8px 0 0">이 날은 잡힌 작업이 없습니다.</p>'}
+  </div>`;
+}
+function monBox(p,t){
+  const nph=(p.files||[]).filter(f=>f.taskId===t.id).length;
+  const b=`mtask:${esc(p.id)}:${esc(t.id)}`;
+  return `<div class="sbox mbox">
+    <div class="sbox-r">
+      <b class="sbox-t">${esc((p.rows||[])[t.row|0]||'공정')}</b>
+      <div class="pal">${kindPal(t.id,t.kind)}</div>
+    </div>
+    <div class="sbox-r">
+      <input class="f sm sbox-nm" data-bind="${b}:name" value="${esc(t.name||'')}" placeholder="업체 이름">
+      <input class="f sm sbox-d" type="date" data-bind="${b}:start" value="${esc(t.start||'')}">
+      <span class="muted">~</span>
+      <input class="f sm sbox-d" type="date" data-bind="${b}:end" value="${esc(t.end||'')}" min="${esc(t.start||'')}">
+      <button class="btn ghost sm danger" data-act="monDel" data-id="${esc(t.id)}" data-pid="${esc(p.id)}">✕ 지우기</button>
+      <button class="btn ghost sm" data-act="monTask" data-id="">닫기</button>
+    </div>
+    <div class="sbox-r">
+      <input class="f sm sbox-m" data-bind="${b}:memo" value="${esc(t.memo||'')}" placeholder="메모">
+      <button class="btn sm" data-act="taskPhoto" data-tid="${esc(t.id)}">📷 사진${nph?' '+nph:''}</button>
+      <button class="btn sm" data-act="sendTask" data-tid="${esc(t.id)}">📨 보내기</button>
+    </div>
+  </div>`;
+}
 function renderMonth(){
   const [y,m]=MONTH.split('-').map(Number);
   const first=new Date(y,m-1,1), start=new Date(first); start.setDate(1-first.getDay());
@@ -3502,12 +3570,13 @@ function renderMonth(){
       ${['일','월','화','수','목','금','토'].map((d,i)=>`<div class="cal-h${i===0?' sun':i===6?' sat':''}">${d}</div>`).join('')}
       ${cells.map(c=>`<div class="cal-d${c.other?' out':''}${c.key===todayKey?' today':''}${c.key===SEL_DAY?' sel':''}" data-act="selDay" data-d="${c.key}">
         <span class="cal-n">${c.d.getDate()}</span>
-        ${c.items.slice(0,4).map(({p,task,pi})=>`<span class="cal-i c${pi%6}" title="${esc(siteName(p))} · ${esc(task.name)}${task.worker?' · '+esc(task.worker):''}">${esc(siteName(p))} ${esc(task.name)}</span>`).join('')}
+        ${c.items.slice(0,4).map(({p,task,pi})=>{ const rn=(p.rows||[])[task.row|0]||'', kl=kindLabel(task.kind||'시공');
+          return `<span class="cal-i c${pi%6}" title="${esc(siteName(p))} · ${esc(rn)} · ${esc(kl)}${task.name?' · '+esc(task.name):''}"><i class="kd" style="background:${SKMAP[task.kind]||SKMAP['시공']}"></i>${esc(siteName(p))} ${esc(rn||task.name)}</span>`; }).join('')}
         ${c.items.length>4?`<span class="cal-i more">+${c.items.length-4}</span>`:''}
       </div>`).join('')}
     </div>
-    ${SEL_DAY?`<div class="panel-b" style="padding-top:12px">${dayPanel(
-      projs.flatMap(p=>(p.tasks||[]).filter(t=>onDay(t,SEL_DAY)).map(t=>({t,p}))),SEL_DAY,{showProject:true})}</div>`:''}
+    ${SEL_DAY?`<div class="panel-b" style="padding-top:12px">${monthDayPanel(
+      projs.flatMap((p,pi)=>(p.tasks||[]).filter(t=>onDay(t,SEL_DAY)).map(t=>({t,p,pi}))),SEL_DAY)}</div>`:''}
     ${projs.length?`<div class="panel-b row small">${projs.map((p,i)=>`<span class="legend c${i%6}">${esc(siteName(p))}</span>`).join('')}</div>`:'<div class="empty">현장을 먼저 만들어주세요.</div>'}
   </section>`;
 }
@@ -4322,6 +4391,12 @@ document.addEventListener('input',ev=>{
     const g=document.querySelector('.gantt'); if(g) g.innerHTML=ganttHTML(p,projRange(p));
     if(rest[1]==='name'){ const lb=document.querySelector('.sh .lab[data-slab="'+t.id+'"]'); if(lb&&lb!==ev.target) lb.value=val; }
     else if(['start','end'].includes(rest[1])) repaintSched(); }
+  else if(kind==='mtask'){                              // 전체 달력에서 고치기
+    const p=S.projects.get(rest[0]); const tk=(p?.tasks||[]).find(x=>x.id===rest[1]); if(!tk) return;
+    tk[rest[2]]=val;
+    if(rest[2]==='start' && val) tk.end=val;
+    if(rest[2]==='end' && tk.start && val && dnum(val)<dnum(tk.start)){ tk.end=tk.start; toast('종료일은 시작일보다 앞설 수 없습니다'); }
+    saveProj(p); }
   else if(kind==='file'){ const p=curProj(); const f=(p?.files||[]).find(x=>x.id===rest[0]); if(!f) return; f[rest[1]]=val; saveProj(p);
     if(rest[1]==='folderId' || rest[1]==='shared') render(); }
   else if(kind==='exfile'){ const p=curProj(); const f=(p?.excel||[]).find(x=>x.id===rest[0]); if(!f) return; f[rest[1]]=val; saveProj(p);
@@ -4399,6 +4474,7 @@ document.addEventListener('change',ev=>{
     return;
   }
   if(t.dataset?.unitsel||t.dataset?.vendorpick!==undefined||t.dataset?.matvendor||t.dataset?.procvendor!==undefined||t.dataset?.lineunit||t.dataset?.linevendor||t.dataset?.linemat){ handleSelectChange(t); return; }
+  if((t.dataset?.bind||'').startsWith('mtask:')){ if(/:(start|end)$/.test(t.dataset.bind)) render(); return; }
   if(!a) return;
   if(a==='pick'){ setCur(t.value); render(); }
   if(a==='addLine'&&t.value){ const e=cur(), p=e.processes[+t.dataset.pi], m=S.materials.get(t.value); if(m){ p.lines.push(lineFromMat(m)); saveEst(e); render(); } }
@@ -4743,8 +4819,9 @@ document.addEventListener('click',async ev=>{
     case 'schedRowAdd': schedRowAdd(SEL_ROW!=null?SEL_ROW:+t.dataset.ri); break;
     case 'schedRowDel': await schedRowDel(+t.dataset.ri); break;
     case 'schedKind': { const id=t.dataset.id||'', k=t.dataset.k;
-      if(id){ const p=curProj(); const tk=(p?.tasks||[]).find(x=>x.id===id); if(tk){ tk.kind=(tk.kind===k&&k!=='시공')?'시공':k; saveProj(p); render(); } }
-      else { SKIND=(SKIND===k&&k!=='시공')?'시공':k; ls.set('skind',SKIND); render(); }
+      { const p=curProj(); const tk=(p?.tasks||[]).find(x=>x.id===(id||SEL_TASK));
+        if(tk){ tk.kind=(tk.kind===k&&k!=='시공')?'시공':k; saveProj(p); render(); }
+        else { SKIND=(SKIND===k&&k!=='시공')?'시공':k; ls.set('skind',SKIND); render(); } }
       break; }
     case 'sortTasks': { const p=curProj(); p.tasks.sort((a,b)=>String(a.start||'').localeCompare(String(b.start||''))); saveProj(p); render(); break; }
     case 'openSite': HUB_GALLERY=false; HOME_SEL=t.dataset.id; selectSite(t.dataset.id); VIEW='home'; ls.set('view',VIEW); render(); window.scrollTo(0,0); break;
@@ -4814,7 +4891,7 @@ document.addEventListener('click',async ev=>{
     case 'purgeProj': archiveProject(curProj(),true); break;
     case 'delTask': { const p=curProj(); p.tasks.splice(+t.dataset.ti,1); saveProj(p); render(); break; }
     case 'pickPlan': PLAN_TASK=''; $('#filePlan').click(); break;
-    case 'taskPhoto': { const p=curProj(); PLAN_TASK=p.tasks[+t.dataset.ti]?.id||''; PLAN_FOLDER=''; $('#filePlan').setAttribute('accept','image/*'); $('#filePlan').click(); break; }
+    case 'taskPhoto': { const p=curProj(); PLAN_TASK=t.dataset.tid||p.tasks[+t.dataset.ti]?.id||''; PLAN_FOLDER=''; $('#filePlan').setAttribute('accept','image/*'); $('#filePlan').click(); break; }
     case 'delPlan': removePlan(curProj(),t.dataset.fid); break;
     case 'copyShare': copyShare(curProj(), t.dataset.only==='1'); break;
     case 'sendTask': sendTaskById(t.dataset.tid||''); break;
@@ -4831,7 +4908,16 @@ document.addEventListener('click',async ev=>{
         const s=g.querySelector('.gantt-scroll'); if(s) s.scrollLeft=keep; }
       else render();
       break; }
-    case 'selDay': { const d=t.dataset.d||''; SEL_DAY = (!d||d===SEL_DAY) ? null : d; VSEL_TASK=''; SEL_TASK=''; SEL_ROW=null;
+    case 'monTask': { const id=t.dataset.id||'';
+      MON_SEL = (!id||id===MON_SEL) ? '' : id;
+      if(MON_SEL && t.dataset.pid) selectSite(t.dataset.pid);
+      render();
+      if(MON_SEL) setTimeout(()=>document.querySelector('.mbox')?.scrollIntoView({block:'nearest'}),60);
+      break; }
+    case 'monDel': { const p=S.projects.get(t.dataset.pid)||curProj(); if(!p) break;
+      const i=(p.tasks||[]).findIndex(x=>x.id===t.dataset.id); if(i<0) break;
+      p.tasks.splice(i,1); MON_SEL=''; saveProj(p); render(); toast('일정을 지웠습니다'); break; }
+    case 'selDay': { const d=t.dataset.d||''; SEL_DAY = (!d||d===SEL_DAY) ? null : d; VSEL_TASK=''; SEL_TASK=''; SEL_ROW=null; MON_SEL='';
       if(window.__viewerMode) paintViewer(); else render();
       if(SEL_DAY) setTimeout(()=>document.querySelector('.dayp')?.scrollIntoView({block:'nearest',behavior:'smooth'}),60);
       break; }
