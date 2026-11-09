@@ -336,7 +336,7 @@ table.sh .lab{position:absolute;top:13px;left:1px;z-index:2;font-size:11px;font-
         h+='<li class="'+(SELT===t.id?'on':'')+'" data-task="'+esc(t.id)+'"><div class="row">'
           +'<span class="badge'+(t.status==='완료'?' good':' warn')+'">'+esc(t.status||'예정')+'</span>'
           +'<b>'+esc(((P.rows||[])[t.row|0]||'')+(t.name?' · '+t.name:''))+'</b>'
-          +'<span class="small muted">'+esc(t.worker||'담당 미정')+'</span>'
+          +(t.worker?'<span class="small muted">'+esc(t.worker)+'</span>':'')
           +'<span class="go">'+(SELT===t.id?'▾':'사진·안내 ›')+'</span></div>'
           + (SELT===t.id?detail(t):'') +'</li>';
       });

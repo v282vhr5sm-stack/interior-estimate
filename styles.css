@@ -656,3 +656,12 @@ button.g-bar{padding:0;font:inherit;cursor:pointer;text-align:left;-webkit-appea
 .sbar-grid .span2{grid-column:span 2}
 @media(max-width:560px){ .sbar-grid{grid-template-columns:1fr 1fr} .sbar-grid .span2{grid-column:span 2} }
 @media print{ .sh-scroll{overflow:visible} .sh .lab{position:static;display:block;text-align:left} }
+
+/* 고른 일정 — 한 박스, 한 줄 */
+.sbox{display:flex;align-items:center;gap:7px;flex-wrap:wrap;border:1px solid var(--line);border-radius:10px;padding:9px 11px;background:var(--surface)}
+.sbox-t{flex:none;font-size:13.5px}
+.sbox .f{width:auto;flex:none}
+.sbox-nm{flex:1 1 120px;min-width:100px}
+.sbox-m{flex:2 1 160px;min-width:110px}
+.sbox .btn{flex:none}
+@media(max-width:560px){ .sbox-nm,.sbox-m{flex:1 1 100%} }

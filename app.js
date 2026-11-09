@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '6.6.0';
+const APP_VERSION = '6.7.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -2759,9 +2759,11 @@ function projRange(p){
   if(!ds.length) return null;
   return {from:Math.min(...ds), to:Math.max(...ds)};
 }
+/* 지난 날짜가 된 일정은 끝난 것으로 봅니다 (상태를 따로 고르지 않아도 됩니다) */
 function projProgress(p){
-  const t=p.tasks||[]; if(!t.length) return 0;
-  return Math.round(t.filter(x=>x.status==='완료').length/t.length*100);
+  const t=(p.tasks||[]).filter(x=>dnum(x.start)); if(!t.length) return 0;
+  const n=dnum(today());
+  return Math.round(t.filter(x=>(dnum(x.end)||dnum(x.start))<n).length/t.length*100);
 }
 const fileKind = f => /^image\//.test(f.type)?'img' : f.type==='application/pdf'?'pdf'
   : (/^text\//.test(f.type)||/\.(txt|md|csv|log)$/i.test(f.name))?'txt'
@@ -2797,10 +2799,10 @@ function sharePayload(p){
   /* 고객에게는 파란색 “시공”만 내보냅니다 (실측·점검·발주·양중은 우리만 봅니다) */
   const vis=(p.tasks||[]).filter(t=>(t.kind||'시공')==='시공');
   const r=projRange({tasks:vis});
-  const fin=vis.filter(t=>t.status==='완료').length;
+
   return {v:2, updatedAt:new Date().toISOString(),
     site:{name:siteName(p),address:p.address,note:p.note,client:p.client,
-      from:r?dstr(r.from):'', to:r?dstr(r.to):'', progress:vis.length?Math.round(fin/vis.length*100):0},
+      from:r?dstr(r.from):'', to:r?dstr(r.to):'', progress:projProgress({tasks:vis})},
     showMemo:p.share?.showMemo!==false,
     rows:(p.rows||[]).slice(),
     schedStart:p.schedStart||'', schedDays:+p.schedDays||0,
@@ -3125,8 +3127,9 @@ function schedBarsAt(p,ri,ci,W,view){
     const s2=Math.max(0,s), e2=Math.min(W.n-1,e);
     if(s2!==ci) return;
     const w=e2-s2+1, col=SKMAP[t.kind]||SKMAP['시공'];
+    const past=b<dnum(today());
     const tip=[t.name||'일정',taskDateText(t),t.worker||'',t.memo||''].filter(Boolean).join(' · ');
-    h+=`<button class="bar${SEL_TASK===t.id?' on':''}${t.status==='완료'?' done':''}" style="width:calc(${w*100}% + ${w-1}px);background:${col}" data-act="${view?'vTask':'selTask'}" data-id="${esc(t.id)}" title="${esc(tip)}"></button>`;
+    h+=`<button class="bar${SEL_TASK===t.id?' on':''}${past?' done':''}" style="width:calc(${w*100}% + ${w-1}px);background:${col}" data-act="${view?'vTask':'selTask'}" data-id="${esc(t.id)}" title="${esc(tip)}"></button>`;
     h+= view
       ? (t.name?`<span class="lab">${esc(t.name)}</span>`:'')
       : `<input class="lab" value="${esc(t.name||'')}" data-slab="${esc(t.id)}" size="${Math.max(4,String(t.name||'').length)}" placeholder="업체" title="업체 이름을 적습니다">`;
@@ -3169,25 +3172,17 @@ function schedTaskPanel(p){
   const t=(p.tasks||[]).find(x=>x.id===SEL_TASK); if(!t) return '';
   const ti=(p.tasks||[]).indexOf(t);
   const nph=(p.files||[]).filter(f=>f.taskId===t.id).length;
-  return `<div class="panel-b sbar no-print">
-    <div class="row"><b>${esc((p.rows||[])[t.row|0]||'공정')}</b>
-      <span class="muted small">${esc(taskDateText(t))}</span>
-      <span class="spacer"></span>
-      <button class="btn ghost sm" data-act="selTask" data-id="">닫기</button></div>
-    <div class="pal" style="margin-top:9px">${kindPal(t.id,t.kind)}</div>
-    <div class="sbar-grid">
-      <label class="fl">업체 이름<input class="f" data-bind="task:${ti}:name" value="${esc(t.name||'')}" placeholder="예: 가온"></label>
-      <label class="fl">담당<input class="f" data-bind="task:${ti}:worker" value="${esc(t.worker||'')}" placeholder="이름 · 연락처"></label>
-      <label class="fl">시작<input class="f" type="date" id="st${ti}-s" data-bind="task:${ti}:start" value="${esc(t.start||'')}"></label>
-      <label class="fl">종료<input class="f" type="date" id="st${ti}-e" data-bind="task:${ti}:end" value="${esc(t.end||'')}" min="${esc(t.start||'')}"></label>
-      <label class="fl">상태<select class="f" data-bind="task:${ti}:status">${['예정','진행','완료'].map(s=>`<option ${s===(t.status||'예정')?'selected':''}>${s}</option>`).join('')}</select></label>
-      <label class="fl span2">메모<input class="f" data-bind="task:${ti}:memo" value="${esc(t.memo||'')}" placeholder="작업자에게 전할 말"></label>
-    </div>
-    <div class="row" style="margin-top:10px">
-      <button class="btn sm" data-act="taskPhoto" data-ti="${ti}">📷 이 일정 사진${nph?' ('+nph+')':''}</button>
-      <button class="btn sm" data-act="sendTask" data-tid="${esc(t.id)}">📨 작업자에게 보내기</button>
-      <span class="spacer"></span>
-      <button class="btn ghost sm danger" data-act="delTask" data-ti="${ti}">✕ 이 일정 지우기</button>
+  return `<div class="panel-b sbar no-print"><div class="sbox">
+      <b class="sbox-t">${esc((p.rows||[])[t.row|0]||'공정')}</b>
+      <input class="f sm sbox-nm" data-bind="task:${ti}:name" value="${esc(t.name||'')}" placeholder="업체 이름">
+      <input class="f sm sbox-d" type="date" data-bind="task:${ti}:start" value="${esc(t.start||'')}">
+      <span class="muted">~</span>
+      <input class="f sm sbox-d" type="date" data-bind="task:${ti}:end" value="${esc(t.end||'')}" min="${esc(t.start||'')}">
+      <input class="f sm sbox-m" data-bind="task:${ti}:memo" value="${esc(t.memo||'')}" placeholder="메모">
+      <button class="btn sm" data-act="taskPhoto" data-ti="${ti}">📷 사진${nph?' '+nph:''}</button>
+      <button class="btn sm" data-act="sendTask" data-tid="${esc(t.id)}">📨 보내기</button>
+      <button class="btn ghost sm danger" data-act="delTask" data-ti="${ti}">✕ 지우기</button>
+      <button class="btn ghost sm" data-act="selTask" data-id="">닫기</button>
     </div></div>`;
 }
 /* 표만 다시 그립니다 (글 쓰던 자리를 지킵니다) */
@@ -3195,6 +3190,11 @@ function repaintSched(){
   const sc=document.querySelector('.sh-scroll'), p=curProj();
   if(!sc||!p) return;
   const x=sc.scrollLeft; sc.innerHTML=schedTable(p); sc.scrollLeft=x;
+  const hd=sc.closest('.panel')?.querySelector('.panel-h'), r=projRange(p);
+  if(hd){
+    const bd=hd.querySelector('.badge'); if(bd) bd.textContent='진행률 '+projProgress(p)+'%';
+    const rg=hd.querySelector('.muted.small'); if(rg) rg.textContent = r? dstr(r.from)+' ~ '+dstr(r.to)+' · '+(Math.round((r.to-r.from)/DAY)+1)+'일' : '아직 일정이 없습니다';
+  }
 }
 function renumberSched(){
   const tb=document.querySelector('.sh'); if(!tb) return;
@@ -3471,9 +3471,8 @@ function dayPanel(items,key,opts={}){
       <span class="muted small">${items.length?items.length+'건':'작업 없음'}</span>
       <span class="spacer"></span>${opts.send?`<button class="btn sm" data-act="sendDay" data-d="${esc(key)}" title="이 날 작업을 작업자에게 보내기">📨 이 날 보내기</button>`:''}<button class="btn ghost sm" data-act="selDay" data-d="">닫기</button></div>
     ${items.length?`<ul class="dayl">${items.map(({t,p})=>`<li${opts.pick?` class="pick${VSEL_TASK===t.id?' on':''}" data-act="vTask" data-id="${esc(t.id)}" role="button" tabindex="0"`:''}>
-      <span class="badge${t.status==='완료'?'':' warn'}">${esc(t.status||'예정')}</span>
-      <b>${p&&opts.showProject?esc(siteName(p))+' · ':''}${esc(t.name)}</b>
-      <span class="muted">${esc(t.worker||'담당 미정')}</span>
+      <b>${p&&opts.showProject?esc(siteName(p))+' · ':''}${p&&p.rows?esc(p.rows[t.row|0]||''):''}${p&&p.rows&&t.name?' · ':''}${esc(t.name)}</b>
+      ${t.worker?`<span class="muted">${esc(t.worker)}</span>`:''}
       <span class="muted small">${esc(t.start)}${t.end&&t.end!==t.start?' ~ '+esc(t.end):''}</span>
       ${opts.pick?`<span class="muted small pick-go">${VSEL_TASK===t.id?'▾ 열림':'사진·안내 보기 ›'}</span>`:''}
       ${t.memo&&opts.showMemo!==false&&!opts.pick?`<span class="small" style="flex-basis:100%">${esc(t.memo)}</span>`:''}
@@ -4322,7 +4321,7 @@ document.addEventListener('input',ev=>{
     saveProj(p);
     const g=document.querySelector('.gantt'); if(g) g.innerHTML=ganttHTML(p,projRange(p));
     if(rest[1]==='name'){ const lb=document.querySelector('.sh .lab[data-slab="'+t.id+'"]'); if(lb&&lb!==ev.target) lb.value=val; }
-    else if(['start','end','status'].includes(rest[1])) repaintSched(); }
+    else if(['start','end'].includes(rest[1])) repaintSched(); }
   else if(kind==='file'){ const p=curProj(); const f=(p?.files||[]).find(x=>x.id===rest[0]); if(!f) return; f[rest[1]]=val; saveProj(p);
     if(rest[1]==='folderId' || rest[1]==='shared') render(); }
   else if(kind==='exfile'){ const p=curProj(); const f=(p?.excel||[]).find(x=>x.id===rest[0]); if(!f) return; f[rest[1]]=val; saveProj(p);
