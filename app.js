@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '7.1.1';
+const APP_VERSION = '7.2.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -1862,6 +1862,7 @@ function renderQuote(p){
     <section class="panel no-print">
       <div class="panel-h"><h3>견적 만들기</h3><span class="muted small">공정 이름과 금액만 적으면 됩니다</span>
         <span class="spacer"></span>
+        <button class="btn pri sm" data-act="qRead">📄 견적서 읽어서 채우기</button>
         <button class="btn sm" data-act="qPaste">한 번에 채우기</button>
         <button class="btn sm" data-act="print">인쇄 · PDF</button></div>
       <div class="panel-b"><div class="client-grid">
@@ -1910,7 +1911,8 @@ function renderQuote(p){
       <div class="qsum"><span class="muted small">합계</span><span class="big" id="qTotal">${won(c.total)}원</span>
         <span class="spacer"></span><span class="muted small" id="qWords">금 ${krWords(c.total)}원정</span></div>
     </section>
-    <div class="doc-stage" id="docStage">${quoteDocHTML(p,q)}</div>`;
+    <div class="doc-stage" id="docStage">${quoteDocHTML(p,q)}</div>
+    ${qPickBox(p)}${qReadBox(p)}`;
 }
 function quoteDocHTML(p,q){
   const c=quoteCalc(q), co=S.company||{}, dt=krDate(q.date||today()), exp=quoteExp(q);
@@ -2136,6 +2138,173 @@ async function exportAnalXlsx(){
     setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },1500);
     toast('엑셀 파일을 내려받았습니다');
   }catch(e){ toast('엑셀을 만들지 못했습니다: '+(e.message||e)); }
+}
+
+
+/* ===== 견적서 파일을 읽어서 공정별 금액 채우기 ===== */
+let QREAD=null;                 // {busy,msg,rows:[{on,name,amt}],gwa,dansu,vat,src}
+const QR_SKIP=/합\s*계|총\s*계|총\s*액|공급가|견적서|현장|고객|연락처|일자|주소|사업자|담당|페이지|계좌|단\s*위|수\s*량|단\s*가|금\s*액|비\s*고|공사명|내\s*용/;
+const qrNum=s=>{ const m=String(s).replace(/\s/g,'').match(/-?[\d,]+/g); return m?m.map(x=>num(x)):[]; };
+function qrClean(name){
+  return String(name||'').replace(/^[\d\s.\-)]+/,'').replace(/소\s*계/g,'').replace(/[|:·\-]+$/,'').replace(/\s+/g,' ').trim();
+}
+/* 한 줄(글자)에서 공정 이름과 금액 뽑기 */
+function qFromText(txt){
+  const rows=[], out={rows,gwa:null,dansu:null,vat:null};
+  String(txt).split(/\r?\n/).forEach(raw=>{
+    const line=raw.replace(/\s+/g,' ').trim();
+    if(line.length<3) return;
+    const flat=line.replace(/\s/g,'');
+    const ns=qrNum(line).filter(n=>Math.abs(n)>=1);
+    if(/공과잡비/.test(flat)){ const p=ns.find(n=>n>0&&n<=100); if(p!=null) out.gwa=p; return; }
+    if(/^단\s*수|단수/.test(flat)){ const a=ns.map(Math.abs).filter(n=>n>=100).pop(); if(a!=null) out.dansu=a; return; }
+    if(/부가세|부\s*가\s*세|VAT/i.test(flat)){ const p=ns.find(n=>n>0&&n<=100); if(p!=null) out.vat=p; return; }
+    if(/기업이윤|이윤/.test(flat)){ const p=ns.find(n=>n>0&&n<=100); if(p!=null) out.rate=p; return; }
+    if(!/소\s*계/.test(flat)) return;                       // 공정 소계 줄만 씁니다
+    const amt=ns.filter(n=>n>=1000).pop();
+    if(!amt) return;
+    const name=qrClean(line.split(/소\s*계/)[0]);
+    if(!name||QR_SKIP.test(name.replace(/\s/g,''))) return;
+    rows.push({on:true,name,amt});
+  });
+  return out;
+}
+/* 엑셀은 칸이 나뉘어 있어 더 정확히 읽습니다 */
+function qFromCells(lines){
+  const rows=[], out={rows,gwa:null,dansu:null,vat:null};
+  lines.forEach(cells=>{
+    const txt=cells.join(' ').replace(/\s+/g,' ').trim();
+    const flat=txt.replace(/\s/g,'');
+    const nums=cells.map(c=>({t:String(c),n:qrNum(c)}));
+    const lastNum=()=>{ for(let i=cells.length-1;i>=0;i--){ const v=String(cells[i]).replace(/[,\s]/g,''); if(/^-?\d+(\.\d+)?$/.test(v)) return num(v); } return null; };
+    if(/공과잡비/.test(flat)){ const p=cells.map(c=>num(c)).find(n=>n>0&&n<=100); if(p!=null) out.gwa=p; return; }
+    if(/^단수|단수$/.test(flat)||/^단\s*수/.test(txt)){ const a=lastNum(); if(a!=null) out.dansu=Math.abs(a); return; }
+    if(/부가세/.test(flat)){ const p=cells.map(c=>num(c)).find(n=>n>0&&n<=100); if(p!=null) out.vat=p; return; }
+    if(/기업이윤|이윤/.test(flat)){ const p=cells.map(c=>num(c)).find(n=>n>0&&n<=100); if(p!=null) out.rate=p; return; }
+    if(!/소\s*계/.test(flat)) return;
+    const amt=lastNum();
+    if(!amt||Math.abs(amt)<1000) return;
+    /* 소계 칸 앞쪽에서 공정 이름을 찾습니다 */
+    let name='';
+    for(const c of cells){
+      const t=String(c).trim();
+      if(!t||/^-?[\d,.\s]+$/.test(t)||/소\s*계/.test(t.replace(/\s/g,''))) continue;
+      name=qrClean(t); if(name) break;
+    }
+    if(!name||QR_SKIP.test(name.replace(/\s/g,''))) return;
+    rows.push({on:true,name,amt});
+  });
+  return out;
+}
+async function qXlsxCells(file){
+  if(!window.ExcelJS) await loadScript('https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js');
+  const wb=new ExcelJS.Workbook(); await wb.xlsx.load(await file.arrayBuffer());
+  const lines=[];
+  wb.worksheets.forEach(ws=>ws.eachRow({includeEmpty:false},row=>{
+    const cells=[]; row.eachCell({includeEmpty:true},c=>cells.push(c.text??''));
+    if(cells.some(x=>String(x).trim())) lines.push(cells);
+  }));
+  return lines;
+}
+async function qPdfText(file){
+  if(!window.pdfjsLib) await loadScript('https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js');
+  pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+  const doc=await pdfjsLib.getDocument({data:await file.arrayBuffer()}).promise;
+  let out='';
+  for(let i=1;i<=doc.numPages;i++){
+    const pg=await doc.getPage(i), tc=await pg.getTextContent();
+    const rows={};
+    tc.items.forEach(it=>{ const y=Math.round(it.transform[5]); (rows[y]=rows[y]||[]).push(it.str); });
+    Object.keys(rows).sort((a,b)=>b-a).forEach(y=>{ out+=rows[y].join(' ')+'\n'; });
+  }
+  return out;
+}
+async function qReadFile(file,label){
+  QREAD={busy:true,msg:'파일을 여는 중입니다…',rows:[],src:label||file.name};
+  render();
+  try{
+    let res;
+    const nm=file.name||'', ty=file.type||'';
+    if(/\.(xlsx|xlsm)$/i.test(nm)){
+      QREAD.msg='엑셀을 읽는 중입니다…'; qrMsg();
+      res=qFromCells(await qXlsxCells(file));
+    }else if(/pdf/i.test(ty)||/\.pdf$/i.test(nm)){
+      QREAD.msg='PDF 글자를 읽는 중입니다…'; qrMsg();
+      res=qFromText(await qPdfText(file));
+      if(!res.rows.length) throw new Error('글자가 들어있지 않은 PDF 같습니다. 화면을 사진으로 찍어 올려주세요.');
+    }else{
+      QREAD.msg='사진에서 글자를 읽는 중입니다… 처음엔 조금 걸립니다'; qrMsg();
+      const txt=await ocrText(file,p=>{ QREAD.msg='글자 읽는 중 '+Math.round(p*100)+'%'; qrMsg(); });
+      res=qFromText(txt);
+    }
+    const wasImg = !/.(xlsx|xlsm)$/i.test(nm) && !/pdf/i.test(ty) && !/.pdf$/i.test(nm);
+    QREAD={busy:false,msg:'',src:QREAD.src,rows:res.rows,gwa:res.gwa,dansu:res.dansu,vat:res.vat,rate:res.rate};
+    if(!res.rows.length) QREAD.err = wasImg
+      ? '사진에서는 글자를 또렷하게 읽지 못했습니다. 같은 견적서를 엑셀 파일(.xlsx)로 올리시면 한 자도 안 틀리고 읽습니다.'
+      : '공정 소계 줄을 찾지 못했습니다. 금액을 직접 넣거나 「한 번에 채우기」를 써주세요.';
+    render();
+  }catch(e){
+    QREAD={busy:false,msg:'',rows:[],err:(e.message||String(e)),src:QREAD.src};
+    render();
+  }
+}
+function qrMsg(){ const el=document.getElementById('qrMsg'); if(el) el.textContent=QREAD?.msg||''; }
+async function qReadUrl(url,label){
+  try{
+    QREAD={busy:true,msg:'파일을 받아오는 중입니다…',rows:[],src:label}; render();
+    const r=await fetch(url); if(!r.ok) throw new Error('파일을 받지 못했습니다 ('+r.status+')');
+    const b=await r.blob();
+    await qReadFile(new File([b],label||'file',{type:b.type}),label);
+  }catch(e){ QREAD={busy:false,msg:'',rows:[],err:(e.message||String(e)),src:label}; render(); }
+}
+/* 읽은 결과 확인 칸 */
+function qReadBox(p){
+  if(!QREAD) return '';
+  if(QREAD.busy) return `<div class="modal"><div class="modal-b" style="width:min(460px,94vw)">
+    <b>${esc(QREAD.src||'')}</b>
+    <p class="muted small" id="qrMsg" style="margin:10px 0 0">${esc(QREAD.msg)}</p>
+    <div class="row" style="margin-top:14px;justify-content:flex-end"><button class="btn sm" data-act="qReadX">그만두기</button></div>
+  </div></div>`;
+  const n=QREAD.rows.filter(r=>r.on).length;
+  const sum=QREAD.rows.filter(r=>r.on).reduce((a,r)=>a+num(r.amt),0);
+  return `<div class="modal"><div class="modal-b" style="width:min(640px,96vw);max-height:88vh;display:flex;flex-direction:column;gap:10px">
+    <div class="row"><b style="flex:1">읽은 내용을 확인해주세요</b><span class="muted small">${esc(QREAD.src||'')}</span></div>
+    ${QREAD.err?`<p class="status">${esc(QREAD.err)}</p>`:''}
+    ${QREAD.rows.length?`<div style="overflow:auto;flex:1;min-height:0">
+      <table class="qtbl"><thead><tr><th style="width:30px"></th><th>공정</th><th class="r" style="width:140px">금액(원)</th></tr></thead>
+      <tbody>${QREAD.rows.map((r,i)=>`<tr>
+        <td style="text-align:center"><input type="checkbox" data-bind="qr:${i}:on" ${r.on?'checked':''}></td>
+        <td><input value="${esc(r.name)}" data-bind="qr:${i}:name"></td>
+        <td><input class="won" value="${won(num(r.amt))}" data-bind="qr:${i}:amt" inputmode="numeric"></td>
+      </tr>`).join('')}</tbody></table></div>
+      <div class="row small" style="background:var(--surface2);border-radius:9px;padding:9px 11px">
+        <b>고른 ${n}개 합계</b><span class="spacer"></span><b style="font-variant-numeric:tabular-nums">${won(sum)}원</b></div>
+      <div class="row small" style="gap:10px;flex-wrap:wrap">
+        <label class="row" style="gap:5px">공과잡비 %<input class="f sm" style="width:70px;text-align:right" value="${QREAD.gwa??''}" data-bind="qr:-:gwa" placeholder="없음"></label>
+        <label class="row" style="gap:5px">기업이윤 %<input class="f sm" style="width:70px;text-align:right" value="${QREAD.rate??''}" data-bind="qr:-:rate" placeholder="없음"></label>
+        <label class="row" style="gap:5px">단수 빼기<input class="f sm" style="width:90px;text-align:right" value="${QREAD.dansu??''}" data-bind="qr:-:dansu" placeholder="없음"></label>
+        <label class="row" style="gap:5px">부가세 %<input class="f sm" style="width:70px;text-align:right" value="${QREAD.vat??''}" data-bind="qr:-:vat" placeholder="없음"></label>
+      </div>`:''}
+    <div class="row" style="justify-content:flex-end">
+      <button class="btn sm" data-act="qReadX">취소</button>
+      ${QREAD.rows.length?`<button class="btn pri sm" data-act="qReadOk">이대로 채우기</button>`:''}
+    </div>
+  </div></div>`;
+}
+/* 어느 파일을 읽을지 고르기 */
+let QPICK=false;
+function qPickBox(p){
+  if(!QPICK) return '';
+  const fs2=(p.excel||[]).filter(f=>/\.(xlsx|xlsm)$/i.test(f.name)||/pdf/i.test(f.type)||isImg(f));
+  return `<div class="modal"><div class="modal-b" style="width:min(520px,94vw)">
+    <div class="row"><b style="flex:1">어느 견적서를 읽을까요?</b></div>
+    ${fs2.length?`<ul class="cfiles" style="margin-top:10px">${fs2.map(f=>`<li class="cfile">
+      <button class="btn" style="flex:1;text-align:left" data-act="qReadPick" data-id="${esc(f.id)}">${esc(f.name)}</button></li>`).join('')}</ul>`
+      :'<p class="muted small" style="margin:10px 0 0">이 현장에 올려 둔 견적서 파일이 없습니다.</p>'}
+    <div class="row" style="margin-top:12px;justify-content:space-between">
+      <button class="btn pri sm" data-act="qReadDevice">기기에서 고르기</button>
+      <button class="btn sm" data-act="qPickX">닫기</button></div>
+  </div></div>`;
 }
 
 /* ── 계약서 ───────────────────────────────────────────────
@@ -4703,6 +4872,12 @@ document.addEventListener('input',ev=>{
     if(rest[1]==='name'){ S.materials.forEach(m=>{ if(m.vendorId===v.id&&m.vendor!==val){ m.vendor=val; saveMat(m); } });
       S.estimates.forEach(e=>{ let hit=false; (e.processes||[]).forEach(p=>{ if(p.vendorId===v.id&&p.vendor!==val){ p.vendor=val; hit=true; } }); if(hit) saveEst(e); }); } }
   else if(kind==='co'){ S.company[rest[0]]=val; saveCo(); refreshDoc(); }
+  else if(kind==='qr'){ if(!QREAD) return;
+    if(rest[0]==='-'){ QREAD[rest[1]]=val; return; }
+    const r=QREAD.rows[+rest[0]]; if(!r) return;
+    r[rest[1]] = rest[1]==='amt' ? num(val) : val;
+    if(rest[1]==='on'||rest[1]==='amt'){ render(); }
+    return; }
   else if(kind==='sp'){ ANAL_DRAFT[rest[0]]=val; return; }
   else if(kind==='spend'){ const p=curProj(); const s=(p?.spend||[]).find(x=>x.id===rest[0]); if(!s) return; s[rest[1]]=val; saveProj(p); }
   else if(kind==='q'){ const p=curProj(); if(!p) return; const q=ensureQuote(p); q[rest[0]]=val; saveProj(p); refreshQuote(); }
@@ -5102,6 +5277,24 @@ document.addEventListener('click',async ev=>{
     case 'qDel': { const p=curProj(); const q=ensureQuote(p); q.rows.splice(+t.dataset.i,1); if(!q.rows.length) q.rows=[['','',0]]; saveProj(p); render(); break; }
     case 'qAddEx': { const p=curProj(); const q=ensureQuote(p); q.extras.push({name:'',base:'run',mode:'%',v:0}); saveProj(p); render(); break; }
     case 'qDelEx': { const p=curProj(); const q=ensureQuote(p); q.extras.splice(+t.dataset.i,1); saveProj(p); render(); break; }
+    case 'qRead': QPICK=true; render(); break;
+    case 'qPickX': QPICK=false; render(); break;
+    case 'qReadX': QREAD=null; render(); break;
+    case 'qReadDevice': QPICK=false; render(); $('#fileRead').click(); break;
+    case 'qReadPick': { const p=curProj(); const f=(p?.excel||[]).find(x=>x.id===t.dataset.id); if(!f) break;
+      QPICK=false; qReadUrl(f.url,f.name); break; }
+    case 'qReadOk': { const p=curProj(); const q=ensureQuote(p);
+      const picked=(QREAD?.rows||[]).filter(r=>r.on&&(r.name||num(r.amt)));
+      if(!picked.length){ toast('고른 줄이 없습니다'); break; }
+      q.rows=picked.map(r=>[r.name,'',num(r.amt)]);
+      const ex=[];
+      if(QREAD.gwa!=null&&QREAD.gwa!=='') ex.push({name:'공과잡비',base:'sub',mode:'%',v:num(QREAD.gwa)});
+      if(QREAD.rate!=null&&QREAD.rate!=='') ex.push({name:'기업이윤',base:'sub',mode:'%',v:num(QREAD.rate)});
+      if(QREAD.dansu!=null&&QREAD.dansu!=='') ex.push({name:'단수조정',base:'run',mode:'-won',v:Math.abs(num(QREAD.dansu))});
+      if(QREAD.vat!=null&&QREAD.vat!=='') ex.push({name:'부가세',base:'run',mode:'%',v:num(QREAD.vat)});
+      if(ex.length) q.extras=ex;
+      saveProj(p); QREAD=null; render();
+      toast('공정 '+picked.length+'개를 넣었습니다. 틀린 곳은 바로 고치세요'); break; }
     case 'qPaste': QPASTE=!QPASTE; render(); if(QPASTE) setTimeout(()=>document.getElementById('qPasteTa')?.focus(),60); break;
     case 'qPasteOk': { const ta=document.getElementById('qPasteTa'); if(!ta) break;
       const out=[];
@@ -5327,6 +5520,7 @@ $('#fileVendorSheet').addEventListener('change',async ev=>{
   ev.target.value='';
 });
 $('#fileBackup').addEventListener('change',ev=>{ if(ev.target.files[0]) importBackup(ev.target.files[0]); ev.target.value=''; });
+$('#fileRead')?.addEventListener('change',ev=>{ const f=ev.target.files[0]; ev.target.value=''; if(f) qReadFile(f,f.name); });
 $('#fileExcel').addEventListener('change',ev=>{ const d=PICK_DOC; PICK_DOC=''; uploadExcelFiles(ev.target.files,d); ev.target.value=''; });
 let PLAN_TASK='';
 $('#filePlan').addEventListener('change',async ev=>{ const fs=ev.target.files;
@@ -5557,3 +5751,4 @@ async function connectSupabase(){
   registerSW();
   if(session) sync();
 })();
+
