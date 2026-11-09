@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '6.9.0';
+const APP_VERSION = '7.0.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -987,7 +987,7 @@ function estDoc(f){ return f && f.doc==='contract' ? 'contract' : 'est'; }
 function guessDoc(name){ return /계약/.test(name||'') ? 'contract' : 'est'; }
 const EST_DOC_LABEL={est:'견적서',contract:'계약서'};
 let PICK_DOC='';
-let EST_TAB = ls.get('estTab')==='contract' ? 'contract' : 'file';   // 파일 보기 / 계약서 만들기
+let EST_TAB = ['contract','quote'].includes(ls.get('estTab')) ? ls.get('estTab') : 'file';   // 파일 / 계약서 만들기 / 견적 만들기
 function renderExcel(){
   const p=curProj();
   if(!p) return `<div class="panel"><div class="empty">먼저 현장을 고르거나 만들어주세요.
@@ -1044,16 +1044,14 @@ function renderEst(){
   const p=curProj();
   if(!p) return `<div class="panel"><div class="empty">먼저 현장을 고르거나 만들어주세요.
     <div class="row" style="justify-content:center;margin-top:12px"><button class="btn pri" data-act="view" data-v="home">현장 고르기</button></div></div></div>`;
-  const ct = EST_TAB==='contract';
+  const m = EST_TAB;
+  const b=(k,l)=>`<button class="btn${m===k?' pri':''}" data-act="estTab" data-m="${k}">${l}</button>`;
   return `<div class="stack">
     <div class="row esthead no-print">
       ${projPicker(true)}
-      <div class="seg">
-        <button class="btn${ct?'':' pri'}" data-act="estTab" data-m="file">파일</button>
-        <button class="btn${ct?' pri':''}" data-act="estTab" data-m="contract">계약서 만들기</button>
-      </div>
+      <div class="seg">${b('file','파일')}${b('contract','계약서 만들기')}${b('quote','견적 만들기')}</div>
     </div>
-    ${ct ? renderContract(p) : renderExcel()+docSections(p)}
+    ${m==='contract' ? renderContract(p) : m==='quote' ? renderQuote(p) : renderExcel()+docSections(p)}
   </div>`;
 }
 /* 이 현장에 딸린 견적(계약서가 값을 꺼내 쓰는 자리)을 없으면 만들어 둡니다 */
@@ -1819,6 +1817,151 @@ function docHTML(e){
     <div class="d-foot">본 견적서의 유효기간은 ${exp}까지입니다. 본 견적서는 ${dt} 기준이며 자재 단가 변동 및 현장 실측에 따라 조정될 수 있습니다.</div>
   </article>`;
 }
+
+/* ===== 견적 만들기 — 공정별 총금액만 적습니다 ===== */
+const QEX_DEF=[
+  {name:'공과잡비',base:'sub',mode:'%',v:3},
+  {name:'기업이윤',base:'sub',mode:'%',v:10},
+  {name:'단수조정',base:'run',mode:'won',v:0},
+  {name:'부가세',base:'run',mode:'%',v:10}];
+let QPASTE=false;
+function ensureQuote(p){
+  if(!p.quote){
+    p.quote={title:siteName(p),client:p.client||'',phone:p.phone||'',addr:p.address||'',size:'',
+      date:today(),validDays:30,rows:[['','',0]],extras:clone(QEX_DEF)};
+    saveProj(p);
+  }
+  const q=p.quote;
+  if(!Array.isArray(q.rows)||!q.rows.length) q.rows=[['','',0]];
+  if(!Array.isArray(q.extras)) q.extras=clone(QEX_DEF);
+  return q;
+}
+function quoteCalc(q){
+  const sub=(q&&q.rows||[]).reduce((a,r)=>a+num(r[2]),0);
+  let run=sub;
+  const lines=(q&&q.extras||[]).map(x=>{
+    const basis = x.base==='sub' ? sub : run;
+    const amt = x.mode==='%' ? Math.round(basis*num(x.v)/100) : Math.round(num(x.v));
+    run+=amt; return {name:x.name,amt};
+  });
+  return {sub,lines,total:run};
+}
+const quoteTotal=p=>p&&p.quote?quoteCalc(p.quote).total:0;
+function quoteExp(q){ const d=new Date((q.date||today())+'T00:00:00'); d.setDate(d.getDate()+num(q.validDays)); return isNaN(d)?'':krDate(dstr(d)); }
+
+function renderQuote(p){
+  const q=ensureQuote(p), c=quoteCalc(q);
+  const f=(k,l,t='text',ph='')=>`<label class="fl">${l}<input class="f"${t==='date'?' type="date"':t==='num'?' type="number"':''} data-bind="q:${k}" value="${esc(q[k]??'')}" placeholder="${ph}"></label>`;
+  return `
+    <section class="panel no-print">
+      <div class="panel-h"><h3>견적 만들기</h3><span class="muted small">공정 이름과 금액만 적으면 됩니다</span>
+        <span class="spacer"></span>
+        <button class="btn sm" data-act="qPaste">한 번에 채우기</button>
+        <button class="btn sm" data-act="print">인쇄 · PDF</button></div>
+      <div class="panel-b"><div class="client-grid">
+        ${f('title','공사명')}${f('client','고객명')}${f('phone','연락처')}
+        ${f('addr','현장 주소')}${f('size','면적','text','예: 84㎡ (25.4평)')}
+        ${f('date','견적일','date')}${f('validDays','유효기간(일)','num')}
+      </div></div>
+      ${QPASTE?`<div class="panel-b qpaste">
+        <b class="small">여기에 붙여넣으세요</b>
+        <p class="muted small" style="margin:4px 0 8px">한 줄에 <b>공정 이름 금액</b> — 예) <code>철거 2,300,000원</code></p>
+        <textarea class="f qpaste-ta" id="qPasteTa" placeholder="철거 2,300,000원&#10;설비·방수 1,850,000원&#10;샤시 6,400,000원"></textarea>
+        <div class="row" style="margin-top:8px">
+          <button class="btn pri sm" data-act="qPasteOk">공정 표에 채우기</button>
+          <button class="btn sm" data-act="qPaste">닫기</button>
+          <span class="muted small">공정 줄만 바뀝니다. 아래 공과잡비·부가세는 그대로 둡니다.</span>
+        </div></div>`:''}
+      <div class="panel-b" style="border-top:1px solid var(--line2)">
+        <div class="eyebrow" style="margin-top:0">공정별 금액</div>
+        <table class="qtbl"><thead><tr>
+          <th class="qno">No</th><th>공정</th><th style="width:30%">주요 내용 · 비고</th><th class="r" style="width:150px">금액(원)</th><th style="width:34px"></th>
+        </tr></thead><tbody>${q.rows.map((r,i)=>`<tr>
+          <td class="qno">${i+1}</td>
+          <td><input value="${esc(r[0]||'')}" data-bind="qrow:${i}:0" placeholder="공정 이름"></td>
+          <td><input value="${esc(r[1]||'')}" data-bind="qrow:${i}:1" placeholder="비고"></td>
+          <td><input class="won" value="${won(num(r[2]))}" data-bind="qrow:${i}:2" data-money="1" inputmode="numeric"></td>
+          <td><button class="qx" data-act="qDel" data-i="${i}" title="이 줄 지우기">✕</button></td>
+        </tr>`).join('')}</tbody>
+        <tfoot><tr class="qsub"><td></td><td colspan="2">공정 소계</td><td class="r qout" id="qSub">${won(c.sub)}</td><td></td></tr></tfoot></table>
+        <div class="row" style="margin-top:8px"><button class="btn sm" data-act="qAdd">+ 공정 줄 추가</button></div>
+
+        <div class="eyebrow">공정 소계 아래에 붙는 항목 <span style="font-weight:500">— 이름 · 기준 · 값 모두 고칠 수 있습니다</span></div>
+        <table class="qtbl"><thead><tr>
+          <th class="qno">No</th><th>항목 이름</th><th style="width:120px">기준</th><th style="width:110px">방식</th><th class="r" style="width:100px">값</th><th class="r" style="width:140px">금액(원)</th><th style="width:34px"></th>
+        </tr></thead><tbody>${q.extras.map((x,i)=>`<tr>
+          <td class="qno">${i+1}</td>
+          <td><input value="${esc(x.name||'')}" data-bind="qex:${i}:name" placeholder="항목 이름"></td>
+          <td><select data-bind="qex:${i}:base"><option value="sub"${x.base==='sub'?' selected':''}>공정 소계</option><option value="run"${x.base==='run'?' selected':''}>직전 누계</option></select></td>
+          <td><select data-bind="qex:${i}:mode"><option value="%"${x.mode==='%'?' selected':''}>비율 %</option><option value="won"${x.mode==='won'?' selected':''}>금액 원</option></select></td>
+          <td><input class="won" value="${x.mode==='%'?esc(x.v):won(num(x.v))}" data-bind="qex:${i}:v" inputmode="numeric"></td>
+          <td class="r qout" data-qex="${i}">${won(c.lines[i]?.amt||0)}</td>
+          <td><button class="qx" data-act="qDelEx" data-i="${i}" title="이 줄 지우기">✕</button></td>
+        </tr>`).join('')}</tbody></table>
+        <div class="row" style="margin-top:8px"><button class="btn sm" data-act="qAddEx">+ 항목 추가</button>
+          <span class="muted small">기준 = 비율을 무엇에 곱할지 · 방식 = 비율(%)인지 금액(원)인지 · 금액은 빼기(−)도 됩니다</span></div>
+      </div>
+      <div class="qsum"><span class="muted small">합계</span><span class="big" id="qTotal">${won(c.total)}원</span>
+        <span class="spacer"></span><span class="muted small" id="qWords">금 ${krWords(c.total)}원정</span></div>
+    </section>
+    <div class="doc-stage" id="docStage">${quoteDocHTML(p,q)}</div>`;
+}
+function quoteDocHTML(p,q){
+  const c=quoteCalc(q), co=S.company||{}, dt=krDate(q.date||today()), exp=quoteExp(q);
+  const no=String(q.date||today()).replace(/-/g,'')+'-01';
+  return `<article id="doc">
+    <h1>견적서</h1>
+    <div class="d-no">No. ${esc(no)} · ${dt}</div>
+    <div class="d-parties">
+      <div class="d-to">
+        <div class="d-name">${esc(q.client||'고객')} 귀하</div>
+        <dl class="d-kv">
+          ${q.addr?`<dt>현장</dt><dd>${esc(q.addr)}</dd>`:''}
+          ${q.size?`<dt>면적</dt><dd>${esc(q.size)}</dd>`:''}
+          ${q.phone?`<dt>연락처</dt><dd>${esc(q.phone)}</dd>`:''}
+          <dt>공사명</dt><dd>${esc(q.title||'')}</dd>
+          <dt>유효기간</dt><dd>${exp}까지</dd>
+        </dl>
+        <p style="margin:12px 0 0;font-size:12px">아래와 같이 견적합니다.</p>
+      </div>
+      <div class="d-from">
+        <div class="d-co">${esc(co.name||'상호명을 입력하세요')}</div>
+        <dl class="d-kv">
+          ${co.ceo?`<dt>대표</dt><dd>${esc(co.ceo)} ${co.stamp?`<img src="${esc(co.stamp)}" alt="(인)" class="d-stamp">`:'(인)'}</dd>`:''}
+          ${co.bizNo?`<dt>사업자번호</dt><dd>${esc(co.bizNo)}</dd>`:''}
+          ${co.address?`<dt>주소</dt><dd>${esc(co.address)}</dd>`:''}
+          ${co.phone?`<dt>연락처</dt><dd>${esc(co.phone)}</dd>`:''}
+          ${co.email?`<dt>이메일</dt><dd>${esc(co.email)}</dd>`:''}
+        </dl>
+      </div>
+    </div>
+    <div class="d-total"><span class="lbl">합계금액</span><span class="words">금 ${krWords(c.total)}원정</span><span class="fig">₩ ${won(c.total)}</span></div>
+
+    <h2 class="d-sec">공정별 금액</h2>
+    <table><thead><tr><th style="width:36px" class="c">No</th><th>공정</th><th>주요 내용</th><th class="r" style="width:130px">금액(원)</th></tr></thead>
+      <tbody>${q.rows.filter(r=>r[0]||num(r[2])).map((r,i)=>`<tr><td class="c">${i+1}</td><td><b>${esc(r[0]||'')}</b></td><td>${esc(r[1]||'—')}</td><td class="r">${won(num(r[2]))}</td></tr>`).join('')}</tbody>
+      <tfoot>
+        <tr><td colspan="3" class="r">공정 소계</td><td class="r">${won(c.sub)}</td></tr>
+        ${c.lines.filter(l=>l.name||l.amt).map(l=>`<tr><td colspan="3" class="r">${esc(l.name||'')}</td><td class="r">${l.amt<0?'−'+won(-l.amt):won(l.amt)}</td></tr>`).join('')}
+        <tr class="g"><td colspan="3" class="r">합계</td><td class="r">${won(c.total)}</td></tr>
+      </tfoot></table>
+
+    ${(co.bankName||co.bankNo)?`<p style="margin-top:14px;font-size:12px"><b>입금 계좌</b> ${esc([co.bankName,co.bankNo,co.bankHolder&&('예금주 '+co.bankHolder)].filter(Boolean).join(' '))}</p>`:''}
+    <div class="d-sign"><div class="s">공급자 ${esc([co.name,co.ceo].filter(Boolean).join(' '))} (서명)</div><div class="s">고객 ${esc(q.client||'')} (서명)</div></div>
+    <div class="d-foot">본 견적서의 유효기간은 ${exp}까지입니다. 본 견적서는 ${dt} 기준이며 자재 단가 변동 및 현장 실측에 따라 조정될 수 있습니다.</div>
+  </article>`;
+}
+/* 숫자만 다시 셈합니다 (글 쓰던 자리를 지킵니다) */
+function refreshQuote(){
+  const p=curProj(); if(!p||!p.quote) return;
+  const c=quoteCalc(p.quote);
+  const s=document.getElementById('qSub'); if(s) s.textContent=won(c.sub);
+  document.querySelectorAll('[data-qex]').forEach(el=>{ el.textContent=won(c.lines[+el.dataset.qex]?.amt||0); });
+  const t=document.getElementById('qTotal'); if(t) t.textContent=won(c.total)+'원';
+  const w=document.getElementById('qWords'); if(w) w.textContent='금 '+krWords(c.total)+'원정';
+  const st=document.getElementById('docStage'); if(st) st.innerHTML=quoteDocHTML(p,p.quote);
+}
+
 /* ── 계약서 ───────────────────────────────────────────────
    첨부해 주신 한글 계약서 양식을 그대로 옮긴 것입니다.
    빈칸만 현장·견적 내용으로 채워집니다. */
@@ -1844,17 +1987,19 @@ function splitPay(total){
 function ctData(e){
   const co=S.company||{}, p=S.projects.get(e.pid)||{}, c=calcEst(e);
   const x=e.contract||{};
-  const total = x.amount===''||x.amount===undefined ? c.total : num(x.amount);
+  /* 견적 만들기에서 만든 금액이 있으면 그걸 먼저 씁니다 */
+  const qt=quoteTotal(p), base = qt>0 ? qt : c.total;
+  const total = x.amount===''||x.amount===undefined ? base : num(x.amount);
   const auto = splitPay(total);
   const pay={}; PAYKEYS.forEach(({k})=>{
     const a=x.pay?.[k]?.amount;
     pay[k]={amount: (a===''||a===undefined) ? auto[k] : num(a), date:x.pay?.[k]?.date??''};
   });
   return {
-    site:   x.site   ?? (e.client.address||''),
+    site:   x.site   ?? (p.quote?.addr || p.address || e.client.address||''),
     start:  x.start  ?? (p.startedAt||''),
     end:    x.end    ?? (p.endedAt||''),
-    amount: x.amount===''||x.amount===undefined ? c.total : num(x.amount),
+    amount: x.amount===''||x.amount===undefined ? base : num(x.amount),
     vat:    x.vat    ?? '부가세 VAT 포함',
     pay,
     bankName:   x.bankName   ?? (co.bankName||''),
@@ -1862,8 +2007,8 @@ function ctData(e){
     bankHolder: x.bankHolder ?? (co.bankHolder||''),
     signDate:   x.signDate   ?? (e.date||today()),
     clBiz:   x.clBiz   ?? '',
-    clPhone: x.clPhone ?? (e.client.phone||''),
-    clName:  x.clName  ?? (e.client.name||''),
+    clPhone: x.clPhone ?? (p.quote?.phone || p.phone || e.client.phone||''),
+    clName:  x.clName  ?? (p.quote?.client || p.client || e.client.name||''),
     coBiz:   x.coBiz   ?? (co.name||''),
     coAddr:  x.coAddr  ?? (co.address||''),
     coPhone: x.coPhone ?? (co.phone||''),
@@ -4382,6 +4527,15 @@ document.addEventListener('input',ev=>{
     if(rest[1]==='name'){ S.materials.forEach(m=>{ if(m.vendorId===v.id&&m.vendor!==val){ m.vendor=val; saveMat(m); } });
       S.estimates.forEach(e=>{ let hit=false; (e.processes||[]).forEach(p=>{ if(p.vendorId===v.id&&p.vendor!==val){ p.vendor=val; hit=true; } }); if(hit) saveEst(e); }); } }
   else if(kind==='co'){ S.company[rest[0]]=val; saveCo(); refreshDoc(); }
+  else if(kind==='q'){ const p=curProj(); if(!p) return; const q=ensureQuote(p); q[rest[0]]=val; saveProj(p); refreshQuote(); }
+  else if(kind==='qrow'){ const p=curProj(); if(!p) return; const q=ensureQuote(p); const i=+rest[0], f=+rest[1];
+    if(!q.rows[i]) return;
+    q.rows[i][f] = f===2 ? num(val) : val;
+    saveProj(p); refreshQuote(); }
+  else if(kind==='qex'){ const p=curProj(); if(!p) return; const q=ensureQuote(p); const x=q.extras[+rest[0]]; if(!x) return;
+    x[rest[1]] = rest[1]==='v' ? num(val) : val;
+    saveProj(p);
+    if(rest[1]==='base'||rest[1]==='mode') render(); else refreshQuote(); }
   else if(kind==='proj'){ const p=curProj(); if(!p) return; p[rest[0]]=val; saveProj(p);
     if(rest[0]==='name'){ const o=document.querySelector(`#projSel option[value="${p.id}"]`); if(o) o.textContent=val+(p.share?.on?' · 공유중':''); } }
   else if(kind==='task'){ const p=curProj(); const ti=+rest[0], t=p?.tasks?.[ti]; if(!t) return; t[rest[1]]=val;
@@ -4462,6 +4616,7 @@ function handleSelectChange(t){
 }
 document.addEventListener('change',ev=>{
   const t=ev.target, a=t.dataset?.actChange;
+  if(t.dataset?.money){ t.value=won(num(t.value)); }
   if(t.dataset?.calcmat!==undefined){ CALC.mid=t.value; CALC.loss='';
     CALC.size=sizeFromMat(S.materials.get(t.value));    // 자재에 적힌 크기가 있으면 그대로 가져옵니다
     render(); return; }
@@ -4701,7 +4856,7 @@ document.addEventListener('click',async ev=>{
     case 'toggleAllProcs': { const e=cur(); if(!e) break;
       const close=!e.processes.every(p=>isProcClosed(e,p));
       e.processes.forEach(p=>setProcClosed(e,p,close)); render(); break; }
-    case 'print': if(VIEW==='doc'||(VIEW==='est'&&EST_TAB==='contract')) prepPrint(); flushWrites(); window.print(); break;
+    case 'print': if(VIEW==='doc'||(VIEW==='est'&&(EST_TAB==='contract'||EST_TAB==='quote'))) prepPrint(); flushWrites(); window.print(); break;
     case 'printPreview': showPrintPreview(); break;
     case 'download': downloadDoc(); break;
     case 'syncNow': if(!sb||!session){ VIEW='set'; render(); } else sync(); break;
@@ -4763,7 +4918,22 @@ document.addEventListener('click',async ev=>{
     case 'printExcel': { const st=document.getElementById('xlsStage'); if(!st){ toast('먼저 파일을 고르세요.'); break; }
       document.body.classList.add('printing-xls'); setTimeout(()=>{ window.print(); setTimeout(()=>document.body.classList.remove('printing-xls'),600); },80); break; }
     case 'estOpen': EST_OPEN=!EST_OPEN; ls.set('estOpen',EST_OPEN?'1':'0'); render(); break;
-    case 'estTab': EST_TAB = t.dataset.m==='contract'?'contract':'file'; ls.set('estTab',EST_TAB); render(); window.scrollTo(0,0); break;
+    case 'estTab': EST_TAB = ['contract','quote'].includes(t.dataset.m)?t.dataset.m:'file'; ls.set('estTab',EST_TAB); QPASTE=false; render(); window.scrollTo(0,0); break;
+    case 'qAdd': { const p=curProj(); const q=ensureQuote(p); q.rows.push(['','',0]); saveProj(p); render();
+      setTimeout(()=>document.querySelector('.qtbl tbody tr:last-child input')?.focus(),60); break; }
+    case 'qDel': { const p=curProj(); const q=ensureQuote(p); q.rows.splice(+t.dataset.i,1); if(!q.rows.length) q.rows=[['','',0]]; saveProj(p); render(); break; }
+    case 'qAddEx': { const p=curProj(); const q=ensureQuote(p); q.extras.push({name:'',base:'run',mode:'%',v:0}); saveProj(p); render(); break; }
+    case 'qDelEx': { const p=curProj(); const q=ensureQuote(p); q.extras.splice(+t.dataset.i,1); saveProj(p); render(); break; }
+    case 'qPaste': QPASTE=!QPASTE; render(); if(QPASTE) setTimeout(()=>document.getElementById('qPasteTa')?.focus(),60); break;
+    case 'qPasteOk': { const ta=document.getElementById('qPasteTa'); if(!ta) break;
+      const out=[];
+      ta.value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean).forEach(L=>{
+        const m2=L.match(/^(.*?)[\s\t:|,]+([\-\d,\.]+)\s*원?$/);
+        if(m2) out.push([m2[1].trim(),'',num(m2[2])]);
+      });
+      if(!out.length){ toast('읽을 수 있는 줄이 없습니다. 「공정이름 금액」 모양으로 넣어주세요'); break; }
+      const p=curProj(); const q=ensureQuote(p); q.rows=out; saveProj(p); QPASTE=false; render();
+      toast(out.length+'개 공정을 넣었습니다'); break; }
     case 'delExcel': { const p=curProj(); const f=(p?.excel||[]).find(x=>x.id===t.dataset.id); if(!f) break;
       if(await askConfirm({title:`“${f.name}”을(를) 지울까요?`,lines:['이 현장에서 사라집니다'],ok:'네, 지웁니다',cancel:'아니요'})){
         try{ await sb?.storage.from('plans').remove([f.path]); }catch(err){ console.warn(err); }

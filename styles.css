@@ -689,3 +689,25 @@ button.g-bar{padding:0;font:inherit;cursor:pointer;text-align:left;-webkit-appea
 
 /* 고객 화면 — 누른 막대의 글씨만 */
 .sh .lab.vlab{background:var(--surface);border:1px solid var(--line);border-radius:4px;padding:1px 5px;box-shadow:0 1px 4px rgba(0,0,0,.14)}
+
+/* 견적 만들기 */
+.qtbl{width:100%;border-collapse:collapse;font-size:13.5px}
+.qtbl th{text-align:left;font-size:12px;color:var(--muted);font-weight:600;padding:5px 7px;border-bottom:1px solid var(--line2)}
+.qtbl td{padding:4px 5px;border-bottom:1px solid var(--line2);vertical-align:middle}
+.qtbl td.r,.qtbl th.r{text-align:right}
+.qtbl input,.qtbl select{width:100%;border:1px solid transparent;border-radius:7px;padding:7px 8px;font:inherit;font-size:13.5px;background:transparent;color:var(--ink)}
+.qtbl select{border-color:var(--line2);background:var(--surface);padding:6px}
+.qtbl input:hover{border-color:var(--line2)}
+.qtbl input:focus,.qtbl select:focus{outline:0;border-color:var(--accent);background:var(--surface)}
+.qtbl input.won{text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
+.qtbl .qno{width:30px;color:var(--muted);font-size:12px;text-align:center;font-weight:700;user-select:none}
+.qx{border:0;background:transparent;color:var(--muted);cursor:pointer;font-size:13px;padding:4px 6px;border-radius:6px;opacity:.45}
+.qtbl tr:hover .qx{opacity:1}
+.qx:hover{color:#A23B2C;background:var(--surface2)}
+.qout{font-variant-numeric:tabular-nums;font-weight:700;padding-right:7px;white-space:nowrap}
+.qtbl tr.qsub td{background:var(--surface2);font-weight:700}
+.qsum{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:11px 14px;border-top:1px solid var(--line2);background:var(--surface2)}
+.qsum .big{font-size:21px;font-weight:800;font-variant-numeric:tabular-nums}
+.qpaste{border-top:1px solid var(--line2);background:var(--surface2)}
+.qpaste-ta{width:100%;min-height:92px;resize:vertical;line-height:1.6}
+.eyebrow{font-size:11.5px;font-weight:700;color:var(--muted);letter-spacing:.04em;margin:16px 0 4px}
