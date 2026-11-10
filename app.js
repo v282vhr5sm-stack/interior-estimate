@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '7.3.1';
+const APP_VERSION = '7.4.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -1839,7 +1839,41 @@ const QEX_DEF=[
   {name:'기업이윤',base:'sub',mode:'%',v:10},
   {name:'단수조정',base:'run',mode:'-won',v:0},
   {name:'부가세',base:'run',mode:'%',v:10}];
-let QPASTE=false;
+let QPASTE=false, QSHEET=0;
+/* 본 견적 + 추가공사 차수들 */
+function quoteSheets(p){ ensureQuote(p); return [p.quote, ...(p.extraQuotes||[])]; }
+function sheetAt(p){ const a=quoteSheets(p); if(QSHEET>=a.length) QSHEET=0; return a[QSHEET]; }
+function newSheet(p){
+  const base=p.quote||{};
+  return {id:uid(), name:'추가공사 '+((p.extraQuotes||[]).length+1)+'차', date:today(),
+    rows:[['','',0]], extras:(base.extras||clone(QEX_DEF)).map(x=>({...x, v:/단수/.test(x.name||'')?0:x.v}))};
+}
+function contractCalc(p){
+  const sheets=quoteSheets(p).map(q=>({q,c:quoteCalc(q)}));
+  return {sheets, total:sheets.reduce((a,x)=>a+x.c.total,0)};
+}
+/* 분석 기준 — 공정은 차수 합산, 공과잡비(단수 포함)는 따로 한 줄 */
+function analBase(p){
+  const proc={}, order=[];
+  quoteSheets(p).forEach(q=>(q.rows||[]).forEach(r=>{
+    const n=String(r[0]||'').trim(); if(!n) return;
+    if(!(n in proc)){ proc[n]=0; order.push(n); }
+    proc[n]+=num(r[2]);
+  }));
+  let misc=0, vat=0;
+  quoteSheets(p).forEach(q=>{
+    const c=quoteCalc(q);
+    c.lines.forEach((l,i)=>{ const x=(q.extras||[])[i]||{};
+      if(/부\s*가/.test(x.name||'')) vat+=l.amt; else misc+=l.amt; });
+  });
+  return {proc,order,misc,vat};
+}
+function payCalc(p){
+  const contract=contractCalc(p).total;
+  const got=(p.pays||[]).reduce((a,x)=>a+num(x.amt),0);
+  return {contract, got, left:contract-got, rate:contract?got/contract*100:0};
+}
+const PAY_KINDS=['계약금','중도금 1차','중도금 2차','중도금 3차','잔금','추가공사비','기타'];
 function ensureQuote(p){
   if(!p.quote){
     p.quote={title:siteName(p),client:p.client||'',phone:p.phone||'',addr:p.address||'',size:'',
@@ -1871,15 +1905,24 @@ const quoteTotal=p=>p&&p.quote?quoteCalc(p.quote).total:0;
 function quoteExp(q){ const d=new Date((q.date||today())+'T00:00:00'); d.setDate(d.getDate()+num(q.validDays)); return isNaN(d)?'':krDate(dstr(d)); }
 
 function renderQuote(p){
-  const q=ensureQuote(p), c=quoteCalc(q);
+  const sheets=quoteSheets(p);
+  const q=sheetAt(p), c=quoteCalc(q), K=contractCalc(p);
+  const isAdd=QSHEET>0;
   const f=(k,l,t='text',ph='')=>`<label class="fl">${l}<input class="f"${t==='date'?' type="date"':t==='num'?' type="number"':''} data-bind="q:${k}" value="${esc(q[k]??'')}" placeholder="${ph}"></label>`;
   return `
     <section class="panel no-print">
-      <div class="panel-h"><h3>견적 만들기</h3><span class="muted small">공정 이름과 금액만 적으면 됩니다</span>
+      <div class="panel-h"><h3>견적 만들기</h3>
+        <div class="seg">${sheets.map((x,i)=>`<button class="btn sm${i===QSHEET?' pri':''}" data-act="qSheet" data-i="${i}">${esc(i===0?'본 견적':(x.name||'추가 '+i+'차'))}</button>`).join('')}
+          <button class="btn sm" data-act="qAddSheet" title="추가공사 견적을 따로 만듭니다">+ 추가공사</button></div>
         <span class="spacer"></span>
         <button class="btn pri sm" data-act="qRead">📄 견적서 읽어서 채우기</button>
         <button class="btn sm" data-act="qPaste">한 번에 채우기</button>
         <button class="btn sm" data-act="print">인쇄 · PDF</button></div>
+      ${isAdd?`<div class="panel-b" style="padding-bottom:0"><div class="row">
+        <label class="fl" style="flex:0 1 220px">차수 이름<input class="f" data-bind="q:name" value="${esc(q.name||'')}" placeholder="추가공사 1차"></label>
+        <span class="spacer"></span>
+        <button class="btn ghost sm danger" data-act="qDelSheet">이 차수 지우기</button></div>
+        <p class="muted small" style="margin:8px 0 0">빠지는 공사는 금액 앞에 <b>−</b> 를 붙이세요 (예: -800000)</p></div>`:''}
       <div class="panel-b"><div class="client-grid">
         ${f('title','공사명')}${f('client','고객명')}${f('phone','연락처')}
         ${f('addr','현장 주소')}${f('size','면적','text','예: 84㎡ (25.4평)')}
@@ -1923,18 +1966,31 @@ function renderQuote(p){
         <div class="row" style="margin-top:8px"><button class="btn sm" data-act="qAddEx">+ 항목 추가</button>
           <span class="muted small">기준 = 비율을 무엇에 곱할지 · 방식 = 더할지 뺄지 · 값은 그냥 양수로 넣으면 됩니다 (단수조정은 빼기로 되어 있습니다)</span></div>
       </div>
-      <div class="qsum"><span class="muted small">합계</span><span class="big" id="qTotal">${won(c.total)}원</span>
+      <div class="qsum"><span class="muted small">${isAdd?'이 차수 합계':'합계'}</span><span class="big" id="qTotal">${won(c.total)}원</span>
         <span class="spacer"></span><span class="muted small" id="qWords">금 ${krWords(c.total)}원정</span></div>
     </section>
+    ${sheets.length>1?`<section class="panel no-print">
+      <div class="panel-h"><h3>계약 금액</h3><span class="muted small">본 견적 + 추가공사</span></div>
+      <div style="overflow-x:auto"><table class="atbl">
+        <thead><tr><th>차수</th><th>날짜</th><th class="r">공정 금액</th><th class="r">그 밖</th><th class="r">합계</th></tr></thead>
+        <tbody>${K.sheets.map(({q:x,c:cc},i)=>{ const etc=cc.total-cc.sub;
+          return `<tr><td class="l">${esc(i===0?'본 견적':(x.name||'추가 '+i+'차'))}${i>0?`<span class="tag${cc.total<0?' minus':''}">${cc.total<0?'감액':'추가'}</span>`:''}</td>
+            <td class="muted">${esc(x.date||'')}</td>
+            <td class="r ${cc.sub<0?'minus':''}">${cc.sub<0?'−'+won(-cc.sub):won(cc.sub)}</td>
+            <td class="r">${etc<0?'−'+won(-etc):won(etc)}</td>
+            <td class="r"><b>${cc.total<0?'−'+won(-cc.total):won(cc.total)}</b></td></tr>`; }).join('')}</tbody>
+        <tfoot><tr class="sum"><td class="l">최종 계약금액</td><td></td><td></td><td></td><td class="r">${won(K.total)}</td></tr></tfoot></table></div>
+    </section>`:''}
     <div class="doc-stage" id="docStage">${quoteDocHTML(p,q)}</div>
     ${qPickBox(p)}${qReadBox(p)}`;
 }
 function quoteDocHTML(p,q){
   const c=quoteCalc(q), co=S.company||{}, dt=krDate(q.date||today()), exp=quoteExp(q);
   const no=String(q.date||today()).replace(/-/g,'')+'-01';
+  const add = (p.extraQuotes||[]).some(x=>x===q);
   return `<article id="doc">
-    <h1>견적서</h1>
-    <div class="d-no">No. ${esc(no)} · ${dt}</div>
+    <h1>${add?'추가공사 견적서':'견적서'}</h1>
+    <div class="d-no">No. ${esc(no)} · ${dt}${add&&q.name?' · '+esc(q.name):''}</div>
     <div class="d-parties">
       <div class="d-to">
         <div class="d-name">${esc(q.client||'고객')} 귀하</div>
@@ -1977,33 +2033,72 @@ function quoteDocHTML(p,q){
 /* 숫자만 다시 셈합니다 (글 쓰던 자리를 지킵니다) */
 function refreshQuote(){
   const p=curProj(); if(!p||!p.quote) return;
-  const c=quoteCalc(p.quote);
+  const q=sheetAt(p), c=quoteCalc(q);
   const s=document.getElementById('qSub'); if(s) s.textContent=won(c.sub);
   document.querySelectorAll('[data-qex]').forEach(el=>{ el.textContent=won(c.lines[+el.dataset.qex]?.amt||0); });
   const t=document.getElementById('qTotal'); if(t) t.textContent=won(c.total)+'원';
   const w=document.getElementById('qWords'); if(w) w.textContent='금 '+krWords(c.total)+'원정';
-  const st=document.getElementById('docStage'); if(st) st.innerHTML=quoteDocHTML(p,p.quote);
+  const st=document.getElementById('docStage'); if(st) st.innerHTML=quoteDocHTML(p,q);
 }
 
 
 /* ===== 원가분석 — 견적 금액 대비 실제로 나간 돈 ===== */
 let ANAL_OPEN='', ANAL_ADD=false, PLAN_SPEND='';
 let ANAL_DRAFT={proc:'',date:'',who:'',amt:'',memo:''};
+const MISC_ROW='공과잡비';
 function analRows(p){
-  const rows=((p.quote&&p.quote.rows)||[]).filter(r=>r[0]||num(r[2])).map(r=>({name:(r[0]||'(이름 없음)'),amt:num(r[2])}));
-  (p.spend||[]).forEach(s=>{ if(!rows.some(r=>r.name===s.proc)) rows.push({name:s.proc||'기타',amt:0}); });
+  const b=analBase(p), sp=p.spend||[];
+  const rows=b.order.map(n=>({name:n, amt:b.proc[n]}));
+  sp.forEach(x=>{ const n=x.proc||'기타';
+    if(n!==MISC_ROW && n!=='부가세' && !rows.some(r=>r.name===n)) rows.push({name:n, amt:0}); });
+  rows.push({name:MISC_ROW, amt:b.misc, own:true});
+  if(p.analVat && b.vat) rows.push({name:'부가세', amt:b.vat, own:true});
   return rows;
 }
 function analCalc(p){
   const rows=analRows(p), sp=p.spend||[];
   const list=rows.map(r=>{
-    const spent=sp.filter(x=>x.proc===r.name).reduce((a,x)=>a+num(x.amt),0);
-    return {name:r.name, amt:r.amt, spent, left:r.amt-spent, rate:r.amt?(r.amt-spent)/r.amt*100:0, n:sp.filter(x=>x.proc===r.name).length};
+    const spent=sp.filter(x=>(x.proc||'기타')===r.name).reduce((a,x)=>a+num(x.amt),0);
+    return {name:r.name, amt:r.amt, own:!!r.own, spent, left:r.amt-spent,
+      rate:r.amt?(r.amt-spent)/r.amt*100:0, n:sp.filter(x=>(x.proc||'기타')===r.name).length};
   });
-  const sub=rows.reduce((a,r)=>a+r.amt,0);
+  const total=list.reduce((a,x)=>a+x.amt,0);
   const spent=sp.reduce((a,x)=>a+num(x.amt),0);
-  const total=quoteTotal(p)||sub;
-  return {list, sub, spent, total, margin:total-spent, rate:total?(total-spent)/total*100:0};
+  return {list, sub:total, total, spent, margin:total-spent, rate:total?(total-spent)/total*100:0};
+}
+/* 입금내역 — 받을 돈을 몇 차례로 나눠 받는 것 */
+function payPanel(p){
+  const k=payCalc(p), list=(p.pays||[]).slice().sort((a,b)=>String(a.d||'').localeCompare(String(b.d||'')));
+  const money=n=>(n<0?'−'+won(-n):won(n));
+  return `<section class="panel">
+    <div class="panel-h"><h3>입금내역</h3><span class="muted small">받을 돈 · 받은 돈 — 원가분석과 따로 셉니다</span>
+      <span class="spacer"></span><button class="btn pri sm" data-act="payAdd">+ 입금 적기</button></div>
+    <div class="kpi">
+      <div class="kbox"><div class="l">계약금액</div><div class="v">${won(k.contract)}</div></div>
+      <div class="kbox"><div class="l">받은 돈</div><div class="v" id="payGot">${won(k.got)}</div></div>
+      <div class="kbox ${k.left>0?'bad':'good'}"><div class="l">남은 미수금</div><div class="v" id="payLeft">${money(k.left)}</div></div>
+      <div class="kbox"><div class="l">받은 비율</div><div class="v" id="payRate">${Math.round(k.rate)}%</div></div>
+    </div>
+    ${list.length?`<div style="overflow-x:auto"><table class="atbl paytbl">
+      <thead><tr><th style="width:150px">날짜</th><th style="width:140px">구분</th><th class="r" style="width:140px">금액</th><th>메모</th><th style="width:34px"></th></tr></thead>
+      <tbody>${list.map(x=>`<tr>
+        <td><input class="f sm" type="date" data-bind="pay:${esc(x.id)}:d" value="${esc(x.d||'')}" style="width:100%"></td>
+        <td><select class="f sm" data-bind="pay:${esc(x.id)}:k" style="width:100%">${PAY_KINDS.map(o=>`<option ${x.k===o?'selected':''}>${esc(o)}</option>`).join('')}</select></td>
+        <td><input class="f sm won" data-bind="pay:${esc(x.id)}:amt" data-money="1" value="${won(num(x.amt))}" style="width:100%;text-align:right" inputmode="numeric"></td>
+        <td><input class="f sm" data-bind="pay:${esc(x.id)}:memo" value="${esc(x.memo||'')}" placeholder="메모" style="width:100%"></td>
+        <td><button class="qx" data-act="payDel" data-id="${esc(x.id)}" title="이 줄 지우기">✕</button></td></tr>`).join('')}</tbody>
+      <tfoot><tr class="sum"><td class="l">받은 돈 합계</td><td></td><td class="r" id="paySum">${won(k.got)}</td>
+        <td class="${k.left>0?'minus':'plus'}" id="payNote">남은 미수금 ${money(k.left)}</td><td></td></tr></tfoot></table></div>`
+      :'<div class="panel-b"><p class="muted small" style="margin:0">아직 받은 돈이 없습니다. <b>+ 입금 적기</b> 로 계약금부터 적어보세요.</p></div>'}
+  </section>`;
+}
+function payRecalc(){
+  const p=curProj(); if(!p) return;
+  const k=payCalc(p), money=n=>(n<0?'−'+won(-n):won(n));
+  const set=(id,v)=>{ const el=document.getElementById(id); if(el) el.textContent=v; };
+  set('payGot',won(k.got)); set('paySum',won(k.got));
+  set('payLeft',money(k.left)); set('payRate',Math.round(k.rate)+'%');
+  set('payNote','남은 미수금 '+money(k.left));
 }
 const spShots=(p,id)=>(p.files||[]).filter(f=>f.spendId===id);
 function renderAnalysis(){
@@ -2012,57 +2107,58 @@ function renderAnalysis(){
     <h3 style="margin-bottom:6px">아직 현장이 없습니다</h3><p>현장을 만들고 견적을 넣으면 공정별로 얼마 남았는지 바로 보입니다.</p>
     <div class="row" style="justify-content:center;margin-top:12px"><button class="btn pri" data-act="newProj">+ 새 현장</button></div></div></div></div>`;
   const p=curProj()||list[0];
-  const c=analCalc(p), rows=analRows(p);
+  const c=analCalc(p);
   const money=n=>(n<0?'−'+won(-n):won(n));
   return `<div class="stack">
-    <div class="row"><h2 style="flex:1">원가분석</h2></div>
-    <section class="panel">
-      <div class="panel-h">
-        <select class="f" id="projSel" data-act-change="pickProj" style="width:auto;max-width:320px">${list.map(x=>`<option value="${x.id}" ${x.id===p.id?'selected':''}>${esc(siteAddr(x))}</option>`).join('')}</select>
-        <span class="spacer"></span>
-        <button class="btn sm" data-act="analXlsx">엑셀로 내보내기</button>
-        <span class="badge${c.margin<0?' warn':''}">${c.list.filter(x=>x.n).length}/${rows.length} 공정 지출 있음</span></div>
-      <div class="kpi">
-        <div class="kbox"><div class="l">견적 합계 (받을 돈)</div><div class="v">${won(c.total)}</div></div>
-        <div class="kbox"><div class="l">지금까지 나간 돈</div><div class="v">${won(c.spent)}</div></div>
-        <div class="kbox ${c.margin>=0?'good':'bad'}"><div class="l">남은 돈 (마진)</div><div class="v">${money(c.margin)}</div></div>
-        <div class="kbox ${c.rate>=0?'good':'bad'}"><div class="l">마진율</div><div class="v">${c.rate.toFixed(1)}%</div></div>
-        <div class="kbox"><div class="l">공정 견적 소계</div><div class="v">${won(c.sub)}</div></div>
-      </div>
-    </section>
+    <div class="row"><h2 style="flex:1">원가분석</h2>
+      <select class="f" id="projSel" data-act-change="pickProj" style="width:auto;max-width:320px">${list.map(x=>`<option value="${x.id}" ${x.id===p.id?'selected':''}>${esc(siteAddr(x))}</option>`).join('')}</select>
+      <button class="btn sm" data-act="analXlsx">엑셀로 내보내기</button></div>
+
+    ${payPanel(p)}
 
     <section class="panel">
-      <div class="panel-h"><h3>공정별 원가</h3><span class="muted small">공정 이름을 누르면 그 공정에 나간 돈이 펼쳐집니다</span>
-        <span class="spacer"></span><button class="btn pri sm" data-act="spAdd">+ 나간 돈 적기</button></div>
-      ${ANAL_ADD?spForm(p,rows):''}
-      ${rows.length?`<div style="overflow-x:auto"><table class="atbl">
-        <thead><tr><th style="width:150px">공정</th><th class="r" style="width:110px">견적 금액</th><th class="r" style="width:110px">나간 돈</th>
-          <th class="r" style="width:110px">남은 돈</th><th class="r" style="width:70px">마진율</th><th style="width:120px">쓴 비율</th><th class="r" style="width:60px">건수</th></tr></thead>
+      <div class="panel-h"><h3>원가분석</h3><span class="muted small">입금과 상관없이 항목별로만 셉니다</span>
+        <span class="spacer"></span>
+        <label class="row small" style="gap:6px"><input type="checkbox" data-act-change="analVatBox" ${p.analVat?'checked':''}> 부가세도 포함</label>
+        <button class="btn pri sm" data-act="spAdd">+ 나간 돈 적기</button></div>
+      <div class="kpi">
+        <div class="kbox"><div class="l">계약금액 (분석 기준)</div><div class="v">${won(c.total)}</div></div>
+        <div class="kbox"><div class="l">나간 돈</div><div class="v">${won(c.spent)}</div></div>
+        <div class="kbox ${c.margin>=0?'good':'bad'}"><div class="l">남은 돈 (마진)</div><div class="v">${money(c.margin)}</div></div>
+        <div class="kbox ${c.rate>=0?'good':'bad'}"><div class="l">마진율</div><div class="v">${c.rate.toFixed(1)}%</div></div>
+      </div>
+      ${ANAL_ADD?spForm(p,c.list):''}
+      ${c.list.length?`<div style="overflow-x:auto"><table class="atbl">
+        <thead><tr><th style="width:150px">공정</th><th class="r" style="width:120px">견적 금액</th><th class="r" style="width:120px">나간 돈</th>
+          <th class="r" style="width:120px">남은 돈</th><th class="r" style="width:70px">마진율</th><th style="width:110px">쓴 비율</th><th class="r" style="width:50px">건수</th></tr></thead>
         <tbody>${c.list.map(x=>{
-          const used=x.amt?Math.min(100,x.spent/x.amt*100):(x.spent?100:0);
+          const used=x.amt>0?Math.min(100,x.spent/x.amt*100):(x.spent?100:0);
           const op=ANAL_OPEN===x.name;
-          return `<tr class="${op?'open':''}">
+          return `<tr class="${op?'open':''}"${x.own?' style="background:var(--surface2)"':''}>
             <td><span class="pname" data-act="spOpen" data-p="${esc(x.name)}">${esc(x.name)} ${op?'▾':'›'}</span></td>
-            <td class="r">${x.amt?won(x.amt):'—'}</td>
+            <td class="r"><b>${x.amt?money(x.amt):'—'}</b></td>
             <td class="r">${x.spent?won(x.spent):'—'}</td>
             <td class="r ${x.left<0?'minus':'plus'}">${x.spent?money(x.left):'—'}</td>
             <td class="r ${x.left<0?'minus':'plus'}">${x.spent&&x.amt?x.rate.toFixed(0)+'%':'—'}</td>
-            <td><span class="abar ${x.spent>x.amt?'over':''}"><i style="width:${used}%"></i></span></td>
+            <td>${x.amt>0?`<span class="abar ${x.spent>x.amt?'over':''}"><i style="width:${used}%"></i></span>`:''}</td>
             <td class="r">${x.n||'—'}</td></tr>
             ${op?`<tr><td colspan="7" style="padding:0;background:var(--surface2)">${spList(p,x.name)}</td></tr>`:''}`;
         }).join('')}</tbody>
-        <tfoot><tr class="sum"><td>합계</td><td class="r">${won(c.sub)}</td><td class="r">${won(c.spent)}</td>
-          <td class="r ${c.sub-c.spent<0?'minus':'plus'}">${money(c.sub-c.spent)}</td>
-          <td class="r ${c.sub-c.spent<0?'minus':'plus'}">${c.sub?((c.sub-c.spent)/c.sub*100).toFixed(0)+'%':'—'}</td>
+        <tfoot><tr class="sum"><td class="l">합계</td><td class="r">${won(c.total)}</td><td class="r">${won(c.spent)}</td>
+          <td class="r ${c.margin<0?'minus':'plus'}">${money(c.margin)}</td>
+          <td class="r ${c.margin<0?'minus':'plus'}">${c.total?c.rate.toFixed(0)+'%':'—'}</td>
           <td></td><td class="r">${(p.spend||[]).length}</td></tr></tfoot></table></div>`
-      :`<div class="empty"><p>먼저 <b>견적</b> 화면의 <b>견적 만들기</b>에서 공정별 금액을 넣어주세요.<br>그 금액이 원가분석의 기준이 됩니다.</p>
+      :`<div class="empty"><p>먼저 <b>견적</b> 화면의 <b>견적 만들기</b>에서 공정별 금액을 넣어주세요.</p>
         <div class="row" style="justify-content:center;margin-top:12px"><button class="btn pri" data-act="goQuote">견적 만들러 가기</button></div></div>`}
+      <p class="hint-line">공정 금액은 견적서에 적은 그대로이고, <b>본 견적 + 추가·감액을 합친</b> 금액입니다.
+        <b>공과잡비</b>는 단수조정까지 더해 한 항목으로 잡았고, 거기에도 나간 돈을 적을 수 있습니다.
+        부가세는 기본으로 뺍니다 — 나라에 내는 돈이라 마진이 아니기 때문입니다.</p>
     </section>
   </div>`;
 }
 function spForm(p,rows){
   const d=ANAL_DRAFT;
-  const opts=[...rows.map(r=>r.name),'기타'];
+  const opts=[...new Set([...rows.map(r=>r.name),'기타'])];
   return `<div class="spform">
     <div class="spgrid">
       <label class="fl">공정<select class="f" data-bind="sp:proc">${opts.map(o=>`<option ${d.proc===o?'selected':''}>${esc(o)}</option>`).join('')}</select></label>
@@ -2120,7 +2216,7 @@ async function exportAnalXlsx(){
     head(siteAddr(p)+' 원가분석');
     ws.addRow(['만든 날짜', krDate(today())]);
     ws.addRow([]);
-    ws.addRow(['견적 합계(받을 돈)',c.total]).font={bold:true};
+    ws.addRow(['계약금액(분석 기준)',c.total]).font={bold:true};
     ws.addRow(['지금까지 나간 돈',c.spent]);
     ws.addRow(['남은 돈(마진)',c.margin]).font={bold:true};
     ws.addRow(['마진율',(c.rate/100)]);
@@ -2130,11 +2226,11 @@ async function exportAnalXlsx(){
     const h1=ws.addRow(['공정','견적 금액','나간 돈','남은 돈','마진율','건수']);
     h1.font={bold:true}; h1.eachCell(cl=>{ cl.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFEFF2EF'}}; });
     c.list.forEach(x=>{
-      const r=ws.addRow([x.name,x.amt,x.spent,x.left,x.amt?x.rate/100:null,x.n]);
+      const r=ws.addRow([x.name+(x.own?' (따로)':''),x.amt,x.spent,x.left,x.amt?x.rate/100:null,x.n]);
       r.getCell(2).numFmt='#,##0'; r.getCell(3).numFmt='#,##0'; r.getCell(4).numFmt='#,##0'; r.getCell(5).numFmt='0%';
       if(x.left<0) r.font={color:{argb:'FFA23B2C'}};
     });
-    const t1=ws.addRow(['합계',c.sub,c.spent,c.sub-c.spent,c.sub?(c.sub-c.spent)/c.sub:null,(p.spend||[]).length]);
+    const t1=ws.addRow(['합계',c.total,c.spent,c.margin,c.total?c.margin/c.total:null,(p.spend||[]).length]);
     t1.font={bold:true}; [2,3,4].forEach(i=>t1.getCell(i).numFmt='#,##0'); t1.getCell(5).numFmt='0%';
     ws.addRow([]);
     head('나간 돈 내역');
@@ -2144,6 +2240,16 @@ async function exportAnalXlsx(){
       const r=ws.addRow([s.date||'',s.proc||'',s.who||'',num(s.amt),spShots(p,s.id).length+'장',s.memo||'']);
       r.getCell(4).numFmt='#,##0';
     });
+    ws.addRow([]);
+    head('입금내역');
+    const k=payCalc(p);
+    const h3=ws.addRow(['날짜','구분','금액','메모']); h3.font={bold:true};
+    h3.eachCell(cl=>{ cl.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFEFF2EF'}}; });
+    (p.pays||[]).slice().sort((a,b)=>String(a.d||'').localeCompare(String(b.d||''))).forEach(x=>{
+      const r=ws.addRow([x.d||'',x.k||'',num(x.amt),x.memo||'']); r.getCell(3).numFmt='#,##0';
+    });
+    const t3=ws.addRow(['받은 돈 합계','',k.got,'']); t3.font={bold:true}; t3.getCell(3).numFmt='#,##0';
+    const t4=ws.addRow(['남은 미수금','',k.left,'']); t4.font={bold:true}; t4.getCell(3).numFmt='#,##0';
     const buf=await wb.xlsx.writeBuffer();
     const blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
     const a=document.createElement('a');
@@ -2392,7 +2498,7 @@ function ctData(e){
   const co=S.company||{}, p=S.projects.get(e.pid)||{}, c=calcEst(e);
   const x=e.contract||{};
   /* 견적 만들기에서 만든 금액이 있으면 그걸 먼저 씁니다 */
-  const qt=quoteTotal(p), base = qt>0 ? qt : c.total;
+  const qt=(p.quote?contractCalc(p).total:0), base = qt>0 ? qt : c.total;
   const total = x.amount===''||x.amount===undefined ? base : num(x.amount);
   const auto = splitPay(total);
   const pay={}; PAYKEYS.forEach(({k})=>{
@@ -4939,12 +5045,16 @@ document.addEventListener('input',ev=>{
     return; }
   else if(kind==='sp'){ ANAL_DRAFT[rest[0]]=val; return; }
   else if(kind==='spend'){ const p=curProj(); const s=(p?.spend||[]).find(x=>x.id===rest[0]); if(!s) return; s[rest[1]]=val; saveProj(p); }
-  else if(kind==='q'){ const p=curProj(); if(!p) return; const q=ensureQuote(p); q[rest[0]]=val; saveProj(p); refreshQuote(); }
-  else if(kind==='qrow'){ const p=curProj(); if(!p) return; const q=ensureQuote(p); const i=+rest[0], f=+rest[1];
+  else if(kind==='q'){ const p=curProj(); if(!p) return; const q=sheetAt(p); q[rest[0]]=val; saveProj(p); refreshQuote(); }
+  else if(kind==='pay'){ const p=curProj(); const x=(p?.pays||[]).find(y=>y.id===rest[0]); if(!x) return;
+    x[rest[1]] = rest[1]==='amt' ? num(val) : val;
+    saveProj(p);
+    if(rest[1]==='amt'||rest[1]==='d') payRecalc(); }
+  else if(kind==='qrow'){ const p=curProj(); if(!p) return; const q=sheetAt(p); const i=+rest[0], f=+rest[1];
     if(!q.rows[i]) return;
     q.rows[i][f] = f===2 ? num(val) : val;
     saveProj(p); refreshQuote(); }
-  else if(kind==='qex'){ const p=curProj(); if(!p) return; const q=ensureQuote(p); const x=q.extras[+rest[0]]; if(!x) return;
+  else if(kind==='qex'){ const p=curProj(); if(!p) return; const q=sheetAt(p); const x=q.extras[+rest[0]]; if(!x) return;
     x[rest[1]] = rest[1]==='v' ? num(val) : val;
     saveProj(p);
     if(rest[1]==='base'||rest[1]==='mode') render(); else refreshQuote(); }
@@ -5058,6 +5168,7 @@ document.addEventListener('change',ev=>{
   if(a==='revProc'&&t.value){ IMPORT.items.forEach(x=>{ if(x.on) x.process=t.value; }); saveImportDraft(true); render(); }
   if(a==='revUnitAll'&&t.value){ IMPORT.items.forEach((x,i)=>{ if(x.on){ x.unit=t.value; CUSTOM_UNIT_REV.delete(i); } }); saveImportDraft(true); render(); }
   if(t.id==='ct-amount'){ render(); return; }   // 공사대금을 고치면 지급 일정도 다시 나눠 보여줍니다
+  if(a==='analVatBox'){ const p=curProj(); if(p){ p.analVat=t.checked; saveProj(p); render(); } return; }
   if(a==='qPickSel'){ QPICK_ID=t.value; return; }
   if(a==='schedFrom'){ const p=curProj(); if(p&&t.value){ p.schedStart=t.value; saveProj(p); render(); } return; }
   if(a==='schedDays'){ const p=curProj(); if(p){ p.schedDays=Math.max(7,Math.min(150,+t.value||33)); saveProj(p); render(); } return; }
@@ -5332,18 +5443,18 @@ document.addEventListener('click',async ev=>{
       document.body.classList.add('printing-xls'); setTimeout(()=>{ window.print(); setTimeout(()=>document.body.classList.remove('printing-xls'),600); },80); break; }
     case 'estOpen': EST_OPEN=!EST_OPEN; ls.set('estOpen',EST_OPEN?'1':'0'); render(); break;
     case 'estTab': EST_TAB = ['contract','quote'].includes(t.dataset.m)?t.dataset.m:'file'; ls.set('estTab',EST_TAB); QPASTE=false; render(); window.scrollTo(0,0); break;
-    case 'qAdd': { const p=curProj(); const q=ensureQuote(p); q.rows.push(['','',0]); saveProj(p); render();
+    case 'qAdd': { const p=curProj(); const q=sheetAt(p); q.rows.push(['','',0]); saveProj(p); render();
       setTimeout(()=>document.querySelector('.qtbl tbody tr:last-child input')?.focus(),60); break; }
-    case 'qDel': { const p=curProj(); const q=ensureQuote(p); q.rows.splice(+t.dataset.i,1); if(!q.rows.length) q.rows=[['','',0]]; saveProj(p); render(); break; }
-    case 'qAddEx': { const p=curProj(); const q=ensureQuote(p); q.extras.push({name:'',base:'run',mode:'%',v:0}); saveProj(p); render(); break; }
-    case 'qDelEx': { const p=curProj(); const q=ensureQuote(p); q.extras.splice(+t.dataset.i,1); saveProj(p); render(); break; }
+    case 'qDel': { const p=curProj(); const q=sheetAt(p); q.rows.splice(+t.dataset.i,1); if(!q.rows.length) q.rows=[['','',0]]; saveProj(p); render(); break; }
+    case 'qAddEx': { const p=curProj(); const q=sheetAt(p); q.extras.push({name:'',base:'run',mode:'%',v:0}); saveProj(p); render(); break; }
+    case 'qDelEx': { const p=curProj(); const q=sheetAt(p); q.extras.splice(+t.dataset.i,1); saveProj(p); render(); break; }
     case 'qRead': QPICK=true; render(); break;
     case 'qPickX': QPICK=false; render(); break;
     case 'qReadX': QREAD=null; render(); break;
     case 'qReadDevice': QPICK=false; render(); $('#fileRead').click(); break;
     case 'qReadPick': { const p=curProj(); const f=[...(p?.excel||[]),...(p?.files||[])].find(x=>x.id===(t.dataset.id||QPICK_ID)); if(!f){ toast('파일을 고르세요'); break; }
       QPICK=false; qReadUrl(f.url,f.name); break; }
-    case 'qReadOk': { const p=curProj(); const q=ensureQuote(p);
+    case 'qReadOk': { const p=curProj(); const q=sheetAt(p);
       const picked=(QREAD?.rows||[]).filter(r=>r.on&&(r.name||num(r.amt)));
       if(!picked.length){ toast('고른 줄이 없습니다'); break; }
       q.rows=picked.map(r=>[r.name,'',num(r.amt)]);
@@ -5355,6 +5466,18 @@ document.addEventListener('click',async ev=>{
       if(ex.length) q.extras=ex;
       saveProj(p); QREAD=null; render();
       toast('공정 '+picked.length+'개를 넣었습니다. 틀린 곳은 바로 고치세요'); break; }
+    case 'qSheet': QSHEET=+t.dataset.i||0; QPASTE=false; render(); window.scrollTo(0,0); break;
+    case 'qAddSheet': { const p=curProj(); ensureQuote(p); p.extraQuotes=p.extraQuotes||[]; p.extraQuotes.push(newSheet(p));
+      QSHEET=p.extraQuotes.length; saveProj(p); render(); toast('추가공사 차수를 만들었습니다'); break; }
+    case 'qDelSheet': { const p=curProj(); const i=QSHEET-1; if(i<0) break;
+      const nm=(p.extraQuotes||[])[i]?.name||'이 차수';
+      if(!await askConfirm({title:'“'+nm+'”를 지울까요?',lines:['이 차수에 적은 금액이 모두 없어집니다'],ok:'네, 지웁니다',cancel:'아니요',danger:true})) break;
+      p.extraQuotes.splice(i,1); QSHEET=0; saveProj(p); render(); break; }
+    case 'payAdd': { const p=curProj(); if(!p) break; p.pays=p.pays||[];
+      p.pays.push({id:uid(),d:today(),k:p.pays.length?PAY_KINDS[Math.min(p.pays.length,4)]:'계약금',amt:0,memo:''});
+      saveProj(p); render(); setTimeout(()=>document.querySelector('.paytbl tr:last-child input.won')?.focus(),60); break; }
+    case 'payDel': { const p=curProj(); p.pays=(p.pays||[]).filter(x=>x.id!==t.dataset.id); saveProj(p); render(); break; }
+    case 'analVat': { const p=curProj(); p.analVat=!p.analVat; saveProj(p); render(); break; }
     case 'qPaste': QPASTE=!QPASTE; render(); if(QPASTE) setTimeout(()=>document.getElementById('qPasteTa')?.focus(),60); break;
     case 'qPasteOk': { const ta=document.getElementById('qPasteTa'); if(!ta) break;
       const out=[];
@@ -5363,7 +5486,7 @@ document.addEventListener('click',async ev=>{
         if(m2) out.push([m2[1].trim(),'',num(m2[2])]);
       });
       if(!out.length){ toast('읽을 수 있는 줄이 없습니다. 「공정이름 금액」 모양으로 넣어주세요'); break; }
-      const p=curProj(); const q=ensureQuote(p); q.rows=out; saveProj(p); QPASTE=false; render();
+      const p=curProj(); const q=sheetAt(p); q.rows=out; saveProj(p); QPASTE=false; render();
       toast(out.length+'개 공정을 넣었습니다'); break; }
     case 'delExcel': { const p=curProj(); const f=(p?.excel||[]).find(x=>x.id===t.dataset.id); if(!f) break;
       if(await askConfirm({title:`“${f.name}”을(를) 지울까요?`,lines:['이 현장에서 사라집니다'],ok:'네, 지웁니다',cancel:'아니요'})){
@@ -5494,6 +5617,7 @@ document.addEventListener('click',async ev=>{
         n.tasks.push({id:uid(),proc:pr.k,name:P.n,start:st,end:st,worker:'',status:'예정',memo:''}); });
       S.projects.set(n.id,n); S.curPid=n.id; ls.set('curPid',n.id); saveProj(n); HOME_SEL=n.id; render(); toast('견적의 공정으로 현장을 만들었습니다'); break; }
     case 'spAdd': ANAL_ADD=!ANAL_ADD; if(ANAL_ADD){ const p=curProj(); ANAL_DRAFT={proc:ANAL_OPEN||(analRows(p)[0]?.name||'기타'),date:today(),who:'',amt:'',memo:''}; } render(); break;
+    case 'analVatBox': break;
     case 'spOpen': { const n=t.dataset.p||''; ANAL_OPEN = (!n||n===ANAL_OPEN)?'':n; render(); break; }
     case 'spSave': { if(spSaveDraft()) toast('적었습니다'); break; }
     case 'spSaveShot': { const id=spSaveDraft(); if(id){ PLAN_SPEND=id; PLAN_TASK=''; PLAN_FOLDER=''; $('#filePlan').setAttribute('accept','image/*,application/pdf'); $('#filePlan').click(); } break; }
@@ -5814,6 +5938,7 @@ async function connectSupabase(){
   registerSW();
   if(session) sync();
 })();
+
 
 
 
