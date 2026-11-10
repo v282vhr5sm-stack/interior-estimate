@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '7.2.2';
+const APP_VERSION = '7.3.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -2319,18 +2319,27 @@ function qReadBox(p){
   </div></div>`;
 }
 /* 어느 파일을 읽을지 고르기 */
-let QPICK=false;
+let QPICK=false, QPICK_ID='';
 function qPickBox(p){
   if(!QPICK) return '';
   const ok=f=>/\.(xlsx|xlsm|csv)$/i.test(f.name||'')||/pdf/i.test(f.type||'')||/\.pdf$/i.test(f.name||'')||isImg(f)||!/\.[A-Za-z0-9]{1,5}$/.test(f.name||'');
-  const fs2=[...(p.excel||[]).filter(ok).map(f=>({f,w:'견적 파일'})), ...(p.files||[]).filter(ok).map(f=>({f,w:'사진·도면'}))];
+  const all=[...(p.excel||[]).filter(ok), ...(p.files||[]).filter(ok)];
+  const xl=all.filter(f=>/\.(xlsx|xlsm|csv)$/i.test(f.name||''));
+  const et=all.filter(f=>!xl.includes(f));
+  if(!QPICK_ID || !all.some(f=>f.id===QPICK_ID)) QPICK_ID=(xl[0]||et[0]||{}).id||'';
+  const opt=f=>`<option value="${esc(f.id)}" ${QPICK_ID===f.id?'selected':''}>${esc(f.name)}</option>`;
   return `<div class="modal"><div class="modal-b" style="width:min(520px,94vw)">
-    <div class="row"><b style="flex:1">어느 견적서를 읽을까요?</b></div>
-    ${fs2.length?`<ul class="cfiles" style="margin-top:10px">${fs2.map(({f,w})=>`<li class="cfile">
-      <button class="btn" style="flex:1;text-align:left" data-act="qReadPick" data-id="${esc(f.id)}"><b>${esc(f.name)}</b> <span class="muted small">· ${esc(w)}</span></button></li>`).join('')}</ul>`
-      :'<p class="muted small" style="margin:10px 0 0">이 현장에 올려 둔 견적서 파일이 없습니다.</p>'}
-    <div class="row" style="margin-top:12px;justify-content:space-between">
-      <button class="btn pri sm" data-act="qReadDevice">기기에서 고르기</button>
+    <b>어느 견적서를 읽을까요?</b>
+    ${all.length?`<select class="f" data-act-change="qPickSel" style="margin-top:11px">
+        ${xl.length?`<optgroup label="엑셀 — 한 자도 안 틀립니다">${xl.map(opt).join('')}</optgroup>`:''}
+        ${et.length?`<optgroup label="PDF · 사진 — 숫자가 틀릴 수 있습니다">${et.map(opt).join('')}</optgroup>`:''}
+      </select>
+      <p class="muted small" style="margin:8px 0 0">올린 파일은 그대로 보관됩니다. 읽어도 원본은 바뀌지 않습니다.</p>`
+      :'<p class="muted small" style="margin:10px 0 0">이 현장에 올려 둔 파일이 없습니다. 아래에서 고르시면 읽고 나서 여기에 보관해 둡니다.</p>'}
+    <div class="row" style="margin-top:13px">
+      ${all.length?`<button class="btn pri sm" data-act="qReadPick">이 파일 읽기</button>`:''}
+      <button class="btn sm" data-act="qReadDevice">기기에서 고르기</button>
+      <span class="spacer"></span>
       <button class="btn sm" data-act="qPickX">닫기</button></div>
   </div></div>`;
 }
@@ -5027,6 +5036,7 @@ document.addEventListener('change',ev=>{
   if(a==='revProc'&&t.value){ IMPORT.items.forEach(x=>{ if(x.on) x.process=t.value; }); saveImportDraft(true); render(); }
   if(a==='revUnitAll'&&t.value){ IMPORT.items.forEach((x,i)=>{ if(x.on){ x.unit=t.value; CUSTOM_UNIT_REV.delete(i); } }); saveImportDraft(true); render(); }
   if(t.id==='ct-amount'){ render(); return; }   // 공사대금을 고치면 지급 일정도 다시 나눠 보여줍니다
+  if(a==='qPickSel'){ QPICK_ID=t.value; return; }
   if(a==='schedFrom'){ const p=curProj(); if(p&&t.value){ p.schedStart=t.value; saveProj(p); render(); } return; }
   if(a==='schedDays'){ const p=curProj(); if(p){ p.schedDays=Math.max(7,Math.min(150,+t.value||33)); saveProj(p); render(); } return; }
   if(a==='pickProj'){ selectSite(t.value); render(); }
@@ -5309,7 +5319,7 @@ document.addEventListener('click',async ev=>{
     case 'qPickX': QPICK=false; render(); break;
     case 'qReadX': QREAD=null; render(); break;
     case 'qReadDevice': QPICK=false; render(); $('#fileRead').click(); break;
-    case 'qReadPick': { const p=curProj(); const f=[...(p?.excel||[]),...(p?.files||[])].find(x=>x.id===t.dataset.id); if(!f) break;
+    case 'qReadPick': { const p=curProj(); const f=[...(p?.excel||[]),...(p?.files||[])].find(x=>x.id===(t.dataset.id||QPICK_ID)); if(!f){ toast('파일을 고르세요'); break; }
       QPICK=false; qReadUrl(f.url,f.name); break; }
     case 'qReadOk': { const p=curProj(); const q=ensureQuote(p);
       const picked=(QREAD?.rows||[]).filter(r=>r.on&&(r.name||num(r.amt)));
@@ -5548,7 +5558,10 @@ $('#fileVendorSheet').addEventListener('change',async ev=>{
   ev.target.value='';
 });
 $('#fileBackup').addEventListener('change',ev=>{ if(ev.target.files[0]) importBackup(ev.target.files[0]); ev.target.value=''; });
-$('#fileRead')?.addEventListener('change',ev=>{ const f=ev.target.files[0]; ev.target.value=''; if(f) qReadFile(f,f.name); });
+$('#fileRead')?.addEventListener('change',async ev=>{ const f=ev.target.files[0]; ev.target.value=''; if(!f) return;
+  /* 읽기만 하고 버리지 않습니다 — 올린 그대로 현장에 보관해 둡니다 */
+  if(sb&&session&&curProj()){ try{ await uploadExcel(f); }catch(e){ console.warn(e); } }
+  qReadFile(f,f.name); });
 $('#fileExcel').addEventListener('change',ev=>{ const d=PICK_DOC; PICK_DOC=''; uploadExcelFiles(ev.target.files,d); ev.target.value=''; });
 let PLAN_TASK='';
 $('#filePlan').addEventListener('change',async ev=>{ const fs=ev.target.files;
@@ -5779,6 +5792,7 @@ async function connectSupabase(){
   registerSW();
   if(session) sync();
 })();
+
 
 
 
