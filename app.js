@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '7.4.0';
+const APP_VERSION = '7.4.1';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -1002,7 +1002,7 @@ function estDoc(f){ return f && f.doc==='contract' ? 'contract' : 'est'; }
 function guessDoc(name){ return /계약/.test(name||'') ? 'contract' : 'est'; }
 const EST_DOC_LABEL={est:'견적서',contract:'계약서'};
 let PICK_DOC='';
-let EST_TAB = ['contract','quote'].includes(ls.get('estTab')) ? ls.get('estTab') : 'file';   // 파일 / 계약서 만들기 / 견적 만들기
+let EST_TAB = ['contract','quote','extra'].includes(ls.get('estTab')) ? ls.get('estTab') : 'file';   // 파일 / 계약서 / 견적 / 추가공사
 function renderExcel(){
   const p=curProj();
   if(!p) return `<div class="panel"><div class="empty">먼저 현장을 고르거나 만들어주세요.
@@ -1064,9 +1064,9 @@ function renderEst(){
   return `<div class="stack">
     <div class="row esthead no-print">
       ${projPicker(true)}
-      <div class="seg">${b('file','파일')}${b('contract','계약서 만들기')}${b('quote','견적 만들기')}</div>
+      <div class="seg">${b('file','파일')}${b('contract','계약서 만들기')}${b('quote','견적 만들기')}${b('extra','추가공사')}</div>
     </div>
-    ${m==='contract' ? renderContract(p) : m==='quote' ? renderQuote(p) : renderExcel()+docSections(p)}
+    ${m==='contract' ? renderContract(p) : (m==='quote'||m==='extra') ? renderQuote(p) : renderExcel()+docSections(p)}
   </div>`;
 }
 /* 이 현장에 딸린 견적(계약서가 값을 꺼내 쓰는 자리)을 없으면 만들어 둡니다 */
@@ -1905,15 +1905,20 @@ const quoteTotal=p=>p&&p.quote?quoteCalc(p.quote).total:0;
 function quoteExp(q){ const d=new Date((q.date||today())+'T00:00:00'); d.setDate(d.getDate()+num(q.validDays)); return isNaN(d)?'':krDate(dstr(d)); }
 
 function renderQuote(p){
+  const isAdd = EST_TAB==='extra';
+  if(isAdd){ ensureQuote(p); p.extraQuotes=p.extraQuotes||[];
+    if(!p.extraQuotes.length){ p.extraQuotes.push(newSheet(p)); saveProj(p); }
+    if(QSHEET<1||QSHEET>p.extraQuotes.length) QSHEET=1;
+  } else QSHEET=0;
   const sheets=quoteSheets(p);
   const q=sheetAt(p), c=quoteCalc(q), K=contractCalc(p);
-  const isAdd=QSHEET>0;
   const f=(k,l,t='text',ph='')=>`<label class="fl">${l}<input class="f"${t==='date'?' type="date"':t==='num'?' type="number"':''} data-bind="q:${k}" value="${esc(q[k]??'')}" placeholder="${ph}"></label>`;
   return `
     <section class="panel no-print">
-      <div class="panel-h"><h3>견적 만들기</h3>
-        <div class="seg">${sheets.map((x,i)=>`<button class="btn sm${i===QSHEET?' pri':''}" data-act="qSheet" data-i="${i}">${esc(i===0?'본 견적':(x.name||'추가 '+i+'차'))}</button>`).join('')}
-          <button class="btn sm" data-act="qAddSheet" title="추가공사 견적을 따로 만듭니다">+ 추가공사</button></div>
+      <div class="panel-h"><h3>${isAdd?'추가공사':'견적 만들기'}</h3>
+        ${isAdd?`<div class="seg">${sheets.slice(1).map((x,i)=>`<button class="btn sm${i+1===QSHEET?' pri':''}" data-act="qSheet" data-i="${i+1}">${esc(x.name||'추가 '+(i+1)+'차')}</button>`).join('')}
+          <button class="btn sm" data-act="qAddSheet" title="추가공사 차수를 하나 더 만듭니다">+ 차수</button></div>`
+          :'<span class="muted small">공정 이름과 금액만 적으면 됩니다</span>'}
         <span class="spacer"></span>
         <button class="btn pri sm" data-act="qRead">📄 견적서 읽어서 채우기</button>
         <button class="btn sm" data-act="qPaste">한 번에 채우기</button>
@@ -1969,7 +1974,7 @@ function renderQuote(p){
       <div class="qsum"><span class="muted small">${isAdd?'이 차수 합계':'합계'}</span><span class="big" id="qTotal">${won(c.total)}원</span>
         <span class="spacer"></span><span class="muted small" id="qWords">금 ${krWords(c.total)}원정</span></div>
     </section>
-    ${sheets.length>1?`<section class="panel no-print">
+    ${K.sheets.length>1?`<section class="panel no-print">
       <div class="panel-h"><h3>계약 금액</h3><span class="muted small">본 견적 + 추가공사</span></div>
       <div style="overflow-x:auto"><table class="atbl">
         <thead><tr><th>차수</th><th>날짜</th><th class="r">공정 금액</th><th class="r">그 밖</th><th class="r">합계</th></tr></thead>
@@ -5380,7 +5385,7 @@ document.addEventListener('click',async ev=>{
     case 'toggleAllProcs': { const e=cur(); if(!e) break;
       const close=!e.processes.every(p=>isProcClosed(e,p));
       e.processes.forEach(p=>setProcClosed(e,p,close)); render(); break; }
-    case 'print': if(VIEW==='doc'||(VIEW==='est'&&(EST_TAB==='contract'||EST_TAB==='quote'))) prepPrint(); flushWrites(); window.print(); break;
+    case 'print': if(VIEW==='doc'||(VIEW==='est'&&['contract','quote','extra'].includes(EST_TAB))) prepPrint(); flushWrites(); window.print(); break;
     case 'printPreview': showPrintPreview(); break;
     case 'download': downloadDoc(); break;
     case 'syncNow': if(!sb||!session){ VIEW='set'; render(); } else sync(); break;
@@ -5442,7 +5447,13 @@ document.addEventListener('click',async ev=>{
     case 'printExcel': { const st=document.getElementById('xlsStage'); if(!st){ toast('먼저 파일을 고르세요.'); break; }
       document.body.classList.add('printing-xls'); setTimeout(()=>{ window.print(); setTimeout(()=>document.body.classList.remove('printing-xls'),600); },80); break; }
     case 'estOpen': EST_OPEN=!EST_OPEN; ls.set('estOpen',EST_OPEN?'1':'0'); render(); break;
-    case 'estTab': EST_TAB = ['contract','quote'].includes(t.dataset.m)?t.dataset.m:'file'; ls.set('estTab',EST_TAB); QPASTE=false; render(); window.scrollTo(0,0); break;
+    case 'estTab': { EST_TAB = ['contract','quote','extra'].includes(t.dataset.m)?t.dataset.m:'file'; ls.set('estTab',EST_TAB); QPASTE=false;
+      const p=curProj();
+      if(EST_TAB==='quote') QSHEET=0;
+      if(EST_TAB==='extra'&&p){ ensureQuote(p); p.extraQuotes=p.extraQuotes||[];
+        if(!p.extraQuotes.length){ p.extraQuotes.push(newSheet(p)); saveProj(p); }
+        if(QSHEET<1||QSHEET>p.extraQuotes.length) QSHEET=1; }
+      render(); window.scrollTo(0,0); break; }
     case 'qAdd': { const p=curProj(); const q=sheetAt(p); q.rows.push(['','',0]); saveProj(p); render();
       setTimeout(()=>document.querySelector('.qtbl tbody tr:last-child input')?.focus(),60); break; }
     case 'qDel': { const p=curProj(); const q=sheetAt(p); q.rows.splice(+t.dataset.i,1); if(!q.rows.length) q.rows=[['','',0]]; saveProj(p); render(); break; }
@@ -5468,11 +5479,14 @@ document.addEventListener('click',async ev=>{
       toast('공정 '+picked.length+'개를 넣었습니다. 틀린 곳은 바로 고치세요'); break; }
     case 'qSheet': QSHEET=+t.dataset.i||0; QPASTE=false; render(); window.scrollTo(0,0); break;
     case 'qAddSheet': { const p=curProj(); ensureQuote(p); p.extraQuotes=p.extraQuotes||[]; p.extraQuotes.push(newSheet(p));
-      QSHEET=p.extraQuotes.length; saveProj(p); render(); toast('추가공사 차수를 만들었습니다'); break; }
+      QSHEET=p.extraQuotes.length; EST_TAB='extra'; ls.set('estTab',EST_TAB); saveProj(p); render(); toast('추가공사 차수를 만들었습니다'); break; }
     case 'qDelSheet': { const p=curProj(); const i=QSHEET-1; if(i<0) break;
       const nm=(p.extraQuotes||[])[i]?.name||'이 차수';
       if(!await askConfirm({title:'“'+nm+'”를 지울까요?',lines:['이 차수에 적은 금액이 모두 없어집니다'],ok:'네, 지웁니다',cancel:'아니요',danger:true})) break;
-      p.extraQuotes.splice(i,1); QSHEET=0; saveProj(p); render(); break; }
+      p.extraQuotes.splice(i,1);
+      if(!p.extraQuotes.length){ EST_TAB='quote'; ls.set('estTab',EST_TAB); QSHEET=0; }
+      else QSHEET=1;
+      saveProj(p); render(); break; }
     case 'payAdd': { const p=curProj(); if(!p) break; p.pays=p.pays||[];
       p.pays.push({id:uid(),d:today(),k:p.pays.length?PAY_KINDS[Math.min(p.pays.length,4)]:'계약금',amt:0,memo:''});
       saveProj(p); render(); setTimeout(()=>document.querySelector('.paytbl tr:last-child input.won')?.focus(),60); break; }
@@ -5627,7 +5641,7 @@ document.addEventListener('click',async ev=>{
       if(sh && !await askConfirm({title:'이 줄을 지울까요?',lines:['붙여 둔 사진 '+sh+'장은 사진·도면 칸에 그대로 남습니다'],ok:'네, 지웁니다',cancel:'아니요',danger:true})) break;
       p.spend=(p.spend||[]).filter(x=>x.id!==id); saveProj(p); render(); toast('지웠습니다'); break; }
     case 'analXlsx': exportAnalXlsx(); break;
-    case 'goQuote': VIEW='est'; EST_TAB='quote'; ls.set('view',VIEW); ls.set('estTab',EST_TAB); render(); window.scrollTo(0,0); break;
+    case 'goQuote': VIEW='est'; EST_TAB='quote'; QSHEET=0; ls.set('view',VIEW); ls.set('estTab',EST_TAB); render(); window.scrollTo(0,0); break;
     case 'startWork': startWork(curProj()); break;
     case 'endWork': endWork(curProj()); break;
     case 'reportPdf': reportPdf(curProj()); break;
@@ -5938,6 +5952,7 @@ async function connectSupabase(){
   registerSW();
   if(session) sync();
 })();
+
 
 
 
