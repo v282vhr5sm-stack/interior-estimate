@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '7.4.2';
+const APP_VERSION = '7.4.3';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -1085,19 +1085,23 @@ function ensureEst(p){
   return e;
 }
 /* 예전 계약서 작성 화면 그대로 */
+/* 상호·대표·계좌 — 견적서와 계약서, 추가공사가 모두 이걸 씁니다 */
+function coBox(where){
+  const co=S.company||{};
+  const f=(k,l,ph='')=>`<label class="fl">${l}<input class="f" ${k==='phone'?'type="tel"':''} id="co-${k}" data-bind="co:${k}" value="${esc(co[k]||'')}" placeholder="${ph}"></label>`;
+  return `<details class="co panel no-print" ${co.name?'':'open'}><summary>우리 업체 정보 ${co.name?'· '+esc(co.name):'('+(where||'견적서·계약서')+'에 들어갑니다)'}</summary>
+    <div class="panel-b co-grid">${f('name','상호','○○인테리어')}${f('ceo','대표자')}${f('bizNo','사업자등록번호','000-00-00000')}${f('phone','연락처')}${f('email','이메일')}${f('address','주소')}${f('bankName','입금 은행','국민은행')}${f('bankNo','계좌번호','000000-00-000000')}${f('bankHolder','예금주','홍길동')}
+    <label class="fl">대표 도장 <span class="muted">((인) 자리에 찍힙니다)</span>
+      <div class="row">${co.stamp?`<img src="${esc(co.stamp)}" alt="도장" class="stamp-prev">`:''}
+        <button class="btn sm" data-act="pickStamp">${co.stamp?'바꾸기':'도장 사진 넣기'}</button>
+        ${co.stamp?'<button class="btn ghost sm danger" data-act="clearStamp">지우기</button>':''}</div></label>
+    </div></details>`;
+}
 function renderContract(p){
   const e=ensureEst(p);
   DOC_MODE='contract';
-  const co=S.company||{};
-  const f=(k,l,ph='')=>`<label class="fl">${l}<input class="f" ${k==='phone'?'type="tel"':''} id="co-${k}" data-bind="co:${k}" value="${esc(co[k]||'')}" placeholder="${ph}"></label>`;
   return `
-    <details class="co panel no-print" ${co.name?'':'open'}><summary>우리 업체 정보 ${co.name?'· '+esc(co.name):'(계약서 시공자란에 들어갑니다)'}</summary>
-      <div class="panel-b co-grid">${f('name','상호','○○인테리어')}${f('ceo','대표자')}${f('bizNo','사업자등록번호','000-00-00000')}${f('phone','연락처')}${f('email','이메일')}${f('address','주소')}${f('bankName','입금 은행','국민은행')}${f('bankNo','계좌번호','000000-00-000000')}${f('bankHolder','예금주','홍길동')}
-      <label class="fl">대표 도장 <span class="muted">((인) 자리에 찍힙니다)</span>
-        <div class="row">${co.stamp?`<img src="${esc(co.stamp)}" alt="도장" class="stamp-prev">`:''}
-          <button class="btn sm" data-act="pickStamp">${co.stamp?'바꾸기':'도장 사진 넣기'}</button>
-          ${co.stamp?'<button class="btn ghost sm danger" data-act="clearStamp">지우기</button>':''}</div></label>
-      </div></details>
+    ${coBox('계약서 시공자란')}
     ${renderContractForm(e)}
     <div class="doc-stage" id="docStage">${contractHTML(e)}</div>`;
 }
@@ -1914,6 +1918,7 @@ function renderQuote(p){
   const q=sheetAt(p), c=quoteCalc(q), K=contractCalc(p);
   const f=(k,l,t='text',ph='')=>`<label class="fl">${l}<input class="f"${t==='date'?' type="date"':t==='num'?' type="number"':''} data-bind="q:${k}" value="${esc(q[k]??'')}" placeholder="${ph}"></label>`;
   return `
+    ${coBox('견적서·계약서')}
     <section class="panel no-print">
       <div class="panel-h"><h3>${isAdd?'추가공사':'견적 만들기'}</h3>
         ${isAdd?`<div class="seg">${sheets.slice(1).map((x,i)=>`<button class="btn sm${i+1===QSHEET?' pri':''}" data-act="qSheet" data-i="${i+1}">${esc(x.name||'추가 '+(i+1)+'차')}</button>`).join('')}
@@ -5046,7 +5051,10 @@ document.addEventListener('input',ev=>{
   else if(kind==='vendor'){ const v=S.vendors.get(rest[0]); if(!v) return; v[rest[1]]=val; saveVendor(v);
     if(rest[1]==='name'){ S.materials.forEach(m=>{ if(m.vendorId===v.id&&m.vendor!==val){ m.vendor=val; saveMat(m); } });
       S.estimates.forEach(e=>{ let hit=false; (e.processes||[]).forEach(p=>{ if(p.vendorId===v.id&&p.vendor!==val){ p.vendor=val; hit=true; } }); if(hit) saveEst(e); }); } }
-  else if(kind==='co'){ S.company[rest[0]]=val; saveCo(); refreshDoc(); }
+  else if(kind==='co'){ S.company[rest[0]]=val; saveCo();
+    if(VIEW==='est'&&(EST_TAB==='quote'||EST_TAB==='extra')) refreshQuote(); else refreshDoc();
+    const sm=document.querySelector('details.co > summary');
+    if(sm && rest[0]==='name') sm.textContent='우리 업체 정보 '+(val?'· '+val:'(견적서·계약서에 들어갑니다)'); }
   else if(kind==='qr'){ if(!QREAD) return;
     if(rest[0]==='-'){ QREAD[rest[1]]=val; return; }
     const r=QREAD.rows[+rest[0]]; if(!r) return;
@@ -5957,6 +5965,7 @@ async function connectSupabase(){
   registerSW();
   if(session) sync();
 })();
+
 
 
 
