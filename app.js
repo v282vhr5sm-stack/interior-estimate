@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '7.4.3';
+const APP_VERSION = '7.5.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -1808,7 +1808,7 @@ function docHTML(e){
         </dl>
       </div>
     </div>
-    <div class="d-total"><span class="lbl">${add?'추가공사 금액':'합계금액'}</span><span class="words">${c.total<0?'(감액) ':''}금 ${krWords(Math.abs(c.total))}원정</span><span class="fig">₩ ${c.total<0?'−'+won(-c.total):won(c.total)}</span></div>
+    <div class="d-total"><span class="lbl">합계금액</span><span class="words">금 ${krWords(c.total)}원정</span><span class="fig">₩ ${won(c.total)}</span></div>
     <div class="d-vatnote">자재비 부가세 포함 금액</div>
 
     <h2 class="d-sec">공정별 금액</h2>
@@ -3640,7 +3640,7 @@ function renderProject(p){
       <label class="fl">고객명<input class="f" id="pj-client" data-bind="proj:client" value="${esc(p.client)}"></label>
       <label class="fl">연락처<input class="f" type="tel" id="pj-phone" data-bind="proj:phone" value="${esc(p.phone)}"></label>
       <label class="fl span2">현장 주소<input class="f" id="pj-addr" data-bind="proj:address" value="${esc(p.address)}"></label>
-      <label class="fl span2">고객·작업자에게 보일 안내<input class="f" id="pj-note" data-bind="proj:note" value="${esc(p.note)}" placeholder="예: 주차는 지하 2층, 자재는 엘리베이터 이용"></label>
+      <label class="fl span2">안내사항<input class="f" id="pj-note" data-bind="proj:note" value="${esc(p.note)}" placeholder="예: 주차는 지하 2층, 자재는 엘리베이터 이용 — 보내기와 고객 링크에 함께 나갑니다"></label>
     </div></section>
 
     <section class="panel">
@@ -3823,7 +3823,7 @@ function schedTable(p,view){
     const num=String(nm||'').trim()?++n:'';
     h+=`<tr${!view&&SEL_ROW===ri?' class="rowon"':''}><td class="no${!view&&SEL_ROW===ri?' on':''}"${view?'':` data-rno="${ri}" title="끌어서 줄 순서를 바꿉니다 · 누르면 이 줄을 고릅니다"`}>${num}</td><td class="nm">${view
       ? `<span class="nmv">${esc(nm||'')}</span>`
-      : `<span class="nmwrap"><input value="${esc(nm||'')}" data-srow="${ri}" placeholder="공정 이름"></span>`}</td>`;
+      : `<span class="nmwrap"><input id="srow-${ri}" value="${esc(nm||'')}" data-srow="${ri}" placeholder="공정 이름"></span>`}</td>`;
     h+=D.map(x=>`<td class="cell${sWd(x.wd)}${x.key===SEL_DAY?' seld':''}" data-r="${ri}" data-c="${x.i}">${schedBarsAt(p,ri,x.i,W,view)}</td>`).join('');
     h+='</tr>';
   });
@@ -3900,6 +3900,26 @@ async function schedRowDel(ri){
   p.tasks=(p.tasks||[]).filter(t=>(t.row|0)!==ri).map(t=>((t.row|0)>ri?{...t,row:t.row-1}:t));
   p.rows.splice(ri,1); SEL_TASK=''; SEL_ROW=null; saveProj(p); render();
 }
+/* 공정 이름 칸을 누르면 날짜처럼 그 줄에 색이 깔립니다 */
+document.addEventListener('focusin',ev=>{
+  if(window.__viewerMode) return;
+  const el=ev.target;
+  if(!el||!el.dataset||el.dataset.srow===undefined) return;
+  const ri=+el.dataset.srow;
+  if(SEL_ROW===ri) return;
+  SEL_ROW=ri; SEL_TASK=''; SEL_DAY=null;
+  render();
+});
+/* 표 밖을 누르면 고른 것이 풀립니다 */
+document.addEventListener('click',ev=>{
+  if(window.__viewerMode) return;
+  if(!document.querySelector('.sh')) return;
+  const t=ev.target;
+  if(!t.closest) return;
+  if(t.closest('.sh')||t.closest('.sbar')||t.closest('.dayp')||t.closest('.sh-tools')||t.closest('.rowtools')
+     ||t.closest('.modal')||t.closest('[data-act]')||t.closest('input')||t.closest('select')||t.closest('textarea')) return;
+  if(SEL_TASK||SEL_DAY||SEL_ROW!=null){ SEL_TASK=''; SEL_DAY=null; SEL_ROW=null; render(); }
+});
 /* 줄 순서 바꾸기 (번호 칸을 끌어서) */
 function moveRow(i,j){
   const p=curProj(); if(!p) return; ensureRows(p);
@@ -4019,6 +4039,7 @@ function taskMsg(p,t){
   if(p.address) L.push('현장 주소: '+p.address);
   if(t.worker) L.push('담당: '+t.worker);
   if(t.memo) L.push('메모: '+t.memo);
+  if(p.note) L.push('안내사항: '+p.note);
   if(p.share?.on) L.push('일정 보기: '+shareUrl(p));
   return L.join('\n');
 }
@@ -4026,6 +4047,7 @@ function dayMsg(p,key,items){
   const L=['['+siteName(p)+'] '+fmtDay(key)+' 작업'];
   if(p.address) L.push('현장 주소: '+p.address);
   items.forEach(t=>L.push('· '+(t.name||'')+(t.worker?' / '+t.worker:'')+(t.memo?' — '+t.memo:'')));
+  if(p.note) L.push('안내사항: '+p.note);
   if(p.share?.on) L.push('일정 보기: '+shareUrl(p));
   return L.join('\n');
 }

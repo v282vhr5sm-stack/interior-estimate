@@ -633,6 +633,9 @@ button.g-bar{padding:0;font:inherit;cursor:pointer;text-align:left;-webkit-appea
 .sh td.no:hover{background:var(--surface2);color:var(--accent)}
 .sh td.no.on{background:var(--accent);color:#fff}
 .sh tr.rowon td.nm{background:var(--accent-weak)}
+.sh tr.rowon td.nm input{background:transparent}
+.sh tr.rowon td.cell{background:var(--accent-weak)}
+.sh tr.rowon td.cell.sat,.sh tr.rowon td.cell.sun{background:var(--accent-weak)}
 .sh tr.rdrag td{opacity:.45}
 .sh tr.rdrop td{box-shadow:inset 0 -3px 0 var(--accent)}
 .sh td.nm{background:var(--surface);text-align:left}
