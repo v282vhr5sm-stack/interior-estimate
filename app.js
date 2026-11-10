@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '7.3.0';
+const APP_VERSION = '7.3.1';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -784,6 +784,21 @@ function safeRender(){
   render();
 }
 document.addEventListener('keydown',ev=>{
+  /* 금액 칸에서 엔터 → 바로 셈하고 아래 금액 칸으로 내려갑니다 */
+  if(ev.key==='Enter' && !ev.shiftKey){
+    const m=ev.target;
+    if(m && m.tagName==='INPUT' && m.classList.contains('won') && m.closest('.qtbl')){
+      ev.preventDefault();
+      const pct=/^qex:\d+:v$/.test(m.dataset.bind||'') && String((curProj()?.quote?.extras||[])[+((m.dataset.bind||'').split(':')[1])]?.mode||'').indexOf('%')>=0;
+      m.value = pct ? String(num(m.value)) : won(num(m.value));
+      const box=m.closest('.modal')||document;
+      const all=[...box.querySelectorAll('.qtbl input.won')];
+      const i=all.indexOf(m);
+      const next=all[i+1];
+      if(next){ next.focus(); try{ next.select(); }catch{} } else m.blur();
+      return;
+    }
+  }
   /* 견적 줄에서 엔터 → 같은 품명으로 한 줄 더 */
   if(ev.key==='Enter' && !ev.shiftKey){
     const el=ev.target;
@@ -2274,6 +2289,13 @@ async function qReadFile(file,label){
     render();
   }
 }
+function qrRecalc(){
+  if(!QREAD) return;
+  const on=(QREAD.rows||[]).filter(r=>r.on);
+  const sum=on.reduce((a,r)=>a+num(r.amt),0);
+  const c=document.getElementById('qrCnt'); if(c) c.textContent='고른 '+on.length+'개 합계';
+  const t=document.getElementById('qrSum'); if(t) t.textContent=won(sum)+'원';
+}
 function qrMsg(){ const el=document.getElementById('qrMsg'); if(el) el.textContent=QREAD?.msg||''; }
 async function qReadUrl(url,label){
   try{
@@ -2302,10 +2324,10 @@ function qReadBox(p){
       <tbody>${QREAD.rows.map((r,i)=>`<tr>
         <td style="text-align:center"><input type="checkbox" data-bind="qr:${i}:on" ${r.on?'checked':''}></td>
         <td><input value="${esc(r.name)}" data-bind="qr:${i}:name"></td>
-        <td><input class="won" value="${won(num(r.amt))}" data-bind="qr:${i}:amt" inputmode="numeric"></td>
+        <td><input class="won" value="${won(num(r.amt))}" data-bind="qr:${i}:amt" data-money="1" inputmode="numeric"></td>
       </tr>`).join('')}</tbody></table></div>
       <div class="row small" style="background:var(--surface2);border-radius:9px;padding:9px 11px">
-        <b>고른 ${n}개 합계</b><span class="spacer"></span><b style="font-variant-numeric:tabular-nums">${won(sum)}원</b></div>
+        <b id="qrCnt">고른 ${n}개 합계</b><span class="spacer"></span><b id="qrSum" style="font-variant-numeric:tabular-nums">${won(sum)}원</b></div>
       <div class="row small" style="gap:10px;flex-wrap:wrap">
         <label class="row" style="gap:5px">공과잡비 %<input class="f sm" style="width:70px;text-align:right" value="${QREAD.gwa??''}" data-bind="qr:-:gwa" placeholder="없음"></label>
         <label class="row" style="gap:5px">기업이윤 %<input class="f sm" style="width:70px;text-align:right" value="${QREAD.rate??''}" data-bind="qr:-:rate" placeholder="없음"></label>
@@ -4913,7 +4935,7 @@ document.addEventListener('input',ev=>{
     if(rest[0]==='-'){ QREAD[rest[1]]=val; return; }
     const r=QREAD.rows[+rest[0]]; if(!r) return;
     r[rest[1]] = rest[1]==='amt' ? num(val) : val;
-    if(rest[1]==='on'||rest[1]==='amt'){ render(); }
+    if(rest[1]==='on'||rest[1]==='amt') qrRecalc();
     return; }
   else if(kind==='sp'){ ANAL_DRAFT[rest[0]]=val; return; }
   else if(kind==='spend'){ const p=curProj(); const s=(p?.spend||[]).find(x=>x.id===rest[0]); if(!s) return; s[rest[1]]=val; saveProj(p); }
@@ -5792,6 +5814,7 @@ async function connectSupabase(){
   registerSW();
   if(session) sync();
 })();
+
 
 
 
