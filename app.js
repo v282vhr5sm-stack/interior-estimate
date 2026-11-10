@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '7.2.0';
+const APP_VERSION = '7.2.1';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -2295,11 +2295,12 @@ function qReadBox(p){
 let QPICK=false;
 function qPickBox(p){
   if(!QPICK) return '';
-  const fs2=(p.excel||[]).filter(f=>/\.(xlsx|xlsm)$/i.test(f.name)||/pdf/i.test(f.type)||isImg(f));
+  const ok=f=>/\.(xlsx|xlsm|csv)$/i.test(f.name||'')||/pdf/i.test(f.type||'')||/\.pdf$/i.test(f.name||'')||isImg(f)||!/\.[A-Za-z0-9]{1,5}$/.test(f.name||'');
+  const fs2=[...(p.excel||[]).filter(ok).map(f=>({f,w:'견적 파일'})), ...(p.files||[]).filter(ok).map(f=>({f,w:'사진·도면'}))];
   return `<div class="modal"><div class="modal-b" style="width:min(520px,94vw)">
     <div class="row"><b style="flex:1">어느 견적서를 읽을까요?</b></div>
-    ${fs2.length?`<ul class="cfiles" style="margin-top:10px">${fs2.map(f=>`<li class="cfile">
-      <button class="btn" style="flex:1;text-align:left" data-act="qReadPick" data-id="${esc(f.id)}">${esc(f.name)}</button></li>`).join('')}</ul>`
+    ${fs2.length?`<ul class="cfiles" style="margin-top:10px">${fs2.map(({f,w})=>`<li class="cfile">
+      <button class="btn" style="flex:1;text-align:left" data-act="qReadPick" data-id="${esc(f.id)}"><b>${esc(f.name)}</b> <span class="muted small">· ${esc(w)}</span></button></li>`).join('')}</ul>`
       :'<p class="muted small" style="margin:10px 0 0">이 현장에 올려 둔 견적서 파일이 없습니다.</p>'}
     <div class="row" style="margin-top:12px;justify-content:space-between">
       <button class="btn pri sm" data-act="qReadDevice">기기에서 고르기</button>
@@ -2559,7 +2560,6 @@ function docSections(p){
   const fs2=(p.files||[]).slice().sort((a,b)=>(b.at||0)-(a.at||0));
   const exOn=ex.filter(f=>f.shared).length;
   const onCnt=exOn+fs2.filter(f=>f.shared!==false).length;
-  const isImg=f=>/^image\//.test(f.type||'')||/\.(jpe?g|png|gif|webp|heic|heif)$/i.test(f.name||'');
   const prow=f=>{ const on=f.shared!==false, label=KIND_LABEL[fileKind(f)];
     return `<li class="cphoto ${on?'on':''}">
       <a class="cph-img" href="${esc(f.url)}" target="_blank" rel="noopener">
@@ -3260,6 +3260,7 @@ const fileKind = f => /^image\//.test(f.type)?'img' : f.type==='application/pdf'
   : (/^text\//.test(f.type)||/\.(txt|md|csv|log)$/i.test(f.name))?'txt'
   : /\.(glb|gltf)$/i.test(f.name)?'glb' : 'other';
 const KIND_LABEL = {img:'사진',pdf:'PDF',txt:'메모 파일',glb:'3D 모델',other:'파일'};
+const isImg = f => /^image\//.test((f&&f.type)||'') || /\.(jpe?g|png|gif|webp|heic|heif|bmp|tiff?)$/i.test((f&&f.name)||'');
 const notesInFolder = (p,id) => (p.files||[]).filter(f=>fileKind(f)==='txt' && (f.folderId||'')===id);
 /* 메모 파일 내용 미리 보기 */
 const TXT_CACHE = new Map();
@@ -5281,7 +5282,7 @@ document.addEventListener('click',async ev=>{
     case 'qPickX': QPICK=false; render(); break;
     case 'qReadX': QREAD=null; render(); break;
     case 'qReadDevice': QPICK=false; render(); $('#fileRead').click(); break;
-    case 'qReadPick': { const p=curProj(); const f=(p?.excel||[]).find(x=>x.id===t.dataset.id); if(!f) break;
+    case 'qReadPick': { const p=curProj(); const f=[...(p?.excel||[]),...(p?.files||[])].find(x=>x.id===t.dataset.id); if(!f) break;
       QPICK=false; qReadUrl(f.url,f.name); break; }
     case 'qReadOk': { const p=curProj(); const q=ensureQuote(p);
       const picked=(QREAD?.rows||[]).filter(r=>r.on&&(r.name||num(r.amt)));
@@ -5751,4 +5752,5 @@ async function connectSupabase(){
   registerSW();
   if(session) sync();
 })();
+
 
