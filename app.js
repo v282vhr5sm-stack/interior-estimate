@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '7.2.1';
+const APP_VERSION = '7.2.2';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -2219,6 +2219,30 @@ async function qPdfText(file){
   }
   return out;
 }
+/* 작은 글씨를 읽으려면 사진을 키우고 흑백·대비를 올려야 합니다 */
+async function sharpenForOcr(file){
+  try{
+    const url=URL.createObjectURL(file);
+    const img=new Image(); img.src=url; await img.decode();
+    const long=Math.max(img.naturalWidth,img.naturalHeight);
+    const scale=Math.max(1,Math.min(4,3000/long));
+    const c=document.createElement('canvas');
+    c.width=Math.round(img.naturalWidth*scale); c.height=Math.round(img.naturalHeight*scale);
+    const x=c.getContext('2d');
+    x.imageSmoothingEnabled=true; x.imageSmoothingQuality='high';
+    x.drawImage(img,0,0,c.width,c.height);
+    URL.revokeObjectURL(url);
+    const d=x.getImageData(0,0,c.width,c.height), p=d.data;
+    for(let i=0;i<p.length;i+=4){
+      let g=p[i]*0.299+p[i+1]*0.587+p[i+2]*0.114;
+      g=(g-128)*1.6+128;
+      p[i]=p[i+1]=p[i+2]= g<0?0:g>255?255:g;
+    }
+    x.putImageData(d,0,0);
+    const blob=await new Promise(r=>c.toBlob(r,'image/png'));
+    return blob ? new File([blob],'sharp.png',{type:'image/png'}) : file;
+  }catch(e){ return file; }
+}
 async function qReadFile(file,label){
   QREAD={busy:true,msg:'파일을 여는 중입니다…',rows:[],src:label||file.name};
   render();
@@ -2233,12 +2257,14 @@ async function qReadFile(file,label){
       res=qFromText(await qPdfText(file));
       if(!res.rows.length) throw new Error('글자가 들어있지 않은 PDF 같습니다. 화면을 사진으로 찍어 올려주세요.');
     }else{
+      QREAD.msg='사진을 또렷하게 만드는 중입니다…'; qrMsg();
+      const sharp=await sharpenForOcr(file);
       QREAD.msg='사진에서 글자를 읽는 중입니다… 처음엔 조금 걸립니다'; qrMsg();
-      const txt=await ocrText(file,p=>{ QREAD.msg='글자 읽는 중 '+Math.round(p*100)+'%'; qrMsg(); });
+      const txt=await ocrText(sharp,p=>{ QREAD.msg='글자 읽는 중 '+Math.round(p*100)+'%'; qrMsg(); });
       res=qFromText(txt);
     }
     const wasImg = !/.(xlsx|xlsm)$/i.test(nm) && !/pdf/i.test(ty) && !/.pdf$/i.test(nm);
-    QREAD={busy:false,msg:'',src:QREAD.src,rows:res.rows,gwa:res.gwa,dansu:res.dansu,vat:res.vat,rate:res.rate};
+    QREAD={busy:false,msg:'',src:QREAD.src,photo:wasImg,rows:res.rows,gwa:res.gwa,dansu:res.dansu,vat:res.vat,rate:res.rate};
     if(!res.rows.length) QREAD.err = wasImg
       ? '사진에서는 글자를 또렷하게 읽지 못했습니다. 같은 견적서를 엑셀 파일(.xlsx)로 올리시면 한 자도 안 틀리고 읽습니다.'
       : '공정 소계 줄을 찾지 못했습니다. 금액을 직접 넣거나 「한 번에 채우기」를 써주세요.';
@@ -2270,6 +2296,7 @@ function qReadBox(p){
   return `<div class="modal"><div class="modal-b" style="width:min(640px,96vw);max-height:88vh;display:flex;flex-direction:column;gap:10px">
     <div class="row"><b style="flex:1">읽은 내용을 확인해주세요</b><span class="muted small">${esc(QREAD.src||'')}</span></div>
     ${QREAD.err?`<p class="status">${esc(QREAD.err)}</p>`:''}
+    ${QREAD.photo&&QREAD.rows.length?'<p class="status warn-box"><b>사진에서 읽은 숫자는 자주 틀립니다.</b> 금액을 한 줄씩 꼭 확인하고 고쳐주세요. 엑셀 파일로 올리시면 한 자도 안 틀립니다.</p>':''}
     ${QREAD.rows.length?`<div style="overflow:auto;flex:1;min-height:0">
       <table class="qtbl"><thead><tr><th style="width:30px"></th><th>공정</th><th class="r" style="width:140px">금액(원)</th></tr></thead>
       <tbody>${QREAD.rows.map((r,i)=>`<tr>
@@ -5752,5 +5779,6 @@ async function connectSupabase(){
   registerSW();
   if(session) sync();
 })();
+
 
 

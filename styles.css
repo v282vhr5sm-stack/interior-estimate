@@ -748,3 +748,6 @@ button.g-bar{padding:0;font:inherit;cursor:pointer;text-align:left;-webkit-appea
 .spgrid{display:grid;grid-template-columns:150px 1fr 160px 150px;gap:9px}
 .spgrid .full{grid-column:1/-1}
 @media(max-width:700px){ .spgrid{grid-template-columns:1fr 1fr} }
+
+.warn-box{background:#FBEBE8;border:1px solid #E3B7AE;color:#8E3022;border-radius:9px;padding:9px 11px}
+@media (prefers-color-scheme: dark){ .warn-box{background:#331d19;border-color:#7a3528;color:#f0b5a8} }
