@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '7.4.1';
+const APP_VERSION = '7.4.2';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -1804,7 +1804,7 @@ function docHTML(e){
         </dl>
       </div>
     </div>
-    <div class="d-total"><span class="lbl">합계금액</span><span class="words">금 ${krWords(c.total)}원정</span><span class="fig">₩ ${won(c.total)}</span></div>
+    <div class="d-total"><span class="lbl">${add?'추가공사 금액':'합계금액'}</span><span class="words">${c.total<0?'(감액) ':''}금 ${krWords(Math.abs(c.total))}원정</span><span class="fig">₩ ${c.total<0?'−'+won(-c.total):won(c.total)}</span></div>
     <div class="d-vatnote">자재비 부가세 포함 금액</div>
 
     <h2 class="d-sec">공정별 금액</h2>
@@ -1845,7 +1845,7 @@ function quoteSheets(p){ ensureQuote(p); return [p.quote, ...(p.extraQuotes||[])
 function sheetAt(p){ const a=quoteSheets(p); if(QSHEET>=a.length) QSHEET=0; return a[QSHEET]; }
 function newSheet(p){
   const base=p.quote||{};
-  return {id:uid(), name:'추가공사 '+((p.extraQuotes||[]).length+1)+'차', date:today(),
+  return {id:uid(), name:'추가공사 '+((p.extraQuotes||[]).length+1)+'차', date:today(), title:'', client:'', phone:'', addr:'', size:'', validDays:0,
     rows:[['','',0]], extras:(base.extras||clone(QEX_DEF)).map(x=>({...x, v:/단수/.test(x.name||'')?0:x.v}))};
 }
 function contractCalc(p){
@@ -1923,16 +1923,18 @@ function renderQuote(p){
         <button class="btn pri sm" data-act="qRead">📄 견적서 읽어서 채우기</button>
         <button class="btn sm" data-act="qPaste">한 번에 채우기</button>
         <button class="btn sm" data-act="print">인쇄 · PDF</button></div>
-      ${isAdd?`<div class="panel-b" style="padding-bottom:0"><div class="row">
-        <label class="fl" style="flex:0 1 220px">차수 이름<input class="f" data-bind="q:name" value="${esc(q.name||'')}" placeholder="추가공사 1차"></label>
+      ${isAdd?`<div class="panel-b"><div class="row">
+        <label class="fl" style="flex:1 1 240px;max-width:300px">차수 이름<input class="f" data-bind="q:name" value="${esc(q.name||'')}" placeholder="추가공사 1차"></label>
+        <label class="fl" style="flex:0 1 190px">견적일<input class="f" type="date" data-bind="q:date" value="${esc(q.date||today())}"></label>
         <span class="spacer"></span>
         <button class="btn ghost sm danger" data-act="qDelSheet">이 차수 지우기</button></div>
-        <p class="muted small" style="margin:8px 0 0">빠지는 공사는 금액 앞에 <b>−</b> 를 붙이세요 (예: -800000)</p></div>`:''}
-      <div class="panel-b"><div class="client-grid">
+        <p class="muted small" style="margin:9px 0 0">공사명 · 고객명 · 연락처 · 현장 주소 · 면적은 <b>본 견적</b> 것을 그대로 씁니다.
+          빠지는 공사는 금액 앞에 <b>−</b> 를 붙이세요 (예: -800000)</p></div>`
+      :`<div class="panel-b"><div class="client-grid">
         ${f('title','공사명')}${f('client','고객명')}${f('phone','연락처')}
         ${f('addr','현장 주소')}${f('size','면적','text','예: 84㎡ (25.4평)')}
         ${f('date','견적일','date')}${f('validDays','유효기간(일)','num')}
-      </div></div>
+      </div></div>`}
       ${QPASTE?`<div class="panel-b qpaste">
         <b class="small">여기에 붙여넣으세요</b>
         <p class="muted small" style="margin:4px 0 8px">한 줄에 <b>공정 이름 금액</b> — 예) <code>철거 2,300,000원</code></p>
@@ -1993,20 +1995,21 @@ function quoteDocHTML(p,q){
   const c=quoteCalc(q), co=S.company||{}, dt=krDate(q.date||today()), exp=quoteExp(q);
   const no=String(q.date||today()).replace(/-/g,'')+'-01';
   const add = (p.extraQuotes||[]).some(x=>x===q);
+  const I = add ? (p.quote||q) : q;          // 공사명·고객·현장은 본 견적 것
   return `<article id="doc">
     <h1>${add?'추가공사 견적서':'견적서'}</h1>
     <div class="d-no">No. ${esc(no)} · ${dt}${add&&q.name?' · '+esc(q.name):''}</div>
     <div class="d-parties">
       <div class="d-to">
-        <div class="d-name">${esc(q.client||'고객')} 귀하</div>
+        <div class="d-name">${esc(I.client||'고객')} 귀하</div>
         <dl class="d-kv">
-          ${q.addr?`<dt>현장</dt><dd>${esc(q.addr)}</dd>`:''}
-          ${q.size?`<dt>면적</dt><dd>${esc(q.size)}</dd>`:''}
-          ${q.phone?`<dt>연락처</dt><dd>${esc(q.phone)}</dd>`:''}
-          <dt>공사명</dt><dd>${esc(q.title||'')}</dd>
-          <dt>유효기간</dt><dd>${exp}까지</dd>
+          ${I.addr?`<dt>현장</dt><dd>${esc(I.addr)}</dd>`:''}
+          ${I.size?`<dt>면적</dt><dd>${esc(I.size)}</dd>`:''}
+          ${I.phone?`<dt>연락처</dt><dd>${esc(I.phone)}</dd>`:''}
+          <dt>공사명</dt><dd>${esc(I.title||'')}</dd>
+          ${add?`<dt>구분</dt><dd>${esc(q.name||'추가공사')}</dd>`:`<dt>유효기간</dt><dd>${exp}까지</dd>`}
         </dl>
-        <p style="margin:12px 0 0;font-size:12px">아래와 같이 견적합니다.</p>
+        <p style="margin:12px 0 0;font-size:12px">${add?'아래와 같이 추가공사를 견적합니다.':'아래와 같이 견적합니다.'}</p>
       </div>
       <div class="d-from">
         <div class="d-co">${esc(co.name||'상호명을 입력하세요')}</div>
@@ -2019,20 +2022,22 @@ function quoteDocHTML(p,q){
         </dl>
       </div>
     </div>
-    <div class="d-total"><span class="lbl">합계금액</span><span class="words">금 ${krWords(c.total)}원정</span><span class="fig">₩ ${won(c.total)}</span></div>
+    <div class="d-total"><span class="lbl">${add?'추가공사 금액':'합계금액'}</span><span class="words">${c.total<0?'(감액) ':''}금 ${krWords(Math.abs(c.total))}원정</span><span class="fig">₩ ${c.total<0?'−'+won(-c.total):won(c.total)}</span></div>
 
     <h2 class="d-sec">공정별 금액</h2>
     <table><thead><tr><th style="width:36px" class="c">No</th><th>공정</th><th>주요 내용</th><th class="r" style="width:130px">금액(원)</th></tr></thead>
-      <tbody>${q.rows.filter(r=>r[0]||num(r[2])).map((r,i)=>`<tr><td class="c">${i+1}</td><td><b>${esc(r[0]||'')}</b></td><td>${esc(r[1]||'—')}</td><td class="r">${won(num(r[2]))}</td></tr>`).join('')}</tbody>
+      <tbody>${q.rows.filter(r=>r[0]||num(r[2])).map((r,i)=>`<tr><td class="c">${i+1}</td><td><b>${esc(r[0]||'')}</b></td><td>${esc(r[1]||'—')}</td><td class="r">${num(r[2])<0?'−'+won(-num(r[2])):won(num(r[2]))}</td></tr>`).join('')}</tbody>
       <tfoot>
-        <tr><td colspan="3" class="r">공정 소계</td><td class="r">${won(c.sub)}</td></tr>
-        ${c.lines.filter(l=>l.name||l.amt).map(l=>`<tr><td colspan="3" class="r">${esc(l.name||'')}</td><td class="r">${l.amt<0?'−'+won(-l.amt):won(l.amt)}</td></tr>`).join('')}
-        <tr class="g"><td colspan="3" class="r">합계</td><td class="r">${won(c.total)}</td></tr>
+        <tr><td colspan="3" class="r">공정 소계</td><td class="r">${c.sub<0?'−'+won(-c.sub):won(c.sub)}</td></tr>
+        ${c.lines.filter(l=>l.name||l.amt).map(l=>`<tr><td colspan="3" class="r">${esc(l.name||'')}</td><td class="r">${l.amt<0?'−'+won(-l.amt):won(l.amt||0)}</td></tr>`).join('')}
+        <tr class="g"><td colspan="3" class="r">합계</td><td class="r">${c.total<0?'−'+won(-c.total):won(c.total)}</td></tr>
       </tfoot></table>
 
     ${(co.bankName||co.bankNo)?`<p style="margin-top:14px;font-size:12px"><b>입금 계좌</b> ${esc([co.bankName,co.bankNo,co.bankHolder&&('예금주 '+co.bankHolder)].filter(Boolean).join(' '))}</p>`:''}
-    <div class="d-sign"><div class="s">공급자 ${esc([co.name,co.ceo].filter(Boolean).join(' '))} (서명)</div><div class="s">고객 ${esc(q.client||'')} (서명)</div></div>
-    <div class="d-foot">본 견적서의 유효기간은 ${exp}까지입니다. 본 견적서는 ${dt} 기준이며 자재 단가 변동 및 현장 실측에 따라 조정될 수 있습니다.</div>
+    <div class="d-sign"><div class="s">공급자 ${esc([co.name,co.ceo].filter(Boolean).join(' '))} (서명)</div><div class="s">고객 ${esc(I.client||'')} (서명)</div></div>
+    <div class="d-foot">${add
+      ? '본 추가공사 견적서는 '+dt+' 기준이며, 기존 계약금액에 더하거나 빼서 정산합니다.'
+      : '본 견적서의 유효기간은 '+exp+'까지입니다. 본 견적서는 '+dt+' 기준이며 자재 단가 변동 및 현장 실측에 따라 조정될 수 있습니다.'}</div>
   </article>`;
 }
 /* 숫자만 다시 셈합니다 (글 쓰던 자리를 지킵니다) */
@@ -5952,6 +5957,7 @@ async function connectSupabase(){
   registerSW();
   if(session) sync();
 })();
+
 
 
 
