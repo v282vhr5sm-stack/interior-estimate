@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '7.6.0';
+const APP_VERSION = '7.6.1';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -4931,12 +4931,13 @@ function calFeedPanel(){
   return `<section class="panel"><div class="panel-h"><h3>구글·아이폰 캘린더 연동</h3></div><div class="panel-b">
     <p class="muted small" style="margin:0">모든 현장의 공정 일정을 구글 캘린더(아이폰 캘린더)에서 볼 수 있게 합니다. 일정은 여기서 고치면 캘린더에 따라 들어갑니다. 견적·금액은 들어가지 않아요.</p>
     ${url?`<input class="f" readonly value="${esc(url)}" onclick="this.select()" style="font-size:12px">
-      <div class="row"><button class="btn pri" data-act="calCopy">주소 복사</button><button class="btn" data-act="calGoogle">구글 캘린더에 추가</button>
+      <div class="row"><button class="btn pri" data-act="calIphone">아이폰 캘린더에 바로 추가</button><button class="btn" data-act="calGoogle">구글 캘린더에 추가 (노트북)</button></div>
+      <div class="row"><button class="btn ghost" data-act="calCopy">주소 복사</button>
         <button class="btn ghost" data-act="calRenew">주소 새로 만들기</button><button class="btn ghost danger" data-act="calOff">연동 끄기</button></div>
       <ol class="muted small" style="margin:0;padding-left:18px;line-height:1.7">
-        <li>노트북에서 <b>구글 캘린더에 추가</b>를 누르면 구글 캘린더가 열리고, <b>추가</b>를 누르면 끝이에요.</li>
-        <li>아이폰: <b>설정 → 캘린더 → 계정</b>에 구글 계정이 있으면 자동으로 보여요. (캘린더 앱 → 아래 <b>캘린더</b>에서 체크)</li>
-        <li>구글은 바뀐 내용을 몇 시간마다 가져와요. 바로바로 보고 싶으면 아이폰 <b>설정 → 캘린더 → 계정 → 계정 추가 → 기타 → 구독 캘린더 추가</b>에 위 주소를 넣으세요.</li>
+        <li><b>아이폰·아이패드</b>: 이 화면을 아이폰에서 열고 <b>아이폰 캘린더에 바로 추가</b> → “구독할까요?”에서 <b>구독</b> → <b>추가</b>. 바뀐 일정은 1시간 안에 들어와요.</li>
+        <li><b>구글 캘린더</b>: 노트북에서 <b>구글 캘린더에 추가</b> → <b>추가</b>. 구글은 바뀐 내용을 몇 시간마다 가져와요.</li>
+        <li>버튼이 안 되면 <b>주소 복사</b> 후 아이폰 <b>설정 → 캘린더 → 계정 → 계정 추가 → 기타 → 구독 캘린더 추가</b>에 붙여넣으세요.</li>
       </ol>`
      :`<div><button class="btn pri" data-act="calOn">연동 주소 만들기</button></div>`}
   </div></section>`;
@@ -5628,6 +5629,7 @@ document.addEventListener('click',async ev=>{
     case 'calRenew': calFeedOn(true); break;
     case 'calOff': calFeedOff(); break;
     case 'calCopy': copyText(calFeedUrl(),'캘린더 주소를 복사했습니다'); break;
+    case 'calIphone': location.href=calFeedUrl().replace(/^https:/,'webcal:'); break; // 아이폰이 “구독할까요?”를 바로 띄움
     case 'calGoogle': window.open('https://calendar.google.com/calendar/r?cid='+encodeURIComponent(calFeedUrl().replace(/^https:/,'webcal:')),'_blank'); break;
     case 'importBackup': $('#fileBackup').click(); break;
     case 'checkUpdate': checkUpdate(true); break;
