@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '7.5.0';
+const APP_VERSION = '7.6.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -366,7 +366,7 @@ function migrateVendors(){
   S.estimates.forEach(e=>(e.processes||[]).forEach(p=>{ if(p.vendor&&!p.vendorId){ const v=touch(p.vendor,p.k); if(v){ p.vendorId=v.id; saveEst(e); } } }));
   return made;
 }
-const saveProj = p => { p.updated=Date.now(); queueWrite('projects',p.id,()=>S.projects.has(p.id)?strip(S.projects.get(p.id)):null); if(p.share?.on) schedulePublish(p.id); };
+const saveProj = p => { p.updated=Date.now(); queueWrite('projects',p.id,()=>S.projects.has(p.id)?strip(S.projects.get(p.id)):null); if(p.share?.on) schedulePublish(p.id); scheduleCalFeed(); };
 function deleteMat(id){ const m=S.materials.get(id); cancelWrite('materials',id); S.materials.delete(id); writeRecord('materials',id,m?strip(m):null,true); undoToast('자재',()=>restoreRecord('materials',id)); }
 function deleteEst(id){ const e=S.estimates.get(id); cancelWrite('estimates',id); S.estimates.delete(id); writeRecord('estimates',id,e?strip(e):null,true); undoToast('견적',()=>restoreRecord('estimates',id)); }
 function deleteProj(id){ const p=S.projects.get(id); if(p?.share?.token) unpublishShare(p.share.token);
@@ -432,7 +432,7 @@ async function sync(){
   if(!navigator.onLine){ updatePill(); return; }
   if(syncing){ syncAgain=true; return; }
   syncing=true; syncErr=''; updatePill();
-  try{ pushedSomething=false; await push(); await pull(); lastSyncAt=new Date();
+  try{ pushedSomething=false; await push(); await pull(); lastSyncAt=new Date(); scheduleCalFeed(4000);
        if(pushedSomething) tellOtherDevices(); }
   catch(e){ console.warn('sync',e); syncErr=e?.message||String(e); }
   finally{ syncing=false; updatePill(); if(syncAgain){ syncAgain=false; scheduleSync(300); } }
@@ -4879,7 +4879,71 @@ async function uploadVendorDoc(file,v,field){
   }catch(e){ toast('사진을 올리지 못했습니다: '+(e.message||e)); }
 }
 
-/* ---------- settings ---------- */
+/* ---------- 구글·아이폰 캘린더 구독 ----------
+   모든 현장의 공정 일정을 shares 표에 'cal_<토큰>' 이름으로 올려 두면,
+   캘린더 서버(Cloudflare)가 그걸 읽어 구글 캘린더용 주소(.ics)로 내보냅니다. 견적·금액은 들어가지 않습니다. */
+const CAL_ICS_BASE='https://estimate-calendar.saju-site.workers.dev/';
+const calFeedUrl = () => S.company?.calToken ? CAL_ICS_BASE+S.company.calToken+'.ics' : '';
+let calFeedTimer=null, calFeedLast='';
+function scheduleCalFeed(ms=2500){ if(!S.company?.calToken) return; clearTimeout(calFeedTimer); calFeedTimer=setTimeout(publishCalFeed,ms); }
+function calFeedPayload(){
+  const events=[];
+  for(const p of S.projects.values()) for(const t of (p.tasks||[])){
+    if(!dnum(t.start)) continue;
+    events.push({id:t.id, site:siteName(p), addr:(p.address||'').trim(), name:t.name||'', kind:t.kind||'시공',
+      start:t.start, end:dnum(t.end)?t.end:t.start, worker:t.worker||'', status:t.status||'', memo:t.memo||''});
+  }
+  return {v:1, kind:'ics', company:S.company?.name||'', events};
+}
+async function publishCalFeed(force){
+  if(!sb||!session||!S.company?.calToken) return false;
+  const payload=calFeedPayload(), sig=JSON.stringify(payload.events)+payload.company;
+  if(!force && sig===calFeedLast) return true;
+  try{
+    const {error}=await sb.from('shares').upsert({token:'cal_'+S.company.calToken,user_id:session.user.id,payload,updated_at:new Date().toISOString()},{onConflict:'token'});
+    if(error) throw error;
+    calFeedLast=sig; return true;
+  }catch(e){ console.warn('calFeed',e); return false; }
+}
+async function calFeedOn(renew){
+  if(!sb||!session) return toast('로그인한 뒤에 켤 수 있어요');
+  if(renew && !confirm('주소를 새로 만들까요?\n예전 주소로 연결한 캘린더는 더 이상 갱신되지 않아요.')) return;
+  const old=S.company?.calToken;
+  S.company=S.company||{};
+  S.company.calToken=[...crypto.getRandomValues(new Uint8Array(20))].map(b=>b.toString(16).padStart(2,'0')).join('');
+  saveCo();
+  calFeedLast='';
+  const ok=await publishCalFeed(true);
+  if(old && old!==S.company.calToken){ try{ await sb.from('shares').delete().eq('token','cal_'+old); }catch(e){} }
+  render();
+  toast(ok?'캘린더 연동 주소를 만들었어요':'주소는 만들었지만 아직 올리지 못했어요. 잠시 뒤 다시 시도합니다');
+  if(!ok) scheduleCalFeed(5000);
+}
+async function calFeedOff(){
+  if(!confirm('캘린더 연동을 끌까요?\n연결해 둔 구글·아이폰 캘린더에는 더 이상 일정이 들어가지 않아요.')) return;
+  const old=S.company?.calToken; if(!old) return;
+  delete S.company.calToken; saveCo(); calFeedLast='';
+  try{ await sb?.from('shares').delete().eq('token','cal_'+old); }catch(e){}
+  render(); toast('캘린더 연동을 껐어요');
+}
+function calFeedPanel(){
+  const url=calFeedUrl();
+  return `<section class="panel"><div class="panel-h"><h3>구글·아이폰 캘린더 연동</h3></div><div class="panel-b">
+    <p class="muted small" style="margin:0">모든 현장의 공정 일정을 구글 캘린더(아이폰 캘린더)에서 볼 수 있게 합니다. 일정은 여기서 고치면 캘린더에 따라 들어갑니다. 견적·금액은 들어가지 않아요.</p>
+    ${url?`<input class="f" readonly value="${esc(url)}" onclick="this.select()" style="font-size:12px">
+      <div class="row"><button class="btn pri" data-act="calCopy">주소 복사</button><button class="btn" data-act="calGoogle">구글 캘린더에 추가</button>
+        <button class="btn ghost" data-act="calRenew">주소 새로 만들기</button><button class="btn ghost danger" data-act="calOff">연동 끄기</button></div>
+      <ol class="muted small" style="margin:0;padding-left:18px;line-height:1.7">
+        <li>노트북에서 <b>구글 캘린더에 추가</b>를 누르면 구글 캘린더가 열리고, <b>추가</b>를 누르면 끝이에요.</li>
+        <li>아이폰: <b>설정 → 캘린더 → 계정</b>에 구글 계정이 있으면 자동으로 보여요. (캘린더 앱 → 아래 <b>캘린더</b>에서 체크)</li>
+        <li>구글은 바뀐 내용을 몇 시간마다 가져와요. 바로바로 보고 싶으면 아이폰 <b>설정 → 캘린더 → 계정 → 계정 추가 → 기타 → 구독 캘린더 추가</b>에 위 주소를 넣으세요.</li>
+      </ol>`
+     :`<div><button class="btn pri" data-act="calOn">연동 주소 만들기</button></div>`}
+  </div></section>`;
+}
+
+
+$/* ---------- settings ---------- */
 function renderSettings(){
   const {url,key}=sbConf(), fromFile=!!(CFG.SUPABASE_URL&&CFG.SUPABASE_KEY);
   return `<div class="stack"><h2>설정</h2><div class="set-grid">
@@ -4897,6 +4961,8 @@ function renderSettings(){
     <section class="panel"><div class="panel-h"><h3>휴지통</h3><span class="spacer"></span><button class="btn sm" data-act="openTrash">열기</button></div>
       <div class="panel-b"><p class="muted small" style="margin:0">지운 현장·업체를 30일 동안 보관합니다. 열어서 되돌릴 수 있어요.</p>
       <div id="trashBox"></div></div></section>
+
+    ${calFeedPanel()}
 
     <section class="panel"><div class="panel-h"><h3>백업</h3></div><div class="panel-b">
       <p class="muted small" style="margin:0">현장·일정·사진·업체 정보를 파일 하나로 저장합니다. 불러오면 더 최근에 고친 내용이 남습니다.</p>
@@ -5558,6 +5624,11 @@ document.addEventListener('click',async ev=>{
       for(const r of rows) await purgeRecord(r.col,r.id);
       await showTrash(); toast(`${rows.length}개를 완전히 지웠습니다`); break; }
     case 'exportBackup': exportBackup(); break;
+    case 'calOn': calFeedOn(false); break;
+    case 'calRenew': calFeedOn(true); break;
+    case 'calOff': calFeedOff(); break;
+    case 'calCopy': copyText(calFeedUrl(),'캘린더 주소를 복사했습니다'); break;
+    case 'calGoogle': window.open('https://calendar.google.com/calendar/r?cid='+encodeURIComponent(calFeedUrl().replace(/^https:/,'webcal:')),'_blank'); break;
     case 'importBackup': $('#fileBackup').click(); break;
     case 'checkUpdate': checkUpdate(true); break;
     case 'topUpdate': (swReg?.waiting ? applyUpdate() : UPDATE_STUCK ? hardReload() : checkUpdate(true)); break;
