@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '7.7.0';
+const APP_VERSION = '7.7.1';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -2910,6 +2910,12 @@ function taskLabel(p,t){
   const row=(p.rows||[])[t.row|0]||'';
   return [row, t.name, taskDateText(t)].filter(Boolean).join(' · ');
 }
+/* 사진 한 장에 공정 일정을 붙이는 칸 */
+function fileTaskSelect(p,f){
+  if(!(p.tasks||[]).some(t=>dnum(t.start))) return '';
+  return `<select class="f small" data-bind="file:${f.id}:taskId" style="padding:3px 5px" title="이 사진을 어느 공정에 붙일지">
+    <option value="">공정 미지정</option>${taskOptions(p,f.taskId||'')}</select>`;
+}
 function taskOptions(p,sel){
   const list=(p.tasks||[]).filter(t=>dnum(t.start)).slice()
     .sort((a,b)=>String(a.start||'').localeCompare(String(b.start||'')));
@@ -2986,6 +2992,7 @@ function renderFolder(p,fd){
           <figcaption>
             <input class="f small" data-bind="file:${f.id}:memo" value="${esc(f.memo||'')}" placeholder="사진 메모" style="padding:3px 5px">
             ${moveOpts(f)}
+            ${fileTaskSelect(p,f)}
             <div class="row" style="gap:6px;justify-content:space-between">
               <button class="btn ghost sm" data-act="markup" data-fid="${f.id}">✏️ 표시</button>
               ${f.origUrl?`<button class="btn ghost sm" data-act="unmark" data-fid="${f.id}">원본</button>`:''}
@@ -3359,7 +3366,7 @@ function renderGallery(p,asTab){
     return `<button class="folder" data-act="openFolder" data-id="${fd.id}">
       <span class="folder-th">${list[0]?`<img src="${esc(list[0].url)}" alt="" loading="lazy">`:'<span class="folder-i">🗂</span>'}</span>
       <b>${esc(folderTitle(p,fd))}</b>
-      <span class="muted small">사진 ${list.length}장</span>
+      <span class="muted small">사진 ${list.length}장${(()=>{ const n=list.filter(x=>x.taskId).length; return n?' · 공정 붙음 '+n:''; })()}</span>
       <span class="flink${t?'':' none'}">${t?esc(taskLabel(p,t)):'일정에 안 붙임'}</span>
       ${fd.memo?`<span class="folder-memo">${esc(fd.memo)}</span>`:''}
     </button>`;
@@ -3387,6 +3394,10 @@ function renderGallery(p,asTab){
             ${(p.folders||[]).map(x=>`<option value="${x.id}">${esc(folderTitle(p,x))}</option>`).join('')}
             <option value="__new">+ 새 폴더로 옮기기</option>
           </select></label>
+        ${(p.tasks||[]).some(t=>dnum(t.start))?`<label class="row small" style="gap:6px">붙일 공정
+          <select class="f sm" data-act-change="galTask" style="width:auto;max-width:210px">
+            <option value="">고르세요</option><option value="__none">공정 미지정으로</option>${taskOptions(p,'')}
+          </select></label>`:''}
         <button class="btn ghost sm" data-act="galPickNone">선택 해제</button>
       </div>`:'<p class="muted small" style="margin:0 14px 10px">사진 왼쪽 위 네모를 눌러 고르면 한 번에 폴더로 옮길 수 있습니다.</p>'}
       <div class="panel-b"><div class="files">${loose.map(f=>`<figure class="file${GAL_PICK.has(f.id)?' picked':''}">
@@ -3396,8 +3407,9 @@ function renderGallery(p,asTab){
           <input class="f small" data-bind="file:${f.id}:memo" value="${esc(f.memo||'')}" placeholder="사진 메모" style="padding:3px 5px">
           <select class="f small" data-bind="file:${f.id}:folderId" style="padding:3px 5px">
             <option value="">폴더 없음</option>
-            ${(p.folders||[]).map(x=>`<option value="${x.id}">${esc(folderTitle(p,x))}</option>`).join('')}
+            ${(p.folders||[]).map(x=>`<option value="${x.id}" ${f.folderId===x.id?'selected':''}>${esc(folderTitle(p,x))}</option>`).join('')}
           </select>
+          ${fileTaskSelect(p,f)}
           <div class="row" style="gap:6px;justify-content:space-between">
             <button class="btn ghost sm" data-act="markup" data-fid="${f.id}">✏️ 표시</button>
             ${f.origUrl?`<button class="btn ghost sm" data-act="unmark" data-fid="${f.id}">원본</button>`:''}
@@ -3510,6 +3522,7 @@ function sharePayload(p){
       from:r?dstr(r.from):'', to:r?dstr(r.to):'', progress:projProgress({tasks:vis})},
     showMemo:p.share?.showMemo!==false,
     rows:(p.rows||[]).slice(),
+    folders:(p.folders||[]).filter(fd=>!fd.taskId).map(fd=>({id:fd.id,name:folderTitle(p,fd)})),
     schedStart:p.schedStart||'', schedDays:+p.schedDays||0,
     tasks:vis.map(t=>({id:t.id,name:t.name,proc:t.proc,row:t.row|0,kind:'시공',start:t.start,end:t.end,worker:t.worker,status:t.status||'예정',memo:p.share?.showMemo!==false?(t.memo||''):''})),
     files:(()=>{
@@ -3518,7 +3531,8 @@ function sharePayload(p){
       vis.forEach(t=>taskPhotos(p,t.id).forEach(f=>{ own[f.id]=t.id; }));
       return [
         ...(p.excel||[]).filter(f=>f.shared).map(f=>({name:f.name,url:f.url,type:f.type||'',size:0,taskId:'',memo:EST_DOC_LABEL[estDoc(f)]})),
-        ...(p.files||[]).filter(f=>f.shared!==false).map(f=>({name:f.name,url:f.url,type:f.type,size:f.size,taskId:own[f.id]||'',memo:f.memo||''}))];
+        ...(p.files||[]).filter(f=>f.shared!==false).map(f=>({name:f.name,url:f.url,type:f.type,size:f.size,
+          taskId:own[f.id]||'', folderId:own[f.id]?'':(f.folderId||''), memo:f.memo||''}))];
     })(),
     company:{name:S.company?.name||'',phone:S.company?.phone||''}};
 }
@@ -5205,7 +5219,7 @@ document.addEventListener('input',ev=>{
     if(rest[2]==='end' && tk.start && val && dnum(val)<dnum(tk.start)){ tk.end=tk.start; toast('종료일은 시작일보다 앞설 수 없습니다'); }
     saveProj(p); }
   else if(kind==='file'){ const p=curProj(); const f=(p?.files||[]).find(x=>x.id===rest[0]); if(!f) return; f[rest[1]]=val; saveProj(p);
-    if(rest[1]==='folderId' || rest[1]==='shared') render(); }
+    if(rest[1]==='folderId' || rest[1]==='shared' || rest[1]==='taskId') render(); }
   else if(kind==='exfile'){ const p=curProj(); const f=(p?.excel||[]).find(x=>x.id===rest[0]); if(!f) return; f[rest[1]]=val; saveProj(p);
     if(rest[1]==='shared'||rest[1]==='doc') render(); }
   else if(kind==='folder'){ const p=curProj(); const fd=folderOf(p,rest[0]); if(!fd) return; fd[rest[1]]=val; saveProj(p); }
@@ -5294,6 +5308,13 @@ document.addEventListener('change',ev=>{
   if(a==='revProc'&&t.value){ IMPORT.items.forEach(x=>{ if(x.on) x.process=t.value; }); saveImportDraft(true); render(); }
   if(a==='revUnitAll'&&t.value){ IMPORT.items.forEach((x,i)=>{ if(x.on){ x.unit=t.value; CUSTOM_UNIT_REV.delete(i); } }); saveImportDraft(true); render(); }
   if(t.id==='ct-amount'){ render(); return; }   // 공사대금을 고치면 지급 일정도 다시 나눠 보여줍니다
+  if(a==='galTask'){ const p=curProj(); const v=t.value; if(!p||!v) return;
+    const tid = v==='__none' ? '' : v;
+    let n=0; (p.files||[]).forEach(f=>{ if(GAL_PICK.has(f.id)){ f.taskId=tid; n++; } });
+    const tk=(p.tasks||[]).find(x=>x.id===tid);
+    GAL_PICK.clear(); saveProj(p); render();
+    toast(n+'장을 '+(tk?'“'+taskLabel(p,tk)+'”에 붙였습니다':'공정 미지정으로 바꿨습니다'));
+    return; }
   if(a==='galMove'){ const p=curProj(); const v=t.value; if(!p||!v) return;
     let fid=v;
     if(v==='__new'){ const nm=prompt('새 폴더 이름을 적어주세요','새 폴더'); if(nm===null){ t.value=''; return; }
@@ -6112,6 +6133,7 @@ async function connectSupabase(){
   registerSW();
   if(session) sync();
 })();
+
 
 
 

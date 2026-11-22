@@ -127,6 +127,8 @@ table.sh .lab{position:absolute;top:13px;left:1px;z-index:2;font-size:11px;font-
   table.sh th.sat,table.sh th.sun{color:#e7ece9}
   table.sh tr:nth-child(even) td.cell{background:rgba(255,255,255,.03)}
 }
+.fgh{font-size:13px;font-weight:700;margin:14px 0 7px;padding-bottom:5px;border-bottom:1px solid var(--line2)}
+.fgh:first-of-type{margin-top:10px}
 </style>
 </head>
 <body>
@@ -254,9 +256,12 @@ table.sh .lab{position:absolute;top:13px;left:1px;z-index:2;font-size:11px;font-
       if(SELB){
         var bt=null; tasks.forEach(function(t){ if(t.id===SELB) bt=t; });
         if(bt){
+          var bd=function(k){ var ms=dnum(k); if(!ms) return ''; var x=new Date(ms);
+            return (x.getUTCMonth()+1)+'월 '+x.getUTCDate()+'일('+WD[x.getUTCDay()]+')'; };
+          var bdt=bd(bt.start)+((bt.end&&bt.end!==bt.start)?' ~ '+bd(bt.end):'');
           var shots=(P.files||[]).filter(function(f){ return f.taskId===bt.id && isImg(f); });
           h+='<div class="dayp"><div class="row"><b>'+esc(((P.rows||[])[bt.row|0]||'')+(bt.name?' · '+bt.name:''))+'</b>'
-            +'<span class="small muted">'+esc(dtxt(bt))+'</span>'
+            +'<span class="small muted">'+esc(bdt)+'</span>'
             +'<span style="margin-left:auto"></span><button class="btn" data-bar="">닫기</button></div>'
             + (shots.length
                ? '<div class="ph" style="margin-top:10px">'+shots.map(function(f,i){
@@ -322,17 +327,33 @@ table.sh .lab{position:absolute;top:13px;left:1px;z-index:2;font-size:11px;font-
     var loose=(P.files||[]).filter(function(f){ return !f.taskId; });
     if(loose.length){
       var np=loose.filter(isImg).length;
-      h+='<section class="card"><h2>사진'+(np?' <span class="small muted" style="font-weight:400">'+np+'장</span>':'')+'</h2><div class="ph">';
-      loose.forEach(function(f,i){
-        if(isImg(f)){
-          h+='<figure><button class="shot" data-dshot="'+i+'"><img src="'+esc(f.url)+'" alt="" loading="lazy"></button>'
-            +'<figcaption class="muted">'+esc(f.name||'')+'</figcaption></figure>';
-        }else{
-          h+='<figure><a class="file" href="'+esc(f.url)+'" target="_blank" rel="noopener">열기</a>'
-            +'<figcaption class="muted">'+esc(f.name||'')+'</figcaption></figure>';
-        }
+      /* 폴더별로 묶어서 보여줍니다 */
+      var fds=(P.folders||[]).slice(), groups=[], used={};
+      fds.forEach(function(fd){
+        var list=[];
+        loose.forEach(function(f,i){ if((f.folderId||'')===fd.id){ list.push(f); used[i]=1; } });
+        if(list.length) groups.push({name:fd.name||'사진', list:list});
       });
-      h+='</div></section>';
+      var rest=loose.filter(function(f,i){ return !used[i]; });
+      if(rest.length) groups.push({name: groups.length?'그 밖의 사진':'사진', list:rest});
+      h+='<section class="card"><h2>사진'+(np?' <span class="small muted" style="font-weight:400">'+np+'장</span>':'')+'</h2>';
+      var gi=0;
+      groups.forEach(function(g){
+        if(groups.length>1) h+='<div class="fgh">'+esc(g.name)+' <span class="small muted">'+g.list.length+'장</span></div>';
+        h+='<div class="ph">';
+        g.list.forEach(function(f){
+          var i=loose.indexOf(f);
+          if(isImg(f)){
+            h+='<figure><button class="shot" data-dshot="'+i+'"><img src="'+esc(f.url)+'" alt="" loading="lazy"></button>'
+              +(f.memo?'<figcaption class="muted">'+esc(f.memo)+'</figcaption>':'')+'</figure>';
+          }else{
+            h+='<figure><a class="file" href="'+esc(f.url)+'" target="_blank" rel="noopener">열기</a>'
+              +'<figcaption class="muted">'+esc(f.name||'')+'</figcaption></figure>';
+          }
+        });
+        h+='</div>'; gi++;
+      });
+      h+='</section>';
     }
 
     h+='<p class="foot">'+esc(co.name||'')+(co.phone?' · '+esc(co.phone):'')+'<br>이 화면은 보기 전용입니다. 문의는 담당자에게 연락해주세요.</p>';
