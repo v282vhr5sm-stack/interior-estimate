@@ -1,8 +1,8 @@
 // 앱 파일(index.html, app.js, styles.css 등)을 고쳐서 다시 올릴 때는 이 숫자를 꼭 올리세요.
 // 그래야 아이폰·아이패드·노트북에 "새 버전이 있습니다" 알림이 뜨고 새 버전이 적용됩니다.
-const VERSION = 151;
+const VERSION = 152;
 // 앱 번호 (app.js의 APP_VERSION과 똑같이 맞춰 주세요)
-const APP_V = '7.6.1';
+const APP_V = '7.7.0';
 const CACHE = 'estimate-v' + VERSION;
 const SHELL = [
   './', 'index.html', 'share.html', 'styles.css', 'app.js', 'manifest.webmanifest',
@@ -15,7 +15,12 @@ self.addEventListener('install', e => {
   // 한 파일(특히 바깥 주소)이 안 받아져도 새 버전 설치가 통째로 실패하지 않게 합니다.
   e.waitUntil((async () => {
     const c = await caches.open(CACHE);
-    await Promise.all(SHELL.map(u => c.add(u).catch(err => console.warn('캐시 실패(건너뜀)', u, err))));
+    // 우리 파일은 브라우저 저장본을 건너뛰고 반드시 새로 받아옵니다 (옛 파일이 담기면 새 버전이 안 먹습니다)
+    await Promise.all(SHELL.map(u => {
+      const mine = !/^https?:\/\//.test(u);
+      const req = mine ? new Request(u, { cache: 'reload' }) : u;
+      return c.add(req).catch(err => console.warn('캐시 실패(건너뜀)', u, err));
+    }));
   })());
 });
 self.addEventListener('activate', e => {

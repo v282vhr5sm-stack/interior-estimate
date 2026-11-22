@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '7.6.1';
+const APP_VERSION = '7.7.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -2894,6 +2894,7 @@ function renderHome(){
 /* ── 사진 폴더 ─────────────────────────────────────────
    날짜나 공정별로 폴더를 만들어 그날 작업 사진과 메모를 모읍니다. */
 let GAL_FOLDER = '';                       // 열어 둔 폴더 (빈 값이면 폴더 목록)
+let GAL_PICK = new Set();                  // 골라 둔 사진 (한 번에 폴더로 옮기기)
 const folderOf = (p,id) => (p.folders||[]).find(f=>f.id===id);
 const filesInFolder = (p,id) => (p.files||[]).filter(f=>fileKind(f)==='img' && (f.folderId||'')===id);
 /* 공정 일정에 붙여 둔 폴더와 그 사진 */
@@ -3373,9 +3374,23 @@ function renderGallery(p,asTab){
     ${folders.length?`<div class="folders">${folders.map(card).join('')}</div>`
       :`<div class="panel"><div class="empty">폴더를 만들어 그날 작업 사진과 메모를 모아두세요.<br>
         <button class="btn pri" data-act="newFolder" style="margin-top:10px">+ 새 폴더 만들기</button></div></div>`}
-    ${loose.length?`<section class="panel">
-      <div class="panel-h"><h3>폴더에 없는 사진 ${loose.length}장</h3><span class="muted small">아래에서 폴더로 옮길 수 있습니다</span></div>
-      <div class="panel-b"><div class="files">${loose.map(f=>`<figure class="file">
+    ${loose.length?(()=>{ const n=loose.filter(f=>GAL_PICK.has(f.id)).length; return `<section class="panel">
+      <div class="panel-h"><h3>폴더에 없는 사진 ${loose.length}장</h3>
+        <span class="spacer"></span>
+        <button class="btn sm" data-act="galPickAll">${n===loose.length?'모두 해제':'모두 고르기'}</button></div>
+      ${n?`<div class="pickbar">
+        <b>${n}장 골랐습니다</b>
+        <span class="spacer"></span>
+        <label class="row small" style="gap:6px">옮길 폴더
+          <select class="f sm" data-act-change="galMove" style="width:auto;max-width:200px">
+            <option value="">고르세요</option>
+            ${(p.folders||[]).map(x=>`<option value="${x.id}">${esc(folderTitle(p,x))}</option>`).join('')}
+            <option value="__new">+ 새 폴더로 옮기기</option>
+          </select></label>
+        <button class="btn ghost sm" data-act="galPickNone">선택 해제</button>
+      </div>`:'<p class="muted small" style="margin:0 14px 10px">사진 왼쪽 위 네모를 눌러 고르면 한 번에 폴더로 옮길 수 있습니다.</p>'}
+      <div class="panel-b"><div class="files">${loose.map(f=>`<figure class="file${GAL_PICK.has(f.id)?' picked':''}">
+        <label class="pickbox"><input type="checkbox" data-pick="${f.id}" ${GAL_PICK.has(f.id)?'checked':''}></label>
         <button class="mk-open" data-act="markup" data-fid="${f.id}" title="눌러서 손으로 표시하기"><img src="${esc(f.url)}" alt="${esc(f.memo||f.name)}" loading="lazy"><span class="mk-hint">✏️ 눌러서 표시</span></button>
         <figcaption>
           <input class="f small" data-bind="file:${f.id}:memo" value="${esc(f.memo||'')}" placeholder="사진 메모" style="padding:3px 5px">
@@ -3387,7 +3402,7 @@ function renderGallery(p,asTab){
             <button class="btn ghost sm" data-act="markup" data-fid="${f.id}">✏️ 표시</button>
             ${f.origUrl?`<button class="btn ghost sm" data-act="unmark" data-fid="${f.id}">원본</button>`:''}
             <button class="btn ghost sm danger" data-act="delPlan" data-fid="${f.id}">삭제</button></div>
-        </figcaption></figure>`).join('')}</div></div></section>`:''}
+        </figcaption></figure>`).join('')}</div></div></section>`; })():''}
   </div>`;
 }
 function renderHub(p){
@@ -5246,6 +5261,9 @@ function handleSelectChange(t){
 }
 document.addEventListener('change',ev=>{
   const t=ev.target, a=t.dataset?.actChange;
+  if(t.dataset?.pick!==undefined){ const id=t.dataset.pick;
+    if(t.checked) GAL_PICK.add(id); else GAL_PICK.delete(id);
+    render(); return; }
   if(t.dataset?.money){ t.value=won(num(t.value)); }
   if(t.dataset?.calcmat!==undefined){ CALC.mid=t.value; CALC.loss='';
     CALC.size=sizeFromMat(S.materials.get(t.value));    // 자재에 적힌 크기가 있으면 그대로 가져옵니다
@@ -5276,6 +5294,15 @@ document.addEventListener('change',ev=>{
   if(a==='revProc'&&t.value){ IMPORT.items.forEach(x=>{ if(x.on) x.process=t.value; }); saveImportDraft(true); render(); }
   if(a==='revUnitAll'&&t.value){ IMPORT.items.forEach((x,i)=>{ if(x.on){ x.unit=t.value; CUSTOM_UNIT_REV.delete(i); } }); saveImportDraft(true); render(); }
   if(t.id==='ct-amount'){ render(); return; }   // 공사대금을 고치면 지급 일정도 다시 나눠 보여줍니다
+  if(a==='galMove'){ const p=curProj(); const v=t.value; if(!p||!v) return;
+    let fid=v;
+    if(v==='__new'){ const nm=prompt('새 폴더 이름을 적어주세요','새 폴더'); if(nm===null){ t.value=''; return; }
+      const fd=newFolder(p); fd.name=(nm||'').trim(); fid=fd.id; }
+    let n=0;
+    (p.files||[]).forEach(f=>{ if(GAL_PICK.has(f.id)){ f.folderId=fid; n++; } });
+    GAL_PICK.clear(); saveProj(p); render();
+    toast(n+'장을 “'+folderTitle(p,folderOf(p,fid))+'” 폴더로 옮겼습니다');
+    return; }
   if(a==='folderTask'){ const p=curProj(); const fd=folderOf(p,t.dataset.id); if(!fd) return;
     (p.folders||[]).forEach(x=>{ if(x!==fd && x.taskId===t.value) x.taskId=''; });
     fd.taskId=t.value; saveProj(p); render(); return; }
@@ -5711,6 +5738,12 @@ document.addEventListener('click',async ev=>{
     case 'hubBack': HUB_GALLERY=false; GAL_FOLDER=''; render(); window.scrollTo(0,0); break;
     case 'taskPhotoAny': PLAN_TASK=''; PLAN_FOLDER=''; $('#filePlan').setAttribute('accept','image/*'); $('#filePlan').click(); break;
     case 'folderTask': break;
+    case 'galPickAll': { const p=curProj();
+      const loose=(p.files||[]).filter(f=>fileKind(f)==='img' && (!f.folderId || !folderOf(p,f.folderId)));
+      if(loose.every(f=>GAL_PICK.has(f.id))) GAL_PICK.clear();
+      else loose.forEach(f=>GAL_PICK.add(f.id));
+      render(); break; }
+    case 'galPickNone': GAL_PICK.clear(); render(); break;
     case 'newFolder': { const p=curProj(); if(!p) break;
       const fd=newFolder(p); GAL_FOLDER=fd.id; HUB_GALLERY=false; VIEW='gal'; ls.set('view',VIEW); render();
       setTimeout(()=>document.getElementById('fd-name')?.focus(),80); break; }
@@ -5967,9 +6000,10 @@ async function checkUpdate(manual){
     catch(e){ if(manual) toast('지금은 확인이 안 됩니다. 잠시 뒤 다시 해보세요.'); return; }
     updatePill();
     if(swReg.waiting){ applyUpdate(); return; }
-    if(SRV_VER && SRV_VER!==APP_VERSION){                // 새 버전이 있으면 받아질 때까지 기다렸다 바로 적용
+    if(SRV_VER && SRV_VER!==APP_VERSION){
       UPDATE_STUCK=false; updatePill();
-      if(manual) toast('새 버전 v'+SRV_VER+'을 받는 중입니다…');
+      /* 직접 누르셨으면 기다리지 않고 바로 통째로 새로 받습니다 */
+      if(manual){ hardReload(); return; }
       if(!UPD_WAIT) waitNewVersion(1);
       return;
     }
@@ -5981,6 +6015,15 @@ async function checkUpdate(manual){
    그래도 안 되면 오류를 띄우지 않고, 조용히 앱을 통째로 새로 받아 스스로 고칩니다. */
 function waitNewVersion(step){
   UPD_WAIT=true;
+  /* 새 서비스워커가 켜졌는데도 앱 번호가 그대로면 저장본이 상한 것입니다 */
+  if(step===1 && SRV_VER && SRV_VER!==APP_VERSION && navigator.serviceWorker?.controller){
+    const k='ie:stale:'+SRV_VER;
+    let done=false; try{ done=!!sessionStorage.getItem(k); }catch{}
+    if(!done && !swReg?.waiting && !swReg?.installing){
+      try{ sessionStorage.setItem(k,'1'); }catch{}
+      UPD_WAIT=false; hardReload(); return;
+    }
+  }
   if(swReg?.waiting){ UPD_WAIT=false; applyUpdate(); return; }
   if(step>14){
     UPD_WAIT=false;
@@ -6069,6 +6112,7 @@ async function connectSupabase(){
   registerSW();
   if(session) sync();
 })();
+
 
 
 
