@@ -129,6 +129,13 @@ table.sh .lab{position:absolute;top:13px;left:1px;z-index:2;font-size:11px;font-
 }
 .fgh{font-size:13px;font-weight:700;margin:14px 0 7px;padding-bottom:5px;border-bottom:1px solid var(--line2);display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .gtag{font-size:10.5px;font-weight:800;padding:1px 7px;border-radius:999px;background:var(--line2);color:var(--mut)}
+.fgrp{border:1px solid var(--line2);border-radius:10px;margin-top:10px;overflow:hidden}
+.fgrp>summary{cursor:pointer;list-style:none;margin:0;padding:10px 12px;border-bottom:0;background:var(--surface)}
+.fgrp>summary::-webkit-details-marker{display:none}
+.fgrp>summary::after{content:'▾';margin-left:auto;color:var(--mut);font-size:12px;transition:transform .15s}
+.fgrp[open]>summary{border-bottom:1px solid var(--line2)}
+.fgrp[open]>summary::after{transform:rotate(180deg)}
+.fgrp>.ph{padding:10px 12px 12px}
 .fgh:first-of-type{margin-top:10px}
 </style>
 </head>
@@ -325,27 +332,26 @@ table.sh .lab{position:absolute;top:13px;left:1px;z-index:2;font-size:11px;font-
     h+='</section>';
 
     /* 받아보신 자료 — 작업에 붙지 않은 파일 (견적서, 공통 도면 등) */
-    var all=(P.files||[]).slice();
-    if(all.length){
-      /* 묶음: ① 공정에 넣은 사진 → 공정별  ② 폴더에 넣은 사진 → 폴더별  ③ 나머지 */
-      var groups=[], used={}, names=P.taskNames||{};
-      (P.tasks||[]).forEach(function(t){
-        var list=[];
-        all.forEach(function(f,i){ if(f.taskId===t.id){ list.push(f); used[i]=1; } });
-        if(list.length) groups.push({name:(names[t.id]||((P.rows||[])[t.row|0]||'공정')), tag:'공정', list:list});
-      });
+    /* 공정에 넣은 사진은 그 공정을 눌렀을 때만 나옵니다.
+       아래에는 공정에 안 넣은 것(폴더 묶음)만 보여줍니다. */
+    var all=(P.files||[]).filter(function(f){ return !f.taskId; });
+    if(all.length && !SELB){
+      var groups=[], used={};
       (P.folders||[]).forEach(function(fd){
         var list=[];
         all.forEach(function(f,i){ if(!used[i] && (f.folderId||'')===fd.id){ list.push(f); used[i]=1; } });
         if(list.length) groups.push({name:fd.name||'사진', tag:'폴더', list:list});
       });
       var rest=all.filter(function(f,i){ return !used[i]; });
-      if(rest.length) groups.push({name:'그 밖의 자료', tag:'', list:rest});
+      if(rest.length) groups.push({name: groups.length?'그 밖의 자료':'사진', tag:'', list:rest});
       var np=all.filter(isImg).length;
       h+='<section class="card"><h2>사진'+(np?' <span class="small muted" style="font-weight:400">'+np+'장</span>':'')+'</h2>';
       groups.forEach(function(g){
-        h+='<div class="fgh">'+(g.tag?'<span class="gtag">'+esc(g.tag)+'</span>':'')+esc(g.name)
-          +' <span class="small muted">'+g.list.length+'장</span></div><div class="ph">';
+        var fold = g.tag==='폴더';                 // 폴더는 늘 접어 둡니다
+        h+= fold ? '<details class="fgrp"><summary class="fgh">'
+                     +'<span class="gtag">폴더</span>'+esc(g.name)
+                     +' <span class="small muted">'+g.list.length+'장</span></summary><div class="ph">'
+                 : '<div class="fgh">'+esc(g.name)+' <span class="small muted">'+g.list.length+'장</span></div><div class="ph">';
         g.list.forEach(function(f){
           var i=all.indexOf(f);
           if(isImg(f)){
@@ -356,7 +362,7 @@ table.sh .lab{position:absolute;top:13px;left:1px;z-index:2;font-size:11px;font-
               +'<figcaption class="muted">'+esc(f.name||'')+'</figcaption></figure>';
           }
         });
-        h+='</div>';
+        h+= fold ? '</div></details>' : '</div>';
       });
       h+='</section>';
     }
