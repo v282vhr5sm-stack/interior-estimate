@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '7.7.1';
+const APP_VERSION = '7.7.2';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -433,6 +433,7 @@ async function sync(){
   if(syncing){ syncAgain=true; return; }
   syncing=true; syncErr=''; updatePill();
   try{ pushedSomething=false; await push(); await pull(); lastSyncAt=new Date(); scheduleCalFeed(4000);
+    republishShares();
        if(pushedSomething) tellOtherDevices(); }
   catch(e){ console.warn('sync',e); syncErr=e?.message||String(e); }
   finally{ syncing=false; updatePill(); if(syncAgain){ syncAgain=false; scheduleSync(300); } }
@@ -3523,6 +3524,7 @@ function sharePayload(p){
     showMemo:p.share?.showMemo!==false,
     rows:(p.rows||[]).slice(),
     folders:(p.folders||[]).filter(fd=>!fd.taskId).map(fd=>({id:fd.id,name:folderTitle(p,fd)})),
+    taskNames:(()=>{ const o={}; vis.forEach(t=>{ o[t.id]=[(p.rows||[])[t.row|0]||'', t.name].filter(Boolean).join(' · ')||'공정'; }); return o; })(),
     schedStart:p.schedStart||'', schedDays:+p.schedDays||0,
     tasks:vis.map(t=>({id:t.id,name:t.name,proc:t.proc,row:t.row|0,kind:'시공',start:t.start,end:t.end,worker:t.worker,status:t.status||'예정',memo:p.share?.showMemo!==false?(t.memo||''):''})),
     files:(()=>{
@@ -3537,6 +3539,17 @@ function sharePayload(p){
     company:{name:S.company?.name||'',phone:S.company?.phone||''}};
 }
 const pubTimers={};
+/* 앱 버전이 올라가면 켜져 있는 공유 링크를 한 번씩 새로 올려 둡니다 */
+let SHARE_REFRESHED=false;
+function republishShares(){
+  if(SHARE_REFRESHED) return;
+  let done=''; try{ done=localStorage.getItem('ie:shareV')||''; }catch{}
+  if(done===APP_VERSION){ SHARE_REFRESHED=true; return; }
+  SHARE_REFRESHED=true;
+  let n=0;
+  S.projects.forEach(p=>{ if(p.share?.on&&p.share?.token){ n++; setTimeout(()=>publishShare(p),400*n); } });
+  try{ localStorage.setItem('ie:shareV',APP_VERSION); }catch{}
+}
 function schedulePublish(pid){ clearTimeout(pubTimers[pid]); pubTimers[pid]=setTimeout(()=>publishShare(S.projects.get(pid)),1200); }
 async function publishShare(p){
   if(!p||!sb||!session||!p.share?.on||!p.share?.token) return;
@@ -6133,6 +6146,7 @@ async function connectSupabase(){
   registerSW();
   if(session) sync();
 })();
+
 
 
 

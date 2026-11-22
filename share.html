@@ -127,7 +127,8 @@ table.sh .lab{position:absolute;top:13px;left:1px;z-index:2;font-size:11px;font-
   table.sh th.sat,table.sh th.sun{color:#e7ece9}
   table.sh tr:nth-child(even) td.cell{background:rgba(255,255,255,.03)}
 }
-.fgh{font-size:13px;font-weight:700;margin:14px 0 7px;padding-bottom:5px;border-bottom:1px solid var(--line2)}
+.fgh{font-size:13px;font-weight:700;margin:14px 0 7px;padding-bottom:5px;border-bottom:1px solid var(--line2);display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.gtag{font-size:10.5px;font-weight:800;padding:1px 7px;border-radius:999px;background:var(--line2);color:var(--mut)}
 .fgh:first-of-type{margin-top:10px}
 </style>
 </head>
@@ -324,34 +325,38 @@ table.sh .lab{position:absolute;top:13px;left:1px;z-index:2;font-size:11px;font-
     h+='</section>';
 
     /* 받아보신 자료 — 작업에 붙지 않은 파일 (견적서, 공통 도면 등) */
-    var loose=(P.files||[]).filter(function(f){ return !f.taskId; });
-    if(loose.length){
-      var np=loose.filter(isImg).length;
-      /* 폴더별로 묶어서 보여줍니다 */
-      var fds=(P.folders||[]).slice(), groups=[], used={};
-      fds.forEach(function(fd){
+    var all=(P.files||[]).slice();
+    if(all.length){
+      /* 묶음: ① 공정에 넣은 사진 → 공정별  ② 폴더에 넣은 사진 → 폴더별  ③ 나머지 */
+      var groups=[], used={}, names=P.taskNames||{};
+      (P.tasks||[]).forEach(function(t){
         var list=[];
-        loose.forEach(function(f,i){ if((f.folderId||'')===fd.id){ list.push(f); used[i]=1; } });
-        if(list.length) groups.push({name:fd.name||'사진', list:list});
+        all.forEach(function(f,i){ if(f.taskId===t.id){ list.push(f); used[i]=1; } });
+        if(list.length) groups.push({name:(names[t.id]||((P.rows||[])[t.row|0]||'공정')), tag:'공정', list:list});
       });
-      var rest=loose.filter(function(f,i){ return !used[i]; });
-      if(rest.length) groups.push({name: groups.length?'그 밖의 사진':'사진', list:rest});
+      (P.folders||[]).forEach(function(fd){
+        var list=[];
+        all.forEach(function(f,i){ if(!used[i] && (f.folderId||'')===fd.id){ list.push(f); used[i]=1; } });
+        if(list.length) groups.push({name:fd.name||'사진', tag:'폴더', list:list});
+      });
+      var rest=all.filter(function(f,i){ return !used[i]; });
+      if(rest.length) groups.push({name:'그 밖의 자료', tag:'', list:rest});
+      var np=all.filter(isImg).length;
       h+='<section class="card"><h2>사진'+(np?' <span class="small muted" style="font-weight:400">'+np+'장</span>':'')+'</h2>';
-      var gi=0;
       groups.forEach(function(g){
-        if(groups.length>1) h+='<div class="fgh">'+esc(g.name)+' <span class="small muted">'+g.list.length+'장</span></div>';
-        h+='<div class="ph">';
+        h+='<div class="fgh">'+(g.tag?'<span class="gtag">'+esc(g.tag)+'</span>':'')+esc(g.name)
+          +' <span class="small muted">'+g.list.length+'장</span></div><div class="ph">';
         g.list.forEach(function(f){
-          var i=loose.indexOf(f);
+          var i=all.indexOf(f);
           if(isImg(f)){
-            h+='<figure><button class="shot" data-dshot="'+i+'"><img src="'+esc(f.url)+'" alt="" loading="lazy"></button>'
+            h+='<figure><button class="shot" data-ashot="'+i+'"><img src="'+esc(f.url)+'" alt="" loading="lazy"></button>'
               +(f.memo?'<figcaption class="muted">'+esc(f.memo)+'</figcaption>':'')+'</figure>';
           }else{
             h+='<figure><a class="file" href="'+esc(f.url)+'" target="_blank" rel="noopener">열기</a>'
               +'<figcaption class="muted">'+esc(f.name||'')+'</figcaption></figure>';
           }
         });
-        h+='</div>'; gi++;
+        h+='</div>';
       });
       h+='</section>';
     }
@@ -453,6 +458,15 @@ table.sh .lab{position:absolute;top:13px;left:1px;z-index:2;font-size:11px;font-
       if(k==='p'){ moveShot(-1); return; }
       if(k==='n'){ moveShot(1); return; }
       closeShot(); return;                   // ✕ 이든 배경이든 사진이든 누르면 닫힙니다
+    }
+    var ashot=t.closest?t.closest('[data-ashot]'):null;
+    if(ashot){
+      var wrapA=ashot.closest('.card');
+      var listA=[].slice.call(wrapA.querySelectorAll('[data-ashot]')).map(function(b){
+        return {url:b.querySelector('img').src, memo:(b.parentNode.querySelector('figcaption')||{}).textContent||''};
+      });
+      openShot(listA, [].slice.call(wrapA.querySelectorAll('[data-ashot]')).indexOf(ashot));
+      return;
     }
     var dshot=t.closest?t.closest('[data-dshot]'):null;
     if(dshot){
