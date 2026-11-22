@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '7.6.1';
+const APP_VERSION = '7.6.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -763,10 +763,11 @@ function render(){
   const keep = same ? keepPlace() : null;
   tabs.hidden=false;
   if(VIEW==='mat'||VIEW==='doc'){ VIEW='est'; ls.set('view',VIEW); }   // 자재·고객용 화면은 견적 안으로 합쳤습니다
-  ['home','est','sched','vend','set'].forEach(v=>$('#tab-'+v)?.setAttribute('aria-selected',String(v===VIEW)));
+  ['home','est','sched','gal','vend','set'].forEach(v=>$('#tab-'+v)?.setAttribute('aria-selected',String(v===VIEW)));
   const app=$('#app');
   if(VIEW==='home') app.innerHTML=renderHome();
   else if(VIEW==='sched') app.innerHTML=renderSched();
+  else if(VIEW==='gal') app.innerHTML=renderGalleryTab();
   else if(VIEW==='vend') app.innerHTML=renderAnalysis();   // 업체 자리를 분석(원가분석)으로 바꿨습니다
   else if(VIEW==='set') app.innerHTML=renderSettings();
   else app.innerHTML=renderEst();
@@ -2775,14 +2776,7 @@ function docSections(p){
         :'<p class="muted small" style="margin:8px 0 0">켜면 주소가 만들어져요. 그 주소를 아는 사람만 볼 수 있고, 아무것도 수정할 수 없어요.</p>'}
       </div>
     </section>
-
-    <section class="panel">
-      <div class="panel-h"><h3>고객에게 보여줄 사진 · 도면</h3><span class="muted small">지금 ${onCnt}개 보임${exOn?' (견적서·계약서 '+exOn+'개 포함)':''}</span></div>
-      <div class="panel-b">
-        ${fs2.length?`<ul class="cphotos">${fs2.map(f=>prow(f)).join('')}</ul>`
-          :'<p class="muted small" style="margin:0">일정 화면에서 사진·도면을 올리면 여기에 나옵니다.</p>'}
-      </div>
-    </section>`;
+`;
 }
 function renderDocViewOld(){
   const e=cur();
@@ -2902,6 +2896,24 @@ function renderHome(){
 let GAL_FOLDER = '';                       // 열어 둔 폴더 (빈 값이면 폴더 목록)
 const folderOf = (p,id) => (p.folders||[]).find(f=>f.id===id);
 const filesInFolder = (p,id) => (p.files||[]).filter(f=>fileKind(f)==='img' && (f.folderId||'')===id);
+/* 공정 일정에 붙여 둔 폴더와 그 사진 */
+const taskFolder = (p,tid) => tid ? (p.folders||[]).find(f=>f.taskId===tid) : null;
+function taskPhotos(p,tid){
+  const fd=taskFolder(p,tid);
+  const a=fd?filesInFolder(p,fd.id):[];
+  const b=(p.files||[]).filter(f=>fileKind(f)==='img' && f.taskId===tid && !(fd&&f.folderId===fd.id));
+  return [...a,...b];
+}
+/* 일정 고르는 칸에 쓸 이름 */
+function taskLabel(p,t){
+  const row=(p.rows||[])[t.row|0]||'';
+  return [row, t.name, taskDateText(t)].filter(Boolean).join(' · ');
+}
+function taskOptions(p,sel){
+  const list=(p.tasks||[]).filter(t=>dnum(t.start)).slice()
+    .sort((a,b)=>String(a.start||'').localeCompare(String(b.start||'')));
+  return list.map(t=>`<option value="${esc(t.id)}" ${sel===t.id?'selected':''}>${esc(taskLabel(p,t))}</option>`).join('');
+}
 /* 폴더의 공정 — 예전에 일정 작업으로 골라 둔 것도 공정으로 읽어줍니다 */
 function folderProc(p,fd){
   if(fd.proc) return fd.proc;
@@ -2934,20 +2946,16 @@ function renderFolder(p,fd){
       ${(p.folders||[]).map(x=>`<option value="${x.id}" ${f.folderId===x.id?'selected':''}>${esc(folderTitle(p,x))}</option>`).join('')}
     </select>`;
   return `<div class="stack">
-    <div class="row"><button class="btn ghost" data-act="folderBack">‹ 사진 폴더</button><span class="spacer"></span>
+    <div class="row"><button class="btn ghost" data-act="folderBack">‹ 사진</button><span class="spacer"></span>
       <span class="muted small">사진 ${list.length}장</span>
       <button class="btn pri sm" data-act="folderPhoto" data-id="${fd.id}">📷 사진 추가</button></div>
     <section class="panel"><div class="panel-b">
       <div class="client-grid">
         <label class="fl">폴더 이름<input class="f" id="fd-name" data-bind="folder:${fd.id}:name" value="${esc(fd.name||'')}" placeholder="${esc(folderTitle(p,fd))}"></label>
         <label class="fl">날짜<input class="f" type="date" id="fd-date" data-bind="folder:${fd.id}:date" value="${esc(fd.date||'')}"></label>
-        <label class="fl">공정<select class="f" id="fd-proc" data-bind="folder:${fd.id}:proc">
-          <option value="">공정 미지정</option>
-          ${(()=>{ const {mine,rest}=procsForSite(p), cur=folderProc(p,fd);
-            const op=x=>`<option value="${x.k}" ${cur===x.k?'selected':''}>${esc(x.n)}</option>`;
-            return (mine.length?`<optgroup label="이 현장 공정">${mine.map(op).join('')}</optgroup>`:'')
-                 + (rest.length?`<optgroup label="그 밖의 공정">${rest.map(op).join('')}</optgroup>`:'');
-          })()}
+        <label class="fl">연결된 공정 일정<select class="f" id="fd-task" data-act-change="folderTask" data-id="${fd.id}">
+          <option value="">일정에 안 붙임 (고객에게는 일정표 아래 사진으로)</option>
+          ${taskOptions(p,fd.taskId||'')}
         </select></label>
       </div>
       <label class="fl" style="margin-top:10px">그날 작업 메모
@@ -2972,7 +2980,7 @@ function renderFolder(p,fd){
       <div class="panel-h"><h3>사진 ${list.length}장</h3><span class="muted small">사진마다 메모를 적을 수 있습니다</span></div>
       <div class="panel-b">
         ${list.length?`<div class="files">${list.map(f=>`<figure class="file">
-          <a href="${esc(f.url)}" target="_blank" rel="noopener"><img src="${esc(f.url)}" alt="${esc(f.memo||f.name)}" loading="lazy"></a>
+          <button class="mk-open" data-act="markup" data-fid="${f.id}" title="눌러서 손으로 표시하기"><img src="${esc(f.url)}" alt="${esc(f.memo||f.name)}" loading="lazy"><span class="mk-hint">✏️ 눌러서 표시</span></button>
           ${f.marked?'<span class="mk-badge">표시함</span>':''}
           <figcaption>
             <input class="f small" data-bind="file:${f.id}:memo" value="${esc(f.memo||'')}" placeholder="사진 메모" style="padding:3px 5px">
@@ -3328,8 +3336,17 @@ async function revertMarkup(fileId){
   render(); toast('원본으로 되돌렸습니다');
 }
 
+/* 사진 탭 */
+function renderGalleryTab(){
+  const list=[...S.projects.values()].sort((a,b)=>(b.updated||0)-(a.updated||0));
+  if(!list.length) return `<div class="stack"><h2>사진</h2><div class="panel"><div class="empty">
+    <h3 style="margin-bottom:6px">아직 현장이 없습니다</h3><p>현장을 만들면 폴더를 만들어 사진을 모을 수 있습니다.</p>
+    <div class="row" style="justify-content:center;margin-top:12px"><button class="btn pri" data-act="newProj">+ 새 현장</button></div></div></div></div>`;
+  const p=curProj()||list[0];
+  return renderGallery(p,true);
+}
 /* 사진만 모아 보는 화면 — 폴더 목록 */
-function renderGallery(p){
+function renderGallery(p,asTab){
   const fd=GAL_FOLDER && folderOf(p,GAL_FOLDER);
   if(fd) return renderFolder(p,fd);
   const imgs=(p.files||[]).filter(f=>fileKind(f)==='img');
@@ -3337,26 +3354,29 @@ function renderGallery(p){
   const folders=[...(p.folders||[])].sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))||(b.at||0)-(a.at||0));
   const card=fd=>{
     const list=filesInFolder(p,fd.id);
-    const named=!!(fd.name||'').trim();          // 이름을 적었으면 아래에 날짜·공정을 따로 보여줍니다
-    const sub=(named?[fd.date?dstr(fd.date):'', folderProcName(p,fd)]:[]).concat(`사진 ${list.length}장`);
+    const t=(p.tasks||[]).find(x=>x.id===fd.taskId);
     return `<button class="folder" data-act="openFolder" data-id="${fd.id}">
       <span class="folder-th">${list[0]?`<img src="${esc(list[0].url)}" alt="" loading="lazy">`:'<span class="folder-i">🗂</span>'}</span>
       <b>${esc(folderTitle(p,fd))}</b>
-      <span class="muted small">${sub.filter(Boolean).join(' · ')}</span>
+      <span class="muted small">사진 ${list.length}장</span>
+      <span class="flink${t?'':' none'}">${t?esc(taskLabel(p,t)):'일정에 안 붙임'}</span>
       ${fd.memo?`<span class="folder-memo">${esc(fd.memo)}</span>`:''}
     </button>`;
   };
   return `<div class="stack">
-    <div class="row"><button class="btn ghost" data-act="hubBack">‹ ${esc(siteName(p))}</button><span class="spacer"></span>
+    <div class="row">${asTab
+      ? `<h2 style="flex:1;margin:0">사진</h2><select class="f" id="projSel" data-act-change="pickProj" style="width:auto;max-width:300px">${
+          [...S.projects.values()].sort((a,b)=>(b.updated||0)-(a.updated||0)).map(x=>`<option value="${x.id}" ${x.id===p.id?'selected':''}>${esc(siteAddr(x))}</option>`).join('')}</select>`
+      : `<button class="btn ghost" data-act="hubBack">‹ ${esc(siteName(p))}</button><span class="spacer"></span>`}
       <span class="muted small">폴더 ${folders.length} · 사진 ${imgs.length}장</span>
-      <button class="btn pri sm" data-act="newFolder">+ 새 폴더</button></div>
+      <button class="btn pri sm" data-act="newFolder">+ 폴더 만들기</button></div>
     ${folders.length?`<div class="folders">${folders.map(card).join('')}</div>`
       :`<div class="panel"><div class="empty">폴더를 만들어 그날 작업 사진과 메모를 모아두세요.<br>
         <button class="btn pri" data-act="newFolder" style="margin-top:10px">+ 새 폴더 만들기</button></div></div>`}
     ${loose.length?`<section class="panel">
       <div class="panel-h"><h3>폴더에 없는 사진 ${loose.length}장</h3><span class="muted small">아래에서 폴더로 옮길 수 있습니다</span></div>
       <div class="panel-b"><div class="files">${loose.map(f=>`<figure class="file">
-        <a href="${esc(f.url)}" target="_blank" rel="noopener"><img src="${esc(f.url)}" alt="${esc(f.memo||f.name)}" loading="lazy"></a>
+        <button class="mk-open" data-act="markup" data-fid="${f.id}" title="눌러서 손으로 표시하기"><img src="${esc(f.url)}" alt="${esc(f.memo||f.name)}" loading="lazy"><span class="mk-hint">✏️ 눌러서 표시</span></button>
         <figcaption>
           <input class="f small" data-bind="file:${f.id}:memo" value="${esc(f.memo||'')}" placeholder="사진 메모" style="padding:3px 5px">
           <select class="f small" data-bind="file:${f.id}:folderId" style="padding:3px 5px">
@@ -3395,7 +3415,6 @@ function renderHub(p){
         ? tile('copyShare','','🔗','링크 열기','고객·작업자에게 보낼 주소 복사','열림')
         : tile('startWork','','🔗','링크 열기','착공 처리하고 공유 주소를 만듭니다')}
       ${tile('openFiles','','🖼','사진 · 도면','공정별 사진과 도면 보기',(p.files||[]).length||'')}
-      ${tile('siteGallery','','🗂','사진 폴더','날짜·공정별로 그날 사진과 메모',(p.folders||[]).length||'')}
       ${tile('reportPdf','','📕','공사 보고서','일정·지시사항·사진 정리본 PDF')}
       ${tile('archiveProj','','📦','자료 내려받기','ZIP으로 통째로 보관')}
       ${p.status==='착공'?tile('endWork','','✅','준공 처리','공유 링크를 닫습니다')
@@ -3478,9 +3497,14 @@ function sharePayload(p){
     rows:(p.rows||[]).slice(),
     schedStart:p.schedStart||'', schedDays:+p.schedDays||0,
     tasks:vis.map(t=>({id:t.id,name:t.name,proc:t.proc,row:t.row|0,kind:'시공',start:t.start,end:t.end,worker:t.worker,status:t.status||'예정',memo:p.share?.showMemo!==false?(t.memo||''):''})),
-    files:[
-      ...(p.excel||[]).filter(f=>f.shared).map(f=>({name:f.name,url:f.url,type:f.type||'',size:0,taskId:'',memo:EST_DOC_LABEL[estDoc(f)]})),
-      ...(p.files||[]).filter(f=>f.shared!==false).map(f=>({name:f.name,url:f.url,type:f.type,size:f.size,taskId:f.taskId||'',memo:f.memo||''}))],
+    files:(()=>{
+      /* 공정 일정에 붙인 폴더 사진은 그 일정에 달아 보냅니다 */
+      const own={};
+      vis.forEach(t=>taskPhotos(p,t.id).forEach(f=>{ own[f.id]=t.id; }));
+      return [
+        ...(p.excel||[]).filter(f=>f.shared).map(f=>({name:f.name,url:f.url,type:f.type||'',size:0,taskId:'',memo:EST_DOC_LABEL[estDoc(f)]})),
+        ...(p.files||[]).filter(f=>f.shared!==false).map(f=>({name:f.name,url:f.url,type:f.type,size:f.size,taskId:own[f.id]||'',memo:f.memo||''}))];
+    })(),
     company:{name:S.company?.name||'',phone:S.company?.phone||''}};
 }
 const pubTimers={};
@@ -3846,6 +3870,7 @@ function schedTaskPanel(p){
   const t=(p.tasks||[]).find(x=>x.id===SEL_TASK); if(!t) return '';
   const ti=(p.tasks||[]).indexOf(t);
   const nph=(p.files||[]).filter(f=>f.taskId===t.id).length;
+  const fd=taskFolder(p,t.id), shots=taskPhotos(p,t.id);
   return `<div class="panel-b sbar no-print"><div class="sbox">
       <div class="sbox-r">
         <b class="sbox-t"><i class="kd" style="background:${SKMAP[t.kind]||SKMAP['시공']}"></i>${esc((p.rows||[])[t.row|0]||'공정')}</b>
@@ -3858,9 +3883,17 @@ function schedTaskPanel(p){
       </div>
       <div class="sbox-r">
         <input class="f sm sbox-m" data-bind="task:${ti}:memo" value="${esc(t.memo||'')}" placeholder="메모">
-        <button class="btn sm" data-act="taskPhoto" data-ti="${ti}">📷 사진${nph?' '+nph:''}</button>
+        <label class="row small" style="gap:6px">사진 폴더
+          <select class="f sm" data-act-change="schedFolder" data-id="${esc(t.id)}" style="width:auto;max-width:200px">
+            <option value="">없음</option>
+            ${(p.folders||[]).map(x=>`<option value="${x.id}" ${fd&&fd.id===x.id?'selected':''}>${esc(folderTitle(p,x))} (${filesInFolder(p,x.id).length}장)</option>`).join('')}
+          </select></label>
+        <button class="btn sm" data-act="taskPhoto" data-ti="${ti}">📷 사진 올리기</button>
         <button class="btn sm" data-act="sendTask" data-tid="${esc(t.id)}">📨 보내기</button>
       </div>
+      ${shots.length?`<div class="sbox-r shots-row">${shots.map(f=>`<a href="${esc(f.url)}" target="_blank" rel="noopener"><img src="${esc(f.url)}" alt="${esc(f.name)}" loading="lazy"></a>`).join('')}
+        <span class="muted small">${fd?esc(folderTitle(p,fd))+' · ':''}${shots.length}장</span></div>`
+        :'<p class="muted small" style="margin:0">사진 폴더를 고르거나 <b>📷 사진 올리기</b>로 넣으면 여기에 보입니다.</p>'}
     </div></div>`;
 }
 /* 표만 다시 그립니다 (글 쓰던 자리를 지킵니다) */
@@ -5275,6 +5308,13 @@ document.addEventListener('change',ev=>{
   if(a==='revProc'&&t.value){ IMPORT.items.forEach(x=>{ if(x.on) x.process=t.value; }); saveImportDraft(true); render(); }
   if(a==='revUnitAll'&&t.value){ IMPORT.items.forEach((x,i)=>{ if(x.on){ x.unit=t.value; CUSTOM_UNIT_REV.delete(i); } }); saveImportDraft(true); render(); }
   if(t.id==='ct-amount'){ render(); return; }   // 공사대금을 고치면 지급 일정도 다시 나눠 보여줍니다
+  if(a==='folderTask'){ const p=curProj(); const fd=folderOf(p,t.dataset.id); if(!fd) return;
+    (p.folders||[]).forEach(x=>{ if(x!==fd && x.taskId===t.value) x.taskId=''; });
+    fd.taskId=t.value; saveProj(p); render(); return; }
+  if(a==='schedFolder'){ const p=curProj(); const tid=t.dataset.id;
+    (p.folders||[]).forEach(x=>{ if(x.taskId===tid) x.taskId=''; });
+    const fd=folderOf(p,t.value); if(fd) fd.taskId=tid;
+    saveProj(p); render(); return; }
   if(a==='analVatBox'){ const p=curProj(); if(p){ p.analVat=t.checked; saveProj(p); render(); } return; }
   if(a==='qPickSel'){ QPICK_ID=t.value; return; }
   if(a==='schedFrom'){ const p=curProj(); if(p&&t.value){ p.schedStart=t.value; saveProj(p); render(); } return; }
@@ -5699,11 +5739,12 @@ document.addEventListener('click',async ev=>{
       if(HOME_SEL===p.id) HOME_SEL=null;
       render(); break; }
     case 'homeBack': HOME_SEL=null; HOME_NEW=false; HUB_GALLERY=false; render(); break;
-    case 'siteGallery': HUB_GALLERY=true; GAL_FOLDER=''; render(); window.scrollTo(0,0); break;
+    case 'siteGallery': VIEW='gal'; ls.set('view',VIEW); HUB_GALLERY=false; GAL_FOLDER=''; render(); window.scrollTo(0,0); break;
     case 'hubBack': HUB_GALLERY=false; GAL_FOLDER=''; render(); window.scrollTo(0,0); break;
     case 'taskPhotoAny': PLAN_TASK=''; PLAN_FOLDER=''; $('#filePlan').setAttribute('accept','image/*'); $('#filePlan').click(); break;
+    case 'folderTask': break;
     case 'newFolder': { const p=curProj(); if(!p) break;
-      const fd=newFolder(p); GAL_FOLDER=fd.id; HUB_GALLERY=true; render();
+      const fd=newFolder(p); GAL_FOLDER=fd.id; HUB_GALLERY=false; VIEW='gal'; ls.set('view',VIEW); render();
       setTimeout(()=>document.getElementById('fd-name')?.focus(),80); break; }
     case 'openFolder': GAL_FOLDER=t.dataset.id; render(); window.scrollTo(0,0); break;
     case 'markup': openMarkup(t.dataset.fid); break;
@@ -6060,6 +6101,7 @@ async function connectSupabase(){
   registerSW();
   if(session) sync();
 })();
+
 
 
 
