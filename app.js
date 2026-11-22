@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '7.7.3';
+const APP_VERSION = '7.7.4';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -4000,7 +4000,7 @@ document.addEventListener('pointerup',()=>{
   if(!RDRAG) return;
   const d=RDRAG; RDRAG=null; paintRDrag();
   if(d.moved&&d.to!==d.from) moveRow(d.from,d.to);
-  else { SEL_ROW=(SEL_ROW===d.from)?null:d.from; render(); }
+  else { SEL_ROW=(SEL_ROW===d.from)?null:d.from; if(SEL_ROW!=null){ SEL_TASK=''; SEL_DAY=null; } render(); }
 });
 /* 고른 일정은 Del 로 지웁니다 */
 document.addEventListener('keydown',ev=>{

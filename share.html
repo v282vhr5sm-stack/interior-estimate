@@ -335,7 +335,7 @@ table.sh .lab{position:absolute;top:13px;left:1px;z-index:2;font-size:11px;font-
     /* 공정에 넣은 사진은 그 공정을 눌렀을 때만 나옵니다.
        아래에는 공정에 안 넣은 것(폴더 묶음)만 보여줍니다. */
     var all=(P.files||[]).filter(function(f){ return !f.taskId; });
-    if(all.length && !SELB){
+    if(all.length){
       var groups=[], used={};
       (P.folders||[]).forEach(function(fd){
         var list=[];
@@ -494,7 +494,9 @@ table.sh .lab{position:absolute;top:13px;left:1px;z-index:2;font-size:11px;font-
     }
     var barEl=t.closest?t.closest('[data-bar]'):null;
     if(barEl){ var bid=barEl.getAttribute('data-bar')||'';
-      SELB = (!bid||bid===SELB)?'':bid; paint(); return; }
+      SELB = (!bid||bid===SELB)?'':bid;
+      if(SELB){ SELD=''; SELT=''; }        // 날짜 고른 것은 풉니다
+      paint(); return; }
     var dayEl=t.closest?t.closest('[data-day]'):null;
     if(dayEl){ var v=dayEl.getAttribute('data-day')||'';
       SELD = (!v||v===SELD)?'':v; SELT=''; SELB=''; paint(); return; }
