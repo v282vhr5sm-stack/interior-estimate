@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '7.6.0';
+const APP_VERSION = '7.6.1';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -3680,38 +3680,6 @@ function renderProject(p){
       ${schedTaskPanel(p)}
       ${SEL_DAY?`<div class="panel-b" style="padding-top:0">${dayPanel((p.tasks||[]).filter(t=>onDay(t,SEL_DAY)).map(t=>({t,p})),SEL_DAY,{send:true})}</div>`:''}
       <div class="panel-b small muted" style="border-top:1px solid var(--line2)">고객 링크에는 <b>파란색 ${esc(kindLabel("시공"))}</b>만 나갑니다. ${SKINDS.filter(x=>x.k!=="시공").map(x=>esc(kindLabel(x.k))).join(" · ")}은 우리만 봅니다.</div>
-    </section>
-
-    <section class="panel">
-      <div class="panel-h"><h3>도면 · 사진</h3><span class="muted small">사진과 PDF는 링크에서 바로 보이고, 스케치업·캐드 파일은 내려받기로 열립니다.</span></div>
-      <div class="panel-b">
-        <div class="dropzone" id="pdz" style="padding:16px">
-          <div style="flex:1;min-width:180px"><b>파일 올리기</b><div class="muted small">사진, PDF, .skp, .dwg, .dxf, .glb — 한 개당 50MB까지</div></div>
-          <button class="btn" data-act="pickPlan">파일 선택</button>
-        </div>
-        ${(p.files||[]).length?`<div class="files">${p.files.map(f=>{const k=fileKind(f); return `<figure class="file">
-          ${k==='img'?`<a href="${esc(f.url)}" target="_blank" rel="noopener"><img src="${esc(f.url)}" alt="${esc(f.name)}" loading="lazy"></a>`
-            :k==='txt'?`<button class="fi" data-act="openTxt" data-fid="${f.id}"><span>${KIND_LABEL[k]}</span></button>`
-            :`<a class="fi" href="${esc(f.url)}" target="_blank" rel="noopener"><span>${KIND_LABEL[k]}</span></a>`}
-          ${f.marked?'<span class="mk-badge">표시함</span>':''}
-          <figcaption><b title="${esc(f.name)}">${esc(f.name)}</b>
-            <select class="f small" data-bind="file:${f.id}:taskId" style="padding:3px 5px">
-              <option value="">공정 미지정</option>
-              ${(p.tasks||[]).map(t=>`<option value="${t.id}" ${f.taskId===t.id?'selected':''}>${esc(t.name)}</option>`).join('')}
-            </select>
-            ${(p.folders||[]).length?`<select class="f small" data-bind="file:${f.id}:folderId" style="padding:3px 5px">
-              <option value="">폴더 없음</option>
-              ${(p.folders||[]).map(x=>`<option value="${x.id}" ${f.folderId===x.id?'selected':''}>${esc(folderTitle(p,x))}</option>`).join('')}
-            </select>`:''}
-            <input class="f small" data-bind="file:${f.id}:memo" value="${esc(f.memo||'')}" placeholder="사진 설명 (예: 방수 2회차 완료)" style="padding:3px 5px">
-            ${k==='img'?`<div class="row" style="gap:6px">
-              <button class="btn ghost sm" data-act="markup" data-fid="${f.id}">✏️ 표시</button>
-              ${f.origUrl?`<button class="btn ghost sm" data-act="unmark" data-fid="${f.id}">원본</button>`:''}</div>`:''}
-            <div class="row" style="gap:6px;justify-content:space-between">
-              <label class="small row" style="gap:5px"><input type="checkbox" data-bind="file:${f.id}:shared" ${f.shared!==false?'checked':''}> 공유</label>
-              <span class="muted small">${(f.size/1024/1024).toFixed(1)}MB</span>
-              <button class="btn ghost sm danger" data-act="delPlan" data-fid="${f.id}">삭제</button></div></figcaption></figure>`;}).join('')}</div>`:''}
-      </div>
     </section>
 
     <section class="panel">
