@@ -815,7 +815,7 @@ button.g-bar{padding:0;font:inherit;cursor:pointer;text-align:left;-webkit-appea
 @media print{
   body.printing-est>*:not(.prn-est){display:none!important}
   body.printing-est .prn-est{display:block!important}
-  .prn-est .prn-pg{height:100vh;display:flex;align-items:center;justify-content:center;page-break-after:always;break-after:page;overflow:hidden}
+  .prn-est .prn-pg{page-break-after:always;break-after:page}
   .prn-est .prn-pg:last-child{page-break-after:auto;break-after:auto}
-  .prn-est .prn-pg img{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain}
+  .prn-est .prn-pg img{display:block;width:100%;max-width:100%;height:auto}
 }

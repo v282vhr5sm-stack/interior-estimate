@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '7.9.0';
+const APP_VERSION = '7.9.1';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -4615,7 +4615,10 @@ async function printEstFile(){
     return;
   }
   let pages=[];
-  if(k==='img') pages=[sel.url];
+  if(k==='img'){
+    try{ pages=await sliceForPrint(sel.url); }
+    catch(e){ console.warn(e); pages=[sel.url]; }
+  }
   else if(k==='pdf'){
     toast('PDF를 인쇄용으로 바꾸는 중입니다…');
     try{ pages=await pdfToImages(sel.url); }
@@ -4624,6 +4627,28 @@ async function printEstFile(){
   }
   else { toast('이 파일은 “새 창”으로 열어서 인쇄해주세요'); return; }
   printImages(pages);
+}
+/* A4 한 장(여백 8mm)의 세로÷가로 비율 */
+const PRN_RATIO=(297-16)/(210-16);
+/* 긴 사진은 종이 폭에 맞춰 자릅니다 — 줄이지 않으니 글씨가 그대로 큽니다 */
+async function sliceForPrint(url){
+  const blob=await (await fetch(url)).blob();
+  const bu=URL.createObjectURL(blob);
+  try{
+    const im=await new Promise((res,rej)=>{ const i=new Image(); i.onload=()=>res(i); i.onerror=()=>rej(new Error('사진을 못 읽음')); i.src=bu; });
+    const w=im.naturalWidth, h=im.naturalHeight;
+    if(!w||!h) return [url];
+    const sh=Math.round(w*PRN_RATIO);
+    if(h<=sh*1.03) return [url];                 // 한 장에 들어가면 그대로
+    const n=Math.min(20,Math.ceil(h/sh)), out=[];
+    for(let i=0;i<n;i++){
+      const y=i*sh, hh=Math.min(sh,h-y);
+      const cv=document.createElement('canvas'); cv.width=w; cv.height=hh;
+      cv.getContext('2d').drawImage(im,0,y,w,hh,0,0,w,hh);
+      out.push(cv.toDataURL('image/jpeg',0.92));
+    }
+    return out;
+  } finally { URL.revokeObjectURL(bu); }
 }
 /* PDF를 쪽마다 그림으로 바꿉니다 */
 async function pdfToImages(url){
