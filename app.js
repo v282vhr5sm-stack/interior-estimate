@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '7.8.1';
+const APP_VERSION = '7.8.2';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -3776,7 +3776,8 @@ function renderProject(p){
       <summary>
         <span class="sb-row"><i>📍</i><b>${p.address?esc(p.address):'<span class="sb-empty">현장 주소를 적어주세요</span>'}</b></span>
         <span class="sb-row"><i>📝</i><b>${p.note?esc(p.note):'<span class="sb-empty">안내사항을 적어주세요</span>'}</b></span>
-        <span class="sb-more">고치기</span>
+        <span class="sb-acts"><span class="sb-more">고치기</span>
+          <button class="sb-copy" data-act="copySite" title="주소와 안내사항을 복사합니다">복사</button></span>
       </summary>
       <div class="panel-b client-grid">
         <label class="fl span2">현장 이름<input class="f" id="pj-name" data-bind="proj:name" value="${esc(p.name)}" placeholder="현장 이름"></label>
@@ -5701,6 +5702,11 @@ document.addEventListener('click',async ev=>{
         await shareOrDownload((XLS.rec.name||'견적서').replace(/\.xlsx$/i,'')+'_수정.xlsx',
           new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
       }catch(e){ toast('내려받지 못했습니다: '+(e.message||e)); } break; }
+    case 'copySite': { ev.preventDefault(); ev.stopPropagation();
+      const p=curProj(); if(!p) break;
+      const txt=[p.address||'', p.note||''].filter(Boolean).join('\n');
+      if(!txt){ toast('적어 둔 주소나 안내사항이 없습니다'); break; }
+      copyText(txt, p.note ? '주소와 안내사항을 복사했습니다' : '주소를 복사했습니다'); break; }
     case 'estBig': { const p=curProj(); const f=(p?.excel||[]).find(x=>x.id===t.dataset.id); if(!f) break;
       openLightbox([{url:f.url,cap:f.name}],0); break; }
     case 'printExcel': { const st=document.getElementById('xlsStage'); if(!st){ toast('먼저 파일을 고르세요.'); break; }
@@ -6234,6 +6240,7 @@ async function connectSupabase(){
   registerSW();
   if(session) sync();
 })();
+
 
 
 

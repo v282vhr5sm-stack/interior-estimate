@@ -798,11 +798,14 @@ button.g-bar{padding:0;font:inherit;cursor:pointer;text-align:left;-webkit-appea
 .sitebox{overflow:hidden}
 .sitebox>summary{list-style:none;cursor:pointer;display:flex;flex-direction:column;gap:5px;padding:12px 14px;position:relative}
 .sitebox>summary::-webkit-details-marker{display:none}
-.sb-row{display:flex;gap:8px;align-items:flex-start;font-size:13.5px;line-height:1.5;padding-right:60px}
+.sb-row{display:flex;gap:8px;align-items:flex-start;font-size:13.5px;line-height:1.5;padding-right:80px}
 .sb-row i{font-style:normal;flex:none;opacity:.8}
 .sb-row b{font-weight:600;word-break:break-word}
 .sb-empty{color:var(--muted);font-weight:400}
-.sb-more{position:absolute;right:14px;top:12px;font-size:12px;font-weight:700;color:var(--accent);background:var(--accent-weak);padding:3px 10px;border-radius:999px}
+.sb-acts{position:absolute;right:14px;top:12px;display:flex;flex-direction:column;gap:5px;align-items:stretch}
+.sb-more{font-size:12px;font-weight:700;color:var(--accent);background:var(--accent-weak);padding:3px 10px;border-radius:999px;text-align:center}
+.sb-copy{font:inherit;font-size:12px;font-weight:700;color:var(--muted);background:var(--surface2);border:1px solid var(--line);padding:3px 10px;border-radius:999px;cursor:pointer}
+.sb-copy:hover{color:var(--accent);border-color:var(--accent);background:var(--accent-weak)}
 .sitebox[open]>summary{border-bottom:1px solid var(--line2)}
 .sitebox[open] .sb-more::after{content:' 닫기'}
 .sitebox:not([open]) .sb-more::after{content:''}
