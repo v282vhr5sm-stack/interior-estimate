@@ -793,3 +793,16 @@ button.g-bar{padding:0;font:inherit;cursor:pointer;text-align:left;-webkit-appea
 
 .est-img-btn{display:block;width:100%;border:0;padding:0;background:transparent;cursor:zoom-in;position:relative}
 .est-big-hint{position:absolute;right:10px;bottom:10px;background:rgba(0,0,0,.62);color:#fff;font-size:11.5px;font-weight:700;padding:3px 9px;border-radius:999px}
+
+/* 현장 주소 · 안내사항 — 늘 보이고, 눌러서 고칩니다 */
+.sitebox{overflow:hidden}
+.sitebox>summary{list-style:none;cursor:pointer;display:flex;flex-direction:column;gap:5px;padding:12px 14px;position:relative}
+.sitebox>summary::-webkit-details-marker{display:none}
+.sb-row{display:flex;gap:8px;align-items:flex-start;font-size:13.5px;line-height:1.5;padding-right:60px}
+.sb-row i{font-style:normal;flex:none;opacity:.8}
+.sb-row b{font-weight:600;word-break:break-word}
+.sb-empty{color:var(--muted);font-weight:400}
+.sb-more{position:absolute;right:14px;top:12px;font-size:12px;font-weight:700;color:var(--accent);background:var(--accent-weak);padding:3px 10px;border-radius:999px}
+.sitebox[open]>summary{border-bottom:1px solid var(--line2)}
+.sitebox[open] .sb-more::after{content:' 닫기'}
+.sitebox:not([open]) .sb-more::after{content:''}

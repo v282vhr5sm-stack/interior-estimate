@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '7.8.0';
+const APP_VERSION = '7.8.1';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -988,6 +988,9 @@ document.addEventListener('focusout',ev=>{
   if(td.dataset.before===text) return;
   saveEdit(addr,text);
 },true);
+document.addEventListener('toggle',ev=>{
+  if(ev.target&&ev.target.id==='siteBox') ls.set('siteInfoOpen', ev.target.open?'1':'0');
+},true);
 document.addEventListener('focusin',ev=>{
   const td=ev.target.closest?.('td[data-addr][contenteditable]'); if(!td) return;
   if(td.dataset.f){ td.textContent=td.dataset.f; }        // 수식 칸은 수식을 보여줍니다
@@ -1010,6 +1013,9 @@ document.addEventListener('keydown',ev=>{
   }
   if(ev.key==='Escape'){ td.textContent=td.dataset.before||''; td.blur(); }
 });
+document.addEventListener('toggle',ev=>{
+  if(ev.target&&ev.target.id==='siteBox') ls.set('siteInfoOpen', ev.target.open?'1':'0');
+},true);
 document.addEventListener('focusin',ev=>{
   const t=ev.target;
   if(t.tagName!=='INPUT'||!t.value) return;
@@ -3765,13 +3771,21 @@ function renderSched(){
 }
 function renderProject(p){
   const r=projRange(p), prog=projProgress(p), rows=ensureRows(p);
-  return `<section class="panel"><div class="panel-b client-grid">
-      <label class="fl span2">현장 이름<input class="f" id="pj-name" data-bind="proj:name" value="${esc(p.name)}" placeholder="현장 이름"></label>
-      <label class="fl">고객명<input class="f" id="pj-client" data-bind="proj:client" value="${esc(p.client)}"></label>
-      <label class="fl">연락처<input class="f" type="tel" id="pj-phone" data-bind="proj:phone" value="${esc(p.phone)}"></label>
-      <label class="fl span2">현장 주소<input class="f" id="pj-addr" data-bind="proj:address" value="${esc(p.address)}"></label>
-      <label class="fl span2">안내사항<input class="f" id="pj-note" data-bind="proj:note" value="${esc(p.note)}" placeholder="예: 주차는 지하 2층, 자재는 엘리베이터 이용 — 보내기와 고객 링크에 함께 나갑니다"></label>
-    </div></section>
+  const openInfo = ls.get('siteInfoOpen','0')==='1';
+  return `<details class="sitebox panel" id="siteBox" ${openInfo?'open':''}>
+      <summary>
+        <span class="sb-row"><i>📍</i><b>${p.address?esc(p.address):'<span class="sb-empty">현장 주소를 적어주세요</span>'}</b></span>
+        <span class="sb-row"><i>📝</i><b>${p.note?esc(p.note):'<span class="sb-empty">안내사항을 적어주세요</span>'}</b></span>
+        <span class="sb-more">고치기</span>
+      </summary>
+      <div class="panel-b client-grid">
+        <label class="fl span2">현장 이름<input class="f" id="pj-name" data-bind="proj:name" value="${esc(p.name)}" placeholder="현장 이름"></label>
+        <label class="fl">고객명<input class="f" id="pj-client" data-bind="proj:client" value="${esc(p.client)}"></label>
+        <label class="fl">연락처<input class="f" type="tel" id="pj-phone" data-bind="proj:phone" value="${esc(p.phone)}"></label>
+        <label class="fl span2">현장 주소<input class="f" id="pj-addr" data-bind="proj:address" value="${esc(p.address)}"></label>
+        <label class="fl span2">안내사항<textarea class="f grow" id="pj-note" rows="2" data-bind="proj:note" placeholder="예: 주차는 지하 2층, 자재는 엘리베이터 이용 — 보내기와 고객 링크에 함께 나갑니다">${esc(p.note)}</textarea></label>
+      </div>
+    </details>
 
     <section class="panel">
       <div class="panel-h"><h3>공정 일정표</h3><span class="muted small">${r?`${dstr(r.from)} ~ ${dstr(r.to)} · ${Math.round((r.to-r.from)/DAY)+1}일`:'아직 일정이 없습니다'}</span>
@@ -4008,6 +4022,9 @@ async function schedRowDel(ri){
   p.rows.splice(ri,1); SEL_TASK=''; SEL_ROW=null; saveProj(p); render();
 }
 /* 공정 이름 칸을 누르면 날짜처럼 그 줄에 색이 깔립니다 */
+document.addEventListener('toggle',ev=>{
+  if(ev.target&&ev.target.id==='siteBox') ls.set('siteInfoOpen', ev.target.open?'1':'0');
+},true);
 document.addEventListener('focusin',ev=>{
   if(window.__viewerMode) return;
   const el=ev.target;
@@ -5273,6 +5290,11 @@ document.addEventListener('input',ev=>{
     saveProj(p);
     if(rest[1]==='base'||rest[1]==='mode') render(); else refreshQuote(); }
   else if(kind==='proj'){ const p=curProj(); if(!p) return; p[rest[0]]=val; saveProj(p);
+    if(rest[0]==='address'||rest[0]==='note'){
+      const box=document.getElementById('siteBox');
+      const row=box&&box.querySelectorAll('summary .sb-row b')[rest[0]==='address'?0:1];
+      if(row) row.innerHTML = val ? esc(val) : '<span class="sb-empty">'+(rest[0]==='address'?'현장 주소를 적어주세요':'안내사항을 적어주세요')+'</span>';
+    }
     if(rest[0]==='name'){ const o=document.querySelector(`#projSel option[value="${p.id}"]`); if(o) o.textContent=val+(p.share?.on?' · 공유중':''); } }
   else if(kind==='task'){ const p=curProj(); const ti=+rest[0], t=p?.tasks?.[ti]; if(!t) return; t[rest[1]]=val;
     const endEl=document.getElementById('t'+ti+'-e');
@@ -6212,6 +6234,7 @@ async function connectSupabase(){
   registerSW();
   if(session) sync();
 })();
+
 
 
 
