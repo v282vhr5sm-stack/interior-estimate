@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '7.7.4';
+const APP_VERSION = '7.8.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -870,18 +870,51 @@ function openLightbox(list,i){
   closeLightbox();
   LB={list,i,el:document.createElement('div')};
   LB.el.className='lb';
+  LB.z=1;
   LB.el.innerHTML=`<button class="lb-x" data-lb="close" aria-label="닫기">✕</button>
     <button class="lb-nav prev" data-lb="prev" aria-label="이전 사진">‹</button>
-    <img class="lb-img" alt="">
+    <div class="lb-stage"><img class="lb-img" alt=""></div>
     <button class="lb-nav next" data-lb="next" aria-label="다음 사진">›</button>
+    <div class="lb-zoom">
+      <button class="lb-zb" data-lb="out" aria-label="작게">−</button>
+      <button class="lb-zl" data-lb="fit">100%</button>
+      <button class="lb-zb" data-lb="in" aria-label="크게">+</button>
+    </div>
     <div class="lb-cap"></div>`;
   document.body.appendChild(LB.el);
   document.body.style.overflow='hidden';
   LB.el.addEventListener('click',e=>{
     const b=e.target.closest('[data-lb]');
-    if(b){ const a=b.dataset.lb; if(a==='close') closeLightbox(); else stepLightbox(a==='next'?1:-1); return; }
-    if(e.target===LB.el) closeLightbox();
+    if(b){ const a=b.dataset.lb;
+      if(a==='close') closeLightbox();
+      else if(a==='in') lbZoom((LB.z||1)+0.5);
+      else if(a==='out') lbZoom((LB.z||1)-0.5);
+      else if(a==='fit') lbZoom(1);
+      else stepLightbox(a==='next'?1:-1);
+      return; }
+    if(e.target.classList.contains('lb-img')){            // 사진을 누르면 확대·되돌리기
+      if(LB.dragged){ LB.dragged=false; return; }
+      lbZoom((LB.z||1)>=3 ? 1 : (LB.z||1)+1, e.clientX, e.clientY); return; }
+    if(e.target===LB.el || e.target.classList.contains('lb-stage')) closeLightbox();
   });
+  /* 노트북: 휠을 굴리면 확대·축소 */
+  LB.el.addEventListener('wheel',e=>{
+    if(!LB.el) return;
+    e.preventDefault();
+    lbZoom((LB.z||1) + (e.deltaY<0?0.3:-0.3), e.clientX, e.clientY);
+  },{passive:false});
+  /* 확대했을 때 끌어서 움직이기 */
+  (()=>{ const st=LB.el.querySelector('.lb-stage'); let dx=0,dy=0,sl=0,stp=0,down=false;
+    st.addEventListener('pointerdown',e=>{ if((LB.z||1)<=1) return;
+      down=true; LB.dragged=false; dx=e.clientX; dy=e.clientY; sl=st.scrollLeft; stp=st.scrollTop;
+      try{ st.setPointerCapture?.(e.pointerId); }catch{} st.style.cursor='grabbing'; });
+    st.addEventListener('pointermove',e=>{ if(!down) return;
+      const mx=e.clientX-dx, my=e.clientY-dy;
+      if(Math.abs(mx)>3||Math.abs(my)>3) LB.dragged=true;
+      st.scrollLeft=sl-mx; st.scrollTop=stp-my; });
+    const up=()=>{ down=false; st.style.cursor=''; };
+    st.addEventListener('pointerup',up); st.addEventListener('pointercancel',up);
+  })();
   let x0=null;
   LB.el.addEventListener('touchstart',e=>{ x0=e.touches[0].clientX; },{passive:true});
   LB.el.addEventListener('touchend',e=>{ if(x0==null) return; const dx=e.changedTouches[0].clientX-x0; x0=null;
@@ -892,13 +925,41 @@ function openLightbox(list,i){
 function lbKey(e){
   if(!LB.el) return;
   if(e.key==='Escape') closeLightbox();
+  else if(e.key==='+'||e.key==='=') lbZoom((LB.z||1)+0.5);
+  else if(e.key==='-'||e.key==='_') lbZoom((LB.z||1)-0.5);
+  else if(e.key==='0') lbZoom(1);
   else if(e.key==='ArrowRight') stepLightbox(1);
   else if(e.key==='ArrowLeft') stepLightbox(-1);
 }
-function stepLightbox(d){ if(!LB.el||!LB.list.length) return; LB.i=(LB.i+d+LB.list.length)%LB.list.length; paintLightbox(); }
+function stepLightbox(d){ if(!LB.el||!LB.list.length) return; LB.i=(LB.i+d+LB.list.length)%LB.list.length; LB.z=1; paintLightbox(); }
+/* 확대 배율 바꾸기 (누른 자리를 가운데로) */
+function lbZoom(nz,cx,cy){
+  if(!LB.el) return;
+  const st=LB.el.querySelector('.lb-stage'); if(!st) return;
+  const old=LB.z||1;
+  nz=Math.max(1,Math.min(6,Math.round(nz*10)/10));
+  if(nz===old) return;
+  const r=st.getBoundingClientRect();
+  const px=(cx==null?r.width/2:cx-r.left), py=(cy==null?r.height/2:cy-r.top);
+  const rx=(st.scrollLeft+px)/(st.scrollWidth||1), ry=(st.scrollTop+py)/(st.scrollHeight||1);
+  LB.z=nz; lbApplyZoom();
+  st.scrollLeft=rx*st.scrollWidth-px;
+  st.scrollTop =ry*st.scrollHeight-py;
+}
+function lbApplyZoom(){
+  if(!LB.el) return;
+  const img=LB.el.querySelector('.lb-img'), st=LB.el.querySelector('.lb-stage'), z=LB.z||1;
+  if(!img||!st) return;
+  if(z>1){ img.style.width=(z*100)+'%'; img.style.maxWidth='none'; img.style.maxHeight='none'; }
+  else { img.style.width=''; img.style.maxWidth=''; img.style.maxHeight=''; }
+  st.classList.toggle('zoomed',z>1);
+  img.style.cursor = z>=3 ? 'zoom-out' : 'zoom-in';
+  const lbl=LB.el.querySelector('.lb-zl'); if(lbl) lbl.textContent=Math.round(z*100)+'%';
+}
 function paintLightbox(){
   const it=LB.list[LB.i]; if(!it) return;
   LB.el.querySelector('.lb-img').src=it.url;
+  lbApplyZoom();
   LB.el.querySelector('.lb-cap').innerHTML=`<b>${esc(it.cap||'')}</b><span>${LB.i+1} / ${LB.list.length}</span>`;
   const one=LB.list.length<2;
   LB.el.querySelectorAll('.lb-nav').forEach(b=>b.hidden=one);
@@ -1045,7 +1106,10 @@ function renderExcel(){
     </section>
     ${!EST_OPEN?'' :k==='pdf'?`<section class="panel"><div class="panel-b"><iframe class="pdf-stage" src="${esc(sel.url)}" title="${esc(sel.name)}"></iframe>
       <p class="muted small" style="margin:8px 0 0">화면에 안 보이면 위의 “새 창에서 보기”를 누르세요.</p></div></section>`
-     :k==='img'?`<section class="panel"><div class="panel-b"><img class="est-img" src="${esc(sel.url)}" alt="${esc(sel.name)}"></div></section>`
+     :k==='img'?`<section class="panel"><div class="panel-b">
+        <button class="est-img-btn" data-act="estBig" data-id="${esc(sel.id)}" title="눌러서 크게 보기 · 확대">
+          <img class="est-img" src="${esc(sel.url)}" alt="${esc(sel.name)}">
+          <span class="est-big-hint">🔍 눌러서 크게 보기</span></button></div></section>`
      :EXCEL_HTML?`<section class="panel"><div class="panel-b xls-stage" id="xlsStage">${EXCEL_HTML}</div></section>`:''}`;
 }
 /* 현장 고르기 (여러 화면에서 같이 씁니다) */
@@ -5615,6 +5679,8 @@ document.addEventListener('click',async ev=>{
         await shareOrDownload((XLS.rec.name||'견적서').replace(/\.xlsx$/i,'')+'_수정.xlsx',
           new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
       }catch(e){ toast('내려받지 못했습니다: '+(e.message||e)); } break; }
+    case 'estBig': { const p=curProj(); const f=(p?.excel||[]).find(x=>x.id===t.dataset.id); if(!f) break;
+      openLightbox([{url:f.url,cap:f.name}],0); break; }
     case 'printExcel': { const st=document.getElementById('xlsStage'); if(!st){ toast('먼저 파일을 고르세요.'); break; }
       document.body.classList.add('printing-xls'); setTimeout(()=>{ window.print(); setTimeout(()=>document.body.classList.remove('printing-xls'),600); },80); break; }
     case 'estOpen': EST_OPEN=!EST_OPEN; ls.set('estOpen',EST_OPEN?'1':'0'); render(); break;
@@ -6146,6 +6212,7 @@ async function connectSupabase(){
   registerSW();
   if(session) sync();
 })();
+
 
 
 
