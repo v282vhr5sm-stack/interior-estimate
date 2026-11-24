@@ -809,3 +809,13 @@ button.g-bar{padding:0;font:inherit;cursor:pointer;text-align:left;-webkit-appea
 .sitebox[open]>summary{border-bottom:1px solid var(--line2)}
 .sitebox[open] .sb-more::after{content:' 닫기'}
 .sitebox:not([open]) .sb-more::after{content:''}
+
+/* 올린 견적서(사진·PDF) 인쇄 */
+.prn-est{display:none}
+@media print{
+  body.printing-est>*:not(.prn-est){display:none!important}
+  body.printing-est .prn-est{display:block!important}
+  .prn-est .prn-pg{height:100vh;display:flex;align-items:center;justify-content:center;page-break-after:always;break-after:page;overflow:hidden}
+  .prn-est .prn-pg:last-child{page-break-after:auto;break-after:auto}
+  .prn-est .prn-pg img{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain}
+}

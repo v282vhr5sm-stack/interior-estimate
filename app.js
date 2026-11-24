@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '7.8.2';
+const APP_VERSION = '7.9.0';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -1095,8 +1095,8 @@ function renderExcel(){
           <button class="btn sm" data-act="estOpen">${EST_OPEN?'접기':'펴기'}</button>
           <a class="btn sm ghost" href="${esc(sel?.url||'#')}" download target="_blank" rel="noopener">내려받기</a>
           <a class="btn sm ghost" href="${esc(sel?.url||'#')}" target="_blank" rel="noopener">새 창</a>
-          ${k==='xlsx'?`<button class="btn sm ghost" data-act="printExcel">인쇄</button>
-          <button class="btn sm ghost" data-act="saveXlsx">엑셀 저장</button>`:''}
+          <button class="btn sm ghost" data-act="printEst" title="올린 견적서를 A4로 인쇄합니다">인쇄</button>
+          ${k==='xlsx'?`<button class="btn sm ghost" data-act="saveXlsx">엑셀 저장</button>`:''}
           <button class="btn ghost sm danger" data-act="delExcel" data-id="${sel?.id||''}">삭제</button>
           <span class="dzin muted small">여기로 끌어다 놓아도 됩니다</span>
           <button class="btn sm" data-act="pickExcel" data-doc="est">찾아서 올리기</button>
@@ -4600,6 +4600,67 @@ async function view3d(i){
     (function loop(){ if(!document.body.contains(box)) return; ctr.update(); rnd.render(scene,cam); requestAnimationFrame(loop); })();
   }catch(e){ $('#v3d').innerHTML=`<div class="empty">3D로 열지 못했습니다. 아래 내려받기로 확인해주세요.<br><span class="small">${esc(e.message||e)}</span></div>`; }
 }
+/* 올린 견적서(사진·PDF·엑셀)를 A4로 인쇄합니다 */
+async function printEstFile(){
+  const p=curProj();
+  const files=(p?.excel||[]).slice().sort((a,b)=>(b.at||0)-(a.at||0));
+  const sel=files.find(f=>f.id===EXCEL_SEL)||files[0];
+  if(!sel){ toast('먼저 견적서 파일을 올려주세요'); return; }
+  const k=estKind(sel);
+  if(k==='xlsx'){
+    const st=document.getElementById('xlsStage');
+    if(!st){ toast('먼저 “펴기”를 눌러 표를 띄워주세요'); return; }
+    document.body.classList.add('printing-xls');
+    setTimeout(()=>{ window.print(); setTimeout(()=>document.body.classList.remove('printing-xls'),600); },80);
+    return;
+  }
+  let pages=[];
+  if(k==='img') pages=[sel.url];
+  else if(k==='pdf'){
+    toast('PDF를 인쇄용으로 바꾸는 중입니다…');
+    try{ pages=await pdfToImages(sel.url); }
+    catch(e){ console.warn(e); toast('PDF를 읽지 못했습니다. “새 창”으로 열어서 인쇄해주세요'); return; }
+    if(!pages.length){ toast('PDF에서 읽을 쪽이 없습니다'); return; }
+  }
+  else { toast('이 파일은 “새 창”으로 열어서 인쇄해주세요'); return; }
+  printImages(pages);
+}
+/* PDF를 쪽마다 그림으로 바꿉니다 */
+async function pdfToImages(url){
+  if(!window.pdfjsLib) await loadScript('https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js');
+  pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+  const buf=await (await fetch(url)).arrayBuffer();
+  const doc=await pdfjsLib.getDocument({data:buf}).promise;
+  const out=[];
+  for(let i=1;i<=doc.numPages;i++){
+    const pg=await doc.getPage(i);
+    const vp=pg.getViewport({scale:2});
+    const cv=document.createElement('canvas');
+    cv.width=Math.round(vp.width); cv.height=Math.round(vp.height);
+    await pg.render({canvasContext:cv.getContext('2d'),viewport:vp}).promise;
+    out.push(cv.toDataURL('image/jpeg',0.92));
+  }
+  return out;
+}
+/* 그림을 A4 한 장씩 담아 인쇄합니다 */
+function printImages(list){
+  document.getElementById('prnEst')?.remove();
+  let st=document.getElementById('estPage');
+  if(!st){ st=document.createElement('style'); st.id='estPage'; document.head.appendChild(st); }
+  st.textContent='@media print{@page{size:A4;margin:8mm}}';
+  const box=document.createElement('div'); box.id='prnEst'; box.className='prn-est';
+  box.innerHTML=list.map(u=>'<div class="prn-pg"><img src="'+esc(u)+'" alt=""></div>').join('');
+  document.body.appendChild(box);
+  const imgs=[...box.querySelectorAll('img')];
+  const go=()=>{
+    document.body.classList.add('printing-est');
+    setTimeout(()=>{ window.print();
+      setTimeout(()=>{ document.body.classList.remove('printing-est'); box.remove(); st.textContent=''; },900); },150);
+  };
+  if(!imgs.length) return go();
+  let n=0; const tick=()=>{ if(++n>=imgs.length) go(); };
+  imgs.forEach(im=>{ if(im.complete) tick(); else { im.onload=tick; im.onerror=tick; } });
+}
 function loadScript(src){ return new Promise((res,rej)=>{ const s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=()=>rej(new Error('불러오지 못함: '+src)); document.head.appendChild(s); }); }
 
 /* ---------- 견적 파일 (엑셀·PDF·사진) ---------- */
@@ -5709,6 +5770,7 @@ document.addEventListener('click',async ev=>{
       copyText(txt, p.note ? '주소와 안내사항을 복사했습니다' : '주소를 복사했습니다'); break; }
     case 'estBig': { const p=curProj(); const f=(p?.excel||[]).find(x=>x.id===t.dataset.id); if(!f) break;
       openLightbox([{url:f.url,cap:f.name}],0); break; }
+    case 'printEst': printEstFile(); break;
     case 'printExcel': { const st=document.getElementById('xlsStage'); if(!st){ toast('먼저 파일을 고르세요.'); break; }
       document.body.classList.add('printing-xls'); setTimeout(()=>{ window.print(); setTimeout(()=>document.body.classList.remove('printing-xls'),600); },80); break; }
     case 'estOpen': EST_OPEN=!EST_OPEN; ls.set('estOpen',EST_OPEN?'1':'0'); render(); break;
