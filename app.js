@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '7.9.3';
+const APP_VERSION = '7.9.4';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -2808,7 +2808,7 @@ function renderContractForm(e){
 function docSections(p){
   if(!p) return '';
   const ex=(p.excel||[]).slice().sort((a,b)=>(b.at||0)-(a.at||0));
-  const fs2=(p.files||[]).slice().sort((a,b)=>(b.at||0)-(a.at||0));
+  const fs2=(p.files||[]).filter(f=>!isCostShot(f)).sort((a,b)=>(b.at||0)-(a.at||0));
   const exOn=ex.filter(f=>f.shared).length;
   const onCnt=exOn+fs2.filter(f=>f.shared!==false).length;
   const prow=f=>{ const on=f.shared!==false, label=KIND_LABEL[fileKind(f)];
