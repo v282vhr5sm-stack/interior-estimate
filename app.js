@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '7.9.1';
+const APP_VERSION = '7.9.3';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -2255,7 +2255,7 @@ function spForm(p,rows){
       <label class="fl full">메모<input class="f" data-bind="sp:memo" value="${esc(d.memo)}" placeholder="예: 세금계산서 발행 / 현금 결제 / 추가 폐기물 1톤"></label>
       <div class="full row">
         <button class="btn sm" data-act="spSaveShot">📷 저장하고 사진 넣기</button>
-        <span class="muted small">견적서 · 영수증을 찍어 붙일 수 있습니다</span>
+        <span class="muted small">🔒 견적서 · 영수증을 찍어 붙일 수 있습니다 — 여기 사진은 고객·작업자에게 안 보입니다</span>
         <span class="spacer"></span>
         <button class="btn pri sm" data-act="spSave">저장</button>
         <button class="btn sm" data-act="spAdd">닫기</button>
@@ -2930,7 +2930,8 @@ function renderHome(){
       ${!projs.length&&!loose.length?`<button class="btn" data-act="seed">예시 데이터</button>`:''}</div>
     ${projs.length?`<div class="cards">${projs.map(p=>{
       const r=projRange(p), prog=projProgress(p), e=p.estimateId&&S.estimates.get(p.estimateId);
-      const imgs=(p.files||[]).filter(f=>fileKind(f)==='img').length, docs=(p.files||[]).length-imgs;
+      const imgs=(p.files||[]).filter(f=>fileKind(f)==='img' && !isCostShot(f)).length,
+            docs=(p.files||[]).filter(f=>fileKind(f)!=='img' && !isCostShot(f)).length;
       const next=(p.tasks||[]).filter(t=>dnum(t.end)>=dnum(today())).sort((a,b)=>String(a.start).localeCompare(String(b.start)))[0];
       return `<div class="card" role="button" tabindex="0" data-act="openSite" data-id="${p.id}">
         <div class="row" style="gap:6px"><span class="badge${p.status==='준공'?'':' warn'}">${esc(p.status||'준비')}</span>
@@ -2967,13 +2968,15 @@ function renderHome(){
 let GAL_FOLDER = '';                       // 열어 둔 폴더 (빈 값이면 폴더 목록)
 let GAL_PICK = new Set();                  // 골라 둔 사진 (한 번에 폴더로 옮기기)
 const folderOf = (p,id) => (p.folders||[]).find(f=>f.id===id);
-const filesInFolder = (p,id) => (p.files||[]).filter(f=>fileKind(f)==='img' && (f.folderId||'')===id);
+/* 원가(영수증) 사진인지 — 이 사진은 고객·작업자에게 절대 나가지 않습니다 */
+const isCostShot = f => !!(f && f.spendId);
+const filesInFolder = (p,id) => (p.files||[]).filter(f=>fileKind(f)==='img' && !isCostShot(f) && (f.folderId||'')===id);
 /* 공정 일정에 붙여 둔 폴더와 그 사진 */
 const taskFolder = (p,tid) => tid ? (p.folders||[]).find(f=>f.taskId===tid) : null;
 function taskPhotos(p,tid){
   const fd=taskFolder(p,tid);
   const a=fd?filesInFolder(p,fd.id):[];
-  const b=(p.files||[]).filter(f=>fileKind(f)==='img' && f.taskId===tid && !(fd&&f.folderId===fd.id));
+  const b=(p.files||[]).filter(f=>fileKind(f)==='img' && !isCostShot(f) && f.taskId===tid && !(fd&&f.folderId===fd.id));
   return [...a,...b];
 }
 /* 일정 고르는 칸에 쓸 이름 */
@@ -3428,7 +3431,7 @@ function renderGalleryTab(){
 function renderGallery(p,asTab){
   const fd=GAL_FOLDER && folderOf(p,GAL_FOLDER);
   if(fd) return renderFolder(p,fd);
-  const imgs=(p.files||[]).filter(f=>fileKind(f)==='img');
+  const imgs=(p.files||[]).filter(f=>fileKind(f)==='img' && !isCostShot(f));
   const loose=imgs.filter(f=>!f.folderId || !folderOf(p,f.folderId));
   const folders=[...(p.folders||[])].sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))||(b.at||0)-(a.at||0));
   const card=fd=>{
@@ -3490,7 +3493,7 @@ function renderGallery(p,asTab){
 }
 function renderHub(p){
   const r=projRange(p), prog=projProgress(p), e=p.estimateId&&S.estimates.get(p.estimateId);
-  const imgs=(p.files||[]).filter(f=>fileKind(f)==='img');
+  const imgs=(p.files||[]).filter(f=>fileKind(f)==='img' && !isCostShot(f));
   const tile=(act,extra,icon,title,desc,badge)=>`<button class="tile" data-act="${act}" ${extra||''}>
     <span class="tile-i">${icon}</span><b>${title}${badge?` <span class="badge">${badge}</span>`:''}</b><span class="muted small">${desc}</span></button>`;
   return `<div class="stack">
@@ -3512,7 +3515,7 @@ function renderHub(p){
       ${p.share?.on&&p.share?.token
         ? tile('copyShare','','🔗','링크 열기','고객·작업자에게 보낼 주소 복사','열림')
         : tile('startWork','','🔗','링크 열기','착공 처리하고 공유 주소를 만듭니다')}
-      ${tile('openFiles','','🖼','사진 · 도면','공정별 사진과 도면 보기',(p.files||[]).length||'')}
+      ${tile('openFiles','','🖼','사진 · 도면','공정별 사진과 도면 보기',(p.files||[]).filter(f=>!isCostShot(f)).length||'')}
       ${tile('reportPdf','','📕','공사 보고서','일정·지시사항·사진 정리본 PDF')}
       ${tile('archiveProj','','📦','자료 내려받기','ZIP으로 통째로 보관')}
       ${p.status==='착공'?tile('endWork','','✅','준공 처리','공유 링크를 닫습니다')
@@ -3603,7 +3606,7 @@ function sharePayload(p){
       vis.forEach(t=>taskPhotos(p,t.id).forEach(f=>{ own[f.id]=t.id; }));
       return [
         ...(p.excel||[]).filter(f=>f.shared).map(f=>({name:f.name,url:f.url,type:f.type||'',size:0,taskId:'',memo:EST_DOC_LABEL[estDoc(f)]})),
-        ...(p.files||[]).filter(f=>f.shared!==false).map(f=>({name:f.name,url:f.url,type:f.type,size:f.size,
+        ...(p.files||[]).filter(f=>f.shared!==false && !isCostShot(f)).map(f=>({name:f.name,url:f.url,type:f.type,size:f.size,
           taskId:own[f.id]||'', folderId:own[f.id]?'':(f.folderId||''), memo:f.memo||''}))];
     })(),
     company:{name:S.company?.name||'',phone:S.company?.phone||''}};
@@ -3680,7 +3683,7 @@ async function uploadPlans(files,p,taskId,spendId){
       const {error}=await sb.storage.from('plans').upload(path,f,{contentType:f.type||'application/octet-stream'});
       if(error) throw error;
       const {data}=sb.storage.from('plans').getPublicUrl(path);
-      p.files=p.files||[]; p.files.push({id:uid(),name:f.name,path,url:data.publicUrl,type:f.type||'',size:f.size,shared:!spendId,at:Date.now(),taskId:taskId||'',spendId:spendId||'',folderId:PLAN_FOLDER||'',memo:spendId?'영수증·견적서':''});
+      p.files=p.files||[]; p.files.push({id:uid(),name:f.name,path,url:data.publicUrl,type:f.type||'',size:f.size,shared:!spendId,at:Date.now(),taskId:spendId?'':(taskId||''),spendId:spendId||'',folderId:spendId?'':(PLAN_FOLDER||''),memo:spendId?'영수증·견적서':''});
       saveProj(p); render(); toast(`${f.name} 올렸습니다`);
     }catch(e){ toast(`${f.name} 올리지 못했습니다: ${e.message||e}`); }
   }
@@ -3722,7 +3725,7 @@ async function archiveProject(p,thenDelete){
     for(const f of files){
       try{ const res=await fetch(f.url); if(!res.ok) throw new Error(res.status);
         const t=(p.tasks||[]).find(x=>x.id===f.taskId);
-        const dir=fileKind(f)==='img' ? ('사진/'+(t?t.name.replace(/[\\/]/g,'_')+'/':'')) : '도면/';
+        const dir=isCostShot(f) ? '원가영수증(비공개)/' : fileKind(f)==='img' ? ('사진/'+(t?t.name.replace(/[\\/]/g,'_')+'/':'')) : '도면/';
         zip.file(dir+(f.memo?f.memo.replace(/[\\/:*?"<>|]/g,'_')+'_':'')+f.name.replace(/[\\/]/g,'_'),await res.blob()); }
       catch{ failed++; }
     }
@@ -3828,7 +3831,7 @@ function renderProject(p){
           <span class="spacer"></span>
           <button class="btn ghost danger" data-act="purgeProj">내려받고 현장 지우기</button>
         </div>
-        <p class="muted small" style="margin:10px 0 0">ZIP에는 일정·지시사항 정리본과 올린 파일 원본이 모두 들어갑니다. 사진 ${(p.files||[]).filter(f=>fileKind(f)==='img').length}장, 도면·기타 ${(p.files||[]).filter(f=>fileKind(f)!=='img').length}개.</p>
+        <p class="muted small" style="margin:10px 0 0">ZIP에는 일정·지시사항 정리본과 올린 파일 원본이 모두 들어갑니다. 사진 ${(p.files||[]).filter(f=>fileKind(f)==='img'&&!isCostShot(f)).length}장, 도면·기타 ${(p.files||[]).filter(f=>fileKind(f)!=='img'&&!isCostShot(f)).length}개. 원가 영수증은 「원가영수증(비공개)」 폴더에 따로 담기고 보고서에는 안 나옵니다.</p>
       </div>
     </section>
 
@@ -3958,7 +3961,7 @@ function schedTools(p){
 function schedTaskPanel(p){
   const t=(p.tasks||[]).find(x=>x.id===SEL_TASK); if(!t) return '';
   const ti=(p.tasks||[]).indexOf(t);
-  const nph=(p.files||[]).filter(f=>f.taskId===t.id).length;
+  const nph=(p.files||[]).filter(f=>f.taskId===t.id && !isCostShot(f)).length;
   const fd=taskFolder(p,t.id), shots=taskPhotos(p,t.id);
   return `<div class="panel-b sbar no-print"><div class="sbox">
       <div class="sbox-r">
@@ -4349,7 +4352,7 @@ function monthDayPanel(items,key){
   </div>`;
 }
 function monBox(p,t){
-  const nph=(p.files||[]).filter(f=>f.taskId===t.id).length;
+  const nph=(p.files||[]).filter(f=>f.taskId===t.id && !isCostShot(f)).length;
   const b=`mtask:${esc(p.id)}:${esc(t.id)}`;
   return `<div class="sbox mbox">
     <div class="sbox-r">
@@ -4432,7 +4435,7 @@ const REPORT_CSS=`
   document.head.appendChild(st); })();
 function reportHTML(p,forZip){
   const co=S.company||{}, r=projRange(p), tasks=(p.tasks||[]).slice().sort((a,b)=>String(a.start||'').localeCompare(String(b.start||'')));
-  const imgs=(p.files||[]).filter(f=>fileKind(f)==='img'), others=(p.files||[]).filter(f=>fileKind(f)!=='img');
+  const imgs=(p.files||[]).filter(f=>fileKind(f)==='img' && !isCostShot(f)), others=(p.files||[]).filter(f=>fileKind(f)!=='img' && !isCostShot(f));
   const safe=s=>String(s||'').replace(/[\\/:*?"<>|]/g,'_');
   const src=f=>{ if(!forZip) return f.url;
     const t=tasks.find(x=>x.id===f.taskId);
@@ -5954,7 +5957,7 @@ document.addEventListener('click',async ev=>{
     case 'taskPhotoAny': PLAN_TASK=''; PLAN_FOLDER=''; $('#filePlan').setAttribute('accept','image/*'); $('#filePlan').click(); break;
     case 'folderTask': break;
     case 'galPickAll': { const p=curProj();
-      const loose=(p.files||[]).filter(f=>fileKind(f)==='img' && (!f.folderId || !folderOf(p,f.folderId)));
+      const loose=(p.files||[]).filter(f=>fileKind(f)==='img' && !isCostShot(f) && (!f.folderId || !folderOf(p,f.folderId)));
       if(loose.every(f=>GAL_PICK.has(f.id))) GAL_PICK.clear();
       else loose.forEach(f=>GAL_PICK.add(f.id));
       render(); break; }
@@ -6003,7 +6006,8 @@ document.addEventListener('click',async ev=>{
     case 'spShot': { PLAN_SPEND=t.dataset.id||''; PLAN_TASK=''; PLAN_FOLDER=''; $('#filePlan').setAttribute('accept','image/*,application/pdf'); $('#filePlan').click(); break; }
     case 'spDel': { const p=curProj(); const id=t.dataset.id;
       const sh=spShots(p,id).length;
-      if(sh && !await askConfirm({title:'이 줄을 지울까요?',lines:['붙여 둔 사진 '+sh+'장은 사진·도면 칸에 그대로 남습니다'],ok:'네, 지웁니다',cancel:'아니요',danger:true})) break;
+      if(sh && !await askConfirm({title:'이 줄을 지울까요?',lines:['붙여 둔 사진 '+sh+'장은 사진 탭으로 옮겨 둡니다 (고객에게는 그대로 안 보입니다)'],ok:'네, 지웁니다',cancel:'아니요',danger:true})) break;
+      (p.files||[]).forEach(f=>{ if(f.spendId===id){ f.spendId=''; f.shared=false; } });
       p.spend=(p.spend||[]).filter(x=>x.id!==id); saveProj(p); render(); toast('지웠습니다'); break; }
     case 'analXlsx': exportAnalXlsx(); break;
     case 'goQuote': VIEW='est'; EST_TAB='quote'; QSHEET=0; ls.set('view',VIEW); ls.set('estTab',EST_TAB); render(); window.scrollTo(0,0); break;
@@ -6052,7 +6056,7 @@ document.addEventListener('click',async ev=>{
     case 'vRetry': location.reload(); break;
     case 'vShot': {                              // 공유 화면에서 사진 크게 보기 (좌우로 넘기고 ✕로 닫습니다)
       const p=window.__viewerPayload; if(!p) break;
-      const list=(p.files||[]).filter(f=>f.taskId===t.dataset.tid && fileKind(f)==='img')
+      const list=(p.files||[]).filter(f=>f.taskId===t.dataset.tid && fileKind(f)==='img' && !isCostShot(f))
         .map(f=>({url:f.url, name:f.name, memo:f.memo||''}));
       if(list.length) openLightbox(list, +t.dataset.i||0);
       break; }
