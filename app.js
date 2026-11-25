@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '7.9.4';
+const APP_VERSION = '7.9.5';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -3037,7 +3037,12 @@ function renderFolder(p,fd){
         <label class="fl">연결된 공정 일정<select class="f" id="fd-task" data-act-change="folderTask" data-id="${fd.id}">
           <option value="">일정에 안 붙임 (고객에게는 일정표 아래 사진으로)</option>
           ${taskOptions(p,fd.taskId||'')}
-        </select></label>
+        </select>${(()=>{ const t=(p.tasks||[]).find(x=>x.id===fd.taskId);
+          if(!t) return '<span class="fd-see">고객에게는 <b>일정표 아래 폴더 묶음</b>으로 보입니다</span>';
+          if((t.kind||'시공')!=='시공') return '<span class="fd-see warn">이 일정은 고객에게 안 보이는 종류(' + esc(t.kind||'') + ')라, <b>폴더 묶음</b>으로 보입니다</span>';
+          if(!dnum(t.start)) return '<span class="fd-see warn">이 일정에 날짜가 없어 고객 표에 안 그려집니다 — <b>폴더 묶음</b>으로 보입니다</span>';
+          return '<span class="fd-see">고객이 <b>' + esc(taskLabel(p,t)) + '</b> 막대를 누르면 보입니다';
+        })()}</label>
       </div>
       <label class="fl" style="margin-top:10px">그날 작업 메모
         <textarea class="f" id="fd-memo" rows="3" data-bind="folder:${fd.id}:memo" placeholder="예: 안방·작은방 석고 1차 마감. 거실 천장 보강 추가.">${esc(fd.memo||'')}</textarea></label>
@@ -3589,6 +3594,7 @@ const shareUrl = p => (typeof p==='string') ? shareBase()+p : shareBase()+(p?.sh
 function sharePayload(p){
   /* 고객에게는 파란색 “시공”만 내보냅니다 (실측·점검·발주·양중은 우리만 봅니다) */
   const vis=(p.tasks||[]).filter(t=>(t.kind||'시공')==='시공');
+  const shown=vis.filter(t=>dnum(t.start));          // 고객 표에 실제로 그려지는 것
   const r=projRange({tasks:vis});
 
   return {v:2, updatedAt:new Date().toISOString(),
@@ -3596,14 +3602,14 @@ function sharePayload(p){
       from:r?dstr(r.from):'', to:r?dstr(r.to):'', progress:projProgress({tasks:vis})},
     showMemo:p.share?.showMemo!==false,
     rows:(p.rows||[]).slice(),
-    folders:(p.folders||[]).filter(fd=>!fd.taskId).map(fd=>({id:fd.id,name:folderTitle(p,fd)})),
+    folders:(p.folders||[]).map(fd=>({id:fd.id,name:folderTitle(p,fd)})),
     taskNames:(()=>{ const o={}; vis.forEach(t=>{ o[t.id]=[(p.rows||[])[t.row|0]||'', t.name].filter(Boolean).join(' · ')||'공정'; }); return o; })(),
     schedStart:p.schedStart||'', schedDays:+p.schedDays||0,
     tasks:vis.map(t=>({id:t.id,name:t.name,proc:t.proc,row:t.row|0,kind:'시공',start:t.start,end:t.end,worker:t.worker,status:t.status||'예정',memo:p.share?.showMemo!==false?(t.memo||''):''})),
     files:(()=>{
       /* 공정 일정에 붙인 폴더 사진은 그 일정에 달아 보냅니다 */
       const own={};
-      vis.forEach(t=>taskPhotos(p,t.id).forEach(f=>{ own[f.id]=t.id; }));
+      shown.forEach(t=>taskPhotos(p,t.id).forEach(f=>{ own[f.id]=t.id; }));
       return [
         ...(p.excel||[]).filter(f=>f.shared).map(f=>({name:f.name,url:f.url,type:f.type||'',size:0,taskId:'',memo:EST_DOC_LABEL[estDoc(f)]})),
         ...(p.files||[]).filter(f=>f.shared!==false && !isCostShot(f)).map(f=>({name:f.name,url:f.url,type:f.type,size:f.size,
