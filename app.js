@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '7.9.6';
+const APP_VERSION = '7.9.7';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -2979,18 +2979,67 @@ function taskPhotos(p,tid){
   const b=(p.files||[]).filter(f=>fileKind(f)==='img' && !isCostShot(f) && f.taskId===tid && !(fd&&f.folderId===fd.id));
   return [...a,...b];
 }
-/* 공정에서 사진을 올리면 그 공정 폴더를 자동으로 만들어 줍니다 */
-function ensureTaskFolder(p,tid){
-  if(!tid) return null;
-  const has=taskFolder(p,tid); if(has) return has;
-  const t=(p.tasks||[]).find(x=>x.id===tid); if(!t) return null;
-  const pn=(PMAP[t.proc]||{}).n||'';
-  const fd={id:uid(),name:(t.name&&t.name!==pn)?t.name:'',date:t.start||today(),
-            taskId:tid,proc:t.proc||'',memo:'',at:Date.now()};
+/* 공정 사진을 넣을 새 폴더 — 고른 이름으로 만듭니다 */
+function makeTaskFolder(p,tid,name){
+  const t=(p.tasks||[]).find(x=>x.id===tid);
+  const fd={id:uid(),name:String(name||'').trim(),date:t?.start||today(),
+            taskId:(tid && !taskFolder(p,tid))?tid:'',proc:t?.proc||'',memo:'',at:Date.now()};
   p.folders=p.folders||[]; p.folders.unshift(fd);
-  /* 전에 이 공정에 올려 둔 떠 있는 사진도 이 폴더로 모읍니다 */
-  (p.files||[]).forEach(f=>{ if(f.taskId===tid && !isCostShot(f) && (!f.folderId || !folderOf(p,f.folderId))) f.folderId=fd.id; });
   return fd;
+}
+/* 이 공정에 올려 뒀는데 폴더가 없는 사진 */
+const looseTaskShots = (p,tid) => (p.files||[]).filter(f=>f.taskId===tid && !isCostShot(f)
+  && fileKind(f)==='img' && (!f.folderId || !folderOf(p,f.folderId)));
+/* 공정 이름으로 폴더 이름을 먼저 적어 줍니다 */
+function taskFolderName(p,tid){
+  const t=(p.tasks||[]).find(x=>x.id===tid); if(!t) return '새 폴더';
+  const pn=(PMAP[t.proc]||PMAP.etc).n||'';
+  return (t.name&&t.name.trim()) || pn || '새 폴더';
+}
+/* 공정에서 사진을 올릴 때 — 어느 폴더에 넣을지 고릅니다 */
+function askFolder(p,tid){
+  const def=taskFolderName(p,tid);
+  const mine=taskFolder(p,tid);
+  const loose=looseTaskShots(p,tid).length;
+  const list=[...(p.folders||[])].sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))||(b.at||0)-(a.at||0));
+  return new Promise(res=>{
+    const box=document.createElement('div'); box.className='modal';
+    box.innerHTML=`<div class="modal-b ask fpick">
+      <h3>“${esc(def)}” 사진을 어느 폴더에 넣을까요?</h3>
+      <div class="fp-l">
+        <label class="fp-r new"><input type="radio" name="fp" value="+" ${mine?'':'checked'}>
+          <span><b>✚ 새 폴더 만들기</b>
+            <input class="f fp-name" id="fp-name" value="${esc(def)}" placeholder="폴더 이름" maxlength="40">
+            <i>이름은 고쳐서 쓰셔도 됩니다</i></span></label>
+        ${list.map(fd=>`<label class="fp-r"><input type="radio" name="fp" value="${esc(fd.id)}" ${mine&&mine.id===fd.id?'checked':''}>
+          <span><b>${esc(folderTitle(p,fd))}</b><i>사진 ${filesInFolder(p,fd.id).length}장${fd.taskId===tid?' · 지금 이 공정 폴더':''}</i></span></label>`).join('')}
+        <label class="fp-r"><input type="radio" name="fp" value=""><span><b>폴더 없이 올리기</b><i>사진 탭에 낱장으로 쌓입니다</i></span></label>
+      </div>
+      ${loose?`<label class="fp-sw"><input type="checkbox" id="fp-sw" checked>
+        이 공정에 먼저 올려 둔 <b>폴더 없는 사진 ${loose}장</b>도 이 폴더로 함께 모으기</label>`:''}
+      <div class="row" style="justify-content:flex-end;margin-top:6px">
+        <button class="btn" data-x="no">취소</button>
+        <button class="btn pri" data-x="yes">사진 고르기</button>
+      </div></div>`;
+    const close=v=>{
+      let out=null;
+      if(v){
+        const r=box.querySelector('input[name="fp"]:checked');
+        const val=r?r.value:'+';
+        const sweep=!!box.querySelector('#fp-sw')?.checked;
+        out = val==='+' ? {id:'', newName:(box.querySelector('#fp-name')?.value||'').trim()||def, sweep}
+                        : {id:val, newName:'', sweep:val?sweep:false};
+      }
+      box.remove(); document.removeEventListener('keydown',key); res(out);
+    };
+    const key=e=>{ if(e.key==='Escape') close(false);
+      if(e.key==='Enter'&&e.target.id==='fp-name'){ e.preventDefault(); close(true); } };
+    box.addEventListener('click',e=>{ const b=e.target.closest('[data-x]'); if(b) close(b.dataset.x==='yes'); else if(e.target===box) close(false); });
+    box.querySelector('#fp-name')?.addEventListener('focus',()=>{ box.querySelector('input[name="fp"][value="+"]').checked=true; });
+    document.addEventListener('keydown',key);
+    document.body.appendChild(box);
+    box.querySelector('[data-x="yes"]').focus();
+  });
 }
 /* 일정 고르는 칸에 쓸 이름 */
 function taskLabel(p,t){
@@ -3691,10 +3740,12 @@ async function copyShare(p,urlOnly){
 
 /* 도면 파일 */
 let PLAN_FOLDER='';
+let PLAN_PICK=null;        // 공정에서 고른 폴더 {tid,newName,sweep}
 async function uploadPlans(files,p,taskId,spendId){
   if(!sb||!session){ toast('로그인한 상태에서만 파일을 올릴 수 있습니다.'); return; }
   let fid = spendId ? '' : (PLAN_FOLDER||'');
-  let made = false;
+  const pick = (!spendId && taskId && PLAN_PICK && PLAN_PICK.tid===taskId) ? PLAN_PICK : null;
+  let made = '';
   for(const f of [...files]){
     if(f.size>50*1024*1024){ toast(`${f.name}: 50MB가 넘어 올리지 못했습니다.`); continue; }
     const ext=(f.name.match(/\.[A-Za-z0-9]{1,5}$/)||[''])[0].toLowerCase();
@@ -3704,11 +3755,14 @@ async function uploadPlans(files,p,taskId,spendId){
       const {error}=await sb.storage.from('plans').upload(path,f,{contentType:f.type||'application/octet-stream'});
       if(error) throw error;
       const {data}=sb.storage.from('plans').getPublicUrl(path);
-      if(!spendId && !fid && taskId && isImg({name:f.name,type:f.type||''})){
-        const fd=ensureTaskFolder(p,taskId); if(fd){ fid=fd.id; made=true; } }
+      if(pick && !pick.done){
+        if(pick.newName){ const fd=makeTaskFolder(p,taskId,pick.newName); fid=fd.id; made=folderTitle(p,fd); }
+        if(fid && pick.sweep) looseTaskShots(p,taskId).forEach(x=>{ x.folderId=fid; });
+        pick.done=true;
+      }
       p.files=p.files||[]; p.files.push({id:uid(),name:f.name,path,url:data.publicUrl,type:f.type||'',size:f.size,shared:!spendId,at:Date.now(),taskId:spendId?'':(taskId||''),spendId:spendId||'',folderId:spendId?'':fid,memo:spendId?'영수증·견적서':''});
       saveProj(p); render();
-      if(made){ made=false; toast(`“${folderTitle(p,folderOf(p,fid))}” 폴더를 만들어 넣었습니다`); }
+      if(made){ toast(`“${made}” 폴더를 만들어 넣었습니다`); made=''; }
       else toast(`${f.name} 올렸습니다`);
     }catch(e){ toast(`${f.name} 올리지 못했습니다: ${e.message||e}`); }
   }
@@ -6043,7 +6097,10 @@ document.addEventListener('click',async ev=>{
     case 'purgeProj': archiveProject(curProj(),true); break;
     case 'delTask': { const p=curProj(); p.tasks.splice(+t.dataset.ti,1); saveProj(p); render(); break; }
     case 'pickPlan': PLAN_TASK=''; $('#filePlan').click(); break;
-    case 'taskPhoto': { const p=curProj(); PLAN_TASK=t.dataset.tid||p.tasks[+t.dataset.ti]?.id||''; PLAN_FOLDER=''; $('#filePlan').setAttribute('accept','image/*'); $('#filePlan').click(); break; }
+    case 'taskPhoto': { const p=curProj(); const tid=t.dataset.tid||p.tasks[+t.dataset.ti]?.id||'';
+      PLAN_TASK=tid; PLAN_FOLDER=''; PLAN_PICK=null;
+      if(tid){ const r=await askFolder(p,tid); if(!r) break; PLAN_FOLDER=r.id; PLAN_PICK={tid,newName:r.newName,sweep:r.sweep}; }
+      $('#filePlan').setAttribute('accept','image/*'); $('#filePlan').click(); break; }
     case 'delPlan': removePlan(curProj(),t.dataset.fid); break;
     case 'copyShare': copyShare(curProj(), t.dataset.only==='1'); break;
     case 'sendTask': sendTaskById(t.dataset.tid||''); break;
@@ -6120,7 +6177,7 @@ $('#fileExcel').addEventListener('change',ev=>{ const d=PICK_DOC; PICK_DOC=''; u
 let PLAN_TASK='';
 $('#filePlan').addEventListener('change',async ev=>{ const fs=ev.target.files;
   if(fs.length) await uploadPlans(fs,curProj(),PLAN_TASK,PLAN_SPEND);
-  ev.target.value=''; ev.target.removeAttribute('accept'); PLAN_TASK=''; PLAN_FOLDER=''; PLAN_SPEND=''; });
+  ev.target.value=''; ev.target.removeAttribute('accept'); PLAN_TASK=''; PLAN_FOLDER=''; PLAN_SPEND=''; PLAN_PICK=null; });
 document.addEventListener('dragover',ev=>{ const dz=ev.target.closest?.('#dz'); if(dz){ ev.preventDefault(); dz.classList.add('drag'); } });
 document.addEventListener('dragleave',ev=>{ ev.target.closest?.('#dz')?.classList.remove('drag'); });
 document.addEventListener('drop',ev=>{ const dz=ev.target.closest?.('#dz'); if(dz){ ev.preventDefault(); dz.classList.remove('drag'); setSheetFiles(ev.dataTransfer.files); }
