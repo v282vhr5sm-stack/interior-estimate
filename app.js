@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '7.9.5';
+const APP_VERSION = '7.9.6';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -2979,6 +2979,19 @@ function taskPhotos(p,tid){
   const b=(p.files||[]).filter(f=>fileKind(f)==='img' && !isCostShot(f) && f.taskId===tid && !(fd&&f.folderId===fd.id));
   return [...a,...b];
 }
+/* 공정에서 사진을 올리면 그 공정 폴더를 자동으로 만들어 줍니다 */
+function ensureTaskFolder(p,tid){
+  if(!tid) return null;
+  const has=taskFolder(p,tid); if(has) return has;
+  const t=(p.tasks||[]).find(x=>x.id===tid); if(!t) return null;
+  const pn=(PMAP[t.proc]||{}).n||'';
+  const fd={id:uid(),name:(t.name&&t.name!==pn)?t.name:'',date:t.start||today(),
+            taskId:tid,proc:t.proc||'',memo:'',at:Date.now()};
+  p.folders=p.folders||[]; p.folders.unshift(fd);
+  /* 전에 이 공정에 올려 둔 떠 있는 사진도 이 폴더로 모읍니다 */
+  (p.files||[]).forEach(f=>{ if(f.taskId===tid && !isCostShot(f) && (!f.folderId || !folderOf(p,f.folderId))) f.folderId=fd.id; });
+  return fd;
+}
 /* 일정 고르는 칸에 쓸 이름 */
 function taskLabel(p,t){
   const row=(p.rows||[])[t.row|0]||'';
@@ -3680,6 +3693,8 @@ async function copyShare(p,urlOnly){
 let PLAN_FOLDER='';
 async function uploadPlans(files,p,taskId,spendId){
   if(!sb||!session){ toast('로그인한 상태에서만 파일을 올릴 수 있습니다.'); return; }
+  let fid = spendId ? '' : (PLAN_FOLDER||'');
+  let made = false;
   for(const f of [...files]){
     if(f.size>50*1024*1024){ toast(`${f.name}: 50MB가 넘어 올리지 못했습니다.`); continue; }
     const ext=(f.name.match(/\.[A-Za-z0-9]{1,5}$/)||[''])[0].toLowerCase();
@@ -3689,8 +3704,12 @@ async function uploadPlans(files,p,taskId,spendId){
       const {error}=await sb.storage.from('plans').upload(path,f,{contentType:f.type||'application/octet-stream'});
       if(error) throw error;
       const {data}=sb.storage.from('plans').getPublicUrl(path);
-      p.files=p.files||[]; p.files.push({id:uid(),name:f.name,path,url:data.publicUrl,type:f.type||'',size:f.size,shared:!spendId,at:Date.now(),taskId:spendId?'':(taskId||''),spendId:spendId||'',folderId:spendId?'':(PLAN_FOLDER||''),memo:spendId?'영수증·견적서':''});
-      saveProj(p); render(); toast(`${f.name} 올렸습니다`);
+      if(!spendId && !fid && taskId && isImg({name:f.name,type:f.type||''})){
+        const fd=ensureTaskFolder(p,taskId); if(fd){ fid=fd.id; made=true; } }
+      p.files=p.files||[]; p.files.push({id:uid(),name:f.name,path,url:data.publicUrl,type:f.type||'',size:f.size,shared:!spendId,at:Date.now(),taskId:spendId?'':(taskId||''),spendId:spendId||'',folderId:spendId?'':fid,memo:spendId?'영수증·견적서':''});
+      saveProj(p); render();
+      if(made){ made=false; toast(`“${folderTitle(p,folderOf(p,fid))}” 폴더를 만들어 넣었습니다`); }
+      else toast(`${f.name} 올렸습니다`);
     }catch(e){ toast(`${f.name} 올리지 못했습니다: ${e.message||e}`); }
   }
 }
