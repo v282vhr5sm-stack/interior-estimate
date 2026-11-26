@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '7.9.8';
+const APP_VERSION = '7.9.9';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -3551,6 +3551,7 @@ function renderGallery(p,asTab){
     const list=filesInFolder(p,fd.id);
     const t=(p.tasks||[]).find(x=>x.id===fd.taskId);
     return `<button class="folder" data-act="openFolder" data-id="${fd.id}">
+      <span class="folder-x" data-act="delFolder" data-id="${fd.id}" role="button" title="이 폴더를 지웁니다 (사진은 안 지워집니다)" aria-label="폴더 지우기">✕</span>
       <span class="folder-th">${list[0]?`<img src="${esc(list[0].url)}" alt="" loading="lazy">`:'<span class="folder-i">🗂</span>'}</span>
       <b>${esc(folderTitle(p,fd))}</b>
       <span class="muted small">사진 ${list.length}장${(()=>{ const n=list.filter(x=>x.taskId).length; return n?' · 공정 붙음 '+n:''; })()}</span>
@@ -6116,7 +6117,8 @@ document.addEventListener('click',async ev=>{
         ok:'네, 폴더만 지웁니다', cancel:'아니요'})) break;
       (p.files||[]).forEach(f=>{ if(f.folderId===fd.id) f.folderId=''; });
       p.folders=(p.folders||[]).filter(x=>x.id!==fd.id); saveProj(p);
-      GAL_FOLDER=''; render(); toast('폴더를 지웠습니다'); break; }
+      GAL_FOLDER=''; render();
+      toast(n?`폴더를 지웠습니다 · 사진 ${n}장은 그대로 있습니다`:'빈 폴더를 지웠습니다'); break; }
     case 'openSched': VIEW='sched'; SCHED_MODE='site'; ls.set('view',VIEW); render(); window.scrollTo(0,0); break;
     case 'openFiles': VIEW='sched'; SCHED_MODE='site'; ls.set('view',VIEW); render();
       setTimeout(()=>document.querySelector('.files')?.scrollIntoView({block:'center',behavior:'smooth'})||document.getElementById('pdz')?.scrollIntoView({block:'center'}),80); break;
