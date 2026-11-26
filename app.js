@@ -2,7 +2,7 @@
  * 데이터는 이 기기(IndexedDB)에 먼저 저장하고, 로그인하면 Supabase와 동기화합니다.
  * 수정 후 배포할 때는 sw.js의 VERSION 숫자를 올려야 기기에 새 버전이 적용됩니다.
  */
-const APP_VERSION = '7.9.7';
+const APP_VERSION = '7.9.8';
 
 /* ---------- constants ---------- */
 const PROCS = [
@@ -98,6 +98,33 @@ function askConfirm({title,lines=[],ok='삭제',cancel='취소',danger=true,chec
     document.addEventListener('keydown',key);
     document.body.appendChild(box);
     box.querySelector('[data-x="no"]').focus();
+  });
+}
+/* 이름 하나만 묻는 작은 창 ( prompt 대신 — 폰에서도 잘 뜹니다 ) */
+function askName({title='새 폴더',label='폴더 이름',value='',hint='',ok='만들기',check=null}={}){
+  return new Promise(res=>{
+    const box=document.createElement('div'); box.className='modal';
+    box.innerHTML=`<div class="modal-b ask">
+      <h3>${esc(title)}</h3>
+      <label class="fl">${esc(label)}<input class="f" id="ask-nm" value="${esc(value)}" maxlength="40" placeholder="${esc(label)}"></label>
+      ${hint?`<p class="muted small" style="margin:0">${esc(hint)}</p>`:''}
+      ${check?`<label class="fp-sw"><input type="checkbox" id="ask-ck" ${check.checked?'checked':''}> ${esc(check.label)}</label>`:''}
+      <div class="row" style="justify-content:flex-end;margin-top:6px">
+        <button class="btn" data-x="no">취소</button>
+        <button class="btn pri" data-x="yes">${esc(ok)}</button>
+      </div></div>`;
+    const close=v=>{
+      const nm=(box.querySelector('#ask-nm')?.value||'').trim();
+      const ck=!!box.querySelector('#ask-ck')?.checked;
+      box.remove(); document.removeEventListener('keydown',key);
+      res(v ? {name: nm||value||'새 폴더', checked: ck} : null);
+    };
+    const key=e=>{ if(e.key==='Escape') close(false); };
+    box.addEventListener('keydown',e=>{ if(e.key==='Enter'&&e.target.id==='ask-nm'){ e.preventDefault(); close(true); } });
+    box.addEventListener('click',e=>{ const b=e.target.closest('[data-x]'); if(b) close(b.dataset.x==='yes'); else if(e.target===box) close(false); });
+    document.addEventListener('keydown',key);
+    document.body.appendChild(box);
+    const i=box.querySelector('#ask-nm'); i.focus(); i.select();
   });
 }
 function krWords(n){
@@ -2980,10 +3007,10 @@ function taskPhotos(p,tid){
   return [...a,...b];
 }
 /* 공정 사진을 넣을 새 폴더 — 고른 이름으로 만듭니다 */
-function makeTaskFolder(p,tid,name){
+function makeTaskFolder(p,tid,name,link=true){
   const t=(p.tasks||[]).find(x=>x.id===tid);
   const fd={id:uid(),name:String(name||'').trim(),date:t?.start||today(),
-            taskId:(tid && !taskFolder(p,tid))?tid:'',proc:t?.proc||'',memo:'',at:Date.now()};
+            taskId:(link && tid && !taskFolder(p,tid))?tid:'',proc:t?.proc||'',memo:'',at:Date.now()};
   p.folders=p.folders||[]; p.folders.unshift(fd);
   return fd;
 }
@@ -2995,6 +3022,24 @@ function taskFolderName(p,tid){
   const t=(p.tasks||[]).find(x=>x.id===tid); if(!t) return '새 폴더';
   const pn=(PMAP[t.proc]||PMAP.etc).n||'';
   return (t.name&&t.name.trim()) || pn || '새 폴더';
+}
+/* 「✚ 새 폴더 만들기」 — 이름을 묻고 만들어서 사진을 옮깁니다 */
+async function newFolderFlow(p,{tid='',link=false,files=[],sweep=false,clearPick=false}={}){
+  const def = tid ? taskFolderName(p,tid) : dstr(today());
+  const extra = (sweep&&tid) ? looseTaskShots(p,tid).filter(f=>!files.includes(f)).length : 0;
+  const r = await askName({title:'새 사진 폴더를 만듭니다', value:def,
+    hint: files.length?`고른 사진 ${files.length}장이 이 폴더로 들어갑니다`:'',
+    check: extra?{label:`같은 공정에 올려 둔 폴더 없는 사진 ${extra}장도 함께 모으기`,checked:true}:null});
+  if(!r) return null;
+  if(link&&tid) (p.folders||[]).forEach(x=>{ if(x.taskId===tid) x.taskId=''; });
+  const fd=makeTaskFolder(p,tid,r.name,link);
+  const moved=new Set();
+  files.forEach(f=>{ f.folderId=fd.id; moved.add(f.id); });
+  if(extra&&r.checked) looseTaskShots(p,tid).forEach(f=>{ f.folderId=fd.id; moved.add(f.id); });
+  if(clearPick) GAL_PICK.clear();
+  saveProj(p); render();
+  toast(`“${folderTitle(p,fd)}” 폴더를 만들었습니다${moved.size?` · 사진 ${moved.size}장 넣었습니다`:''}`);
+  return fd;
 }
 /* 공정에서 사진을 올릴 때 — 어느 폴더에 넣을지 고릅니다 */
 function askFolder(p,tid){
@@ -3087,6 +3132,7 @@ function renderFolder(p,fd){
   const moveOpts=f=>`<select class="f small" data-bind="file:${f.id}:folderId" style="padding:3px 5px">
       <option value="">폴더 없음</option>
       ${(p.folders||[]).map(x=>`<option value="${x.id}" ${f.folderId===x.id?'selected':''}>${esc(folderTitle(p,x))}</option>`).join('')}
+      <option value="__new">✚ 새 폴더 만들기…</option>
     </select>`;
   return `<div class="stack">
     <div class="row"><button class="btn ghost" data-act="folderBack">‹ 사진</button><span class="spacer"></span>
@@ -3549,6 +3595,7 @@ function renderGallery(p,asTab){
           <select class="f small" data-bind="file:${f.id}:folderId" style="padding:3px 5px">
             <option value="">폴더 없음</option>
             ${(p.folders||[]).map(x=>`<option value="${x.id}" ${f.folderId===x.id?'selected':''}>${esc(folderTitle(p,x))}</option>`).join('')}
+            <option value="__new">✚ 새 폴더 만들기…</option>
           </select>
           ${fileTaskSelect(p,f)}
           <div class="row" style="gap:6px;justify-content:space-between">
@@ -4058,6 +4105,7 @@ function schedTaskPanel(p){
           <select class="f sm" data-act-change="schedFolder" data-id="${esc(t.id)}" style="width:auto;max-width:200px">
             <option value="">없음</option>
             ${(p.folders||[]).map(x=>`<option value="${x.id}" ${fd&&fd.id===x.id?'selected':''}>${esc(folderTitle(p,x))} (${filesInFolder(p,x.id).length}장)</option>`).join('')}
+            <option value="__new">✚ 새 폴더 만들기…</option>
           </select></label>
         <button class="btn sm" data-act="taskPhoto" data-ti="${ti}">📷 사진 올리기</button>
         <button class="btn sm" data-act="sendTask" data-tid="${esc(t.id)}">📨 보내기</button>
@@ -5486,7 +5534,10 @@ document.addEventListener('input',ev=>{
     if(rest[2]==='start' && val) tk.end=val;
     if(rest[2]==='end' && tk.start && val && dnum(val)<dnum(tk.start)){ tk.end=tk.start; toast('종료일은 시작일보다 앞설 수 없습니다'); }
     saveProj(p); }
-  else if(kind==='file'){ const p=curProj(); const f=(p?.files||[]).find(x=>x.id===rest[0]); if(!f) return; f[rest[1]]=val; saveProj(p);
+  else if(kind==='file'){ const p=curProj(); const f=(p?.files||[]).find(x=>x.id===rest[0]); if(!f) return;
+    if(rest[1]==='folderId' && val==='__new'){ t.value=f.folderId||'';
+      newFolderFlow(p,{tid:f.taskId||'',link:!!(f.taskId&&!taskFolder(p,f.taskId)),files:[f],sweep:!!f.taskId}); return; }
+    f[rest[1]]=val; saveProj(p);
     if(rest[1]==='folderId' || rest[1]==='shared' || rest[1]==='taskId') render(); }
   else if(kind==='exfile'){ const p=curProj(); const f=(p?.excel||[]).find(x=>x.id===rest[0]); if(!f) return; f[rest[1]]=val; saveProj(p);
     if(rest[1]==='shared'||rest[1]==='doc') render(); }
@@ -5585,8 +5636,9 @@ document.addEventListener('change',ev=>{
     return; }
   if(a==='galMove'){ const p=curProj(); const v=t.value; if(!p||!v) return;
     let fid=v;
-    if(v==='__new'){ const nm=prompt('새 폴더 이름을 적어주세요','새 폴더'); if(nm===null){ t.value=''; return; }
-      const fd=newFolder(p); fd.name=(nm||'').trim(); fid=fd.id; }
+    if(v==='__new'){ t.value='';
+      const picked=(p.files||[]).filter(f=>GAL_PICK.has(f.id));
+      newFolderFlow(p,{tid:picked[0]?.taskId||'',files:picked,clearPick:true}); return; }
     let n=0;
     (p.files||[]).forEach(f=>{ if(GAL_PICK.has(f.id)){ f.folderId=fid; n++; } });
     GAL_PICK.clear(); saveProj(p); render();
@@ -5596,6 +5648,7 @@ document.addEventListener('change',ev=>{
     (p.folders||[]).forEach(x=>{ if(x!==fd && x.taskId===t.value) x.taskId=''; });
     fd.taskId=t.value; saveProj(p); render(); return; }
   if(a==='schedFolder'){ const p=curProj(); const tid=t.dataset.id;
+    if(t.value==='__new'){ render(); newFolderFlow(p,{tid,link:true,sweep:true}); return; }
     (p.folders||[]).forEach(x=>{ if(x.taskId===tid) x.taskId=''; });
     const fd=folderOf(p,t.value); if(fd) fd.taskId=tid;
     saveProj(p); render(); return; }
